@@ -1,0 +1,65 @@
+# Déploiement EMEFA Web
+
+## Accès
+
+- Application : https://emefa.76.13.129.252.sslip.io
+- Santé du service : https://emefa.76.13.129.252.sslip.io/health
+- Déploiement : conteneur Docker `emefa-web`, réseau Traefik `web`
+- Données : volume Docker persistant `emefa_emefa_data`
+
+## Activation privée
+
+Le code d’activation réel est conservé uniquement dans le fichier `.env` protégé (`chmod 600`). Il ne doit pas être ajouté à Git.
+
+Trois navigateurs au maximum peuvent être activés. La déconnexion révoque le navigateur et libère sa place.
+
+## Activer la conversation vocale temps réel
+
+1. Ouvrir `/root/projets/emefa/.env` sur le serveur.
+2. Renseigner `EMEFA_ELEVENLABS_API_KEY` et `EMEFA_ELEVENLABS_AGENT_ID` sans guillemets.
+3. La clé ne doit jamais être envoyée au navigateur : `/v1/realtime/session` génère une URL de conversation éphémère après vérification du navigateur privé.
+4. La conversation utilise ElevenLabs Agents en continu : détection de parole, synthèse vocale et interruption pendant la réponse.
+
+## Activer le moteur agent DeepSeek
+
+1. Dans le même fichier `.env`, renseigner `EMEFA_DEEPSEEK_API_KEY` sans guillemets.
+2. Conserver `EMEFA_DEEPSEEK_MODEL=deepseek-v4-flash`.
+3. Recréer seulement le service EMEFA :
+
+```bash
+cd /root/projets/emefa
+docker compose -f docker-compose.prod.yml up -d --force-recreate emefa
+```
+
+5. Vérifier :
+
+```bash
+curl -fsS https://emefa.76.13.129.252.sslip.io/health
+```
+
+Sans clé, l’application reste accessible et activable, mais affiche que le moteur de langage n’est pas encore configuré.
+
+## Coût IA
+
+Tarifs officiels DeepSeek consultés lors du déploiement :
+
+- `deepseek-v4-flash` : 0,14 USD par million de tokens d’entrée hors cache ;
+- entrée en cache : 0,0028 USD par million de tokens ;
+- sortie : 0,28 USD par million de tokens.
+
+La facturation dépend uniquement des tokens consommés. Source : https://api-docs.deepseek.com/quick_start/pricing
+
+## Exploitation
+
+```bash
+# État
+docker compose -f docker-compose.prod.yml ps
+
+# Journaux
+docker logs --tail 100 emefa-web
+
+# Redéploiement
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+Le conteneur utilise `restart: unless-stopped` et redémarre automatiquement après un redémarrage du VPS.

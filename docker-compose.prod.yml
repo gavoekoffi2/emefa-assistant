@@ -1,0 +1,30 @@
+services:
+  emefa:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: emefa-web
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      EMEFA_DATABASE_PATH: /app/data/emefa.db
+      EMEFA_COOKIE_SECURE: "true"
+      EMEFA_WEB_DIST_PATH: /app/web/dist
+    volumes:
+      - emefa_data:/app/data
+    networks:
+      - web
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.emefa.rule=Host(`emefa.76.13.129.252.sslip.io`)"
+      - "traefik.http.routers.emefa.entrypoints=websecure"
+      - "traefik.http.routers.emefa.tls.certresolver=letsencrypt"
+      - "traefik.http.services.emefa.loadbalancer.server.port=8000"
+
+volumes:
+  emefa_data:
+
+networks:
+  web:
+    external: true

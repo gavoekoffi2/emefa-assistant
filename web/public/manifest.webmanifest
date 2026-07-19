@@ -1,0 +1,13 @@
+{
+  "name": "EMEFA — Assistante personnelle",
+  "short_name": "EMEFA",
+  "description": "Votre assistante personnelle privée, accessible depuis votre navigateur.",
+  "lang": "fr",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f7f3",
+  "theme_color": "#075f4f",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

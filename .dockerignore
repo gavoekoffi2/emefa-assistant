@@ -1,0 +1,12 @@
+.git
+.env
+**/.env
+**/.venv
+**/__pycache__
+**/.pytest_cache
+android
+web/node_modules
+web/dist
+*.db
+*.apk
+*.aab

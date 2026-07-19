@@ -1,0 +1,1 @@
+# EMEFA-specific ProGuard rules.

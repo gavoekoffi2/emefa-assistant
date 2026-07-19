@@ -1,0 +1,29 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.env
+*.db
+*.egg-info/
+
+.gradle/
+**/build/
+local.properties
+*.apk
+*.aab
+
+node_modules/
+dist/
+
+# Local research inputs and generated media are not application source code.
+# They remain on the development server and are intentionally excluded from GitHub.
+reference-materials/
+
+# Accidental root npm lockfile (the frontend lockfile lives in web/).
+/package-lock.json
+
+.idea/
+.vscode/
+.DS_Store

@@ -33,6 +33,13 @@ test('voice room supports a continuous session, typed turns, and clean shutdown'
   assert.match(source, /Conversation continue · interrompez EMEFA à tout moment/)
 })
 
+test('typed input reaches the EMEFA runtime when the voice session is offline', () => {
+  assert.match(source, /\/v1\/agent\/runs/)
+  assert.match(source, /confirmation_required/)
+  assert.match(source, /blocked/)
+  assert.match(source, /agentErrorCopy/)
+})
+
 test('profile panel lets the user view and edit assistant and business context', () => {
   const panel = readFileSync(new URL('../src/ProfilePanel.tsx', import.meta.url), 'utf8')
   assert.match(panel, /\/v1\/assistant\/profile/)

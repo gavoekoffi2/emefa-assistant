@@ -17,6 +17,7 @@ ToolHandler = Callable[[Mapping[str, Any]], ToolResult | Awaitable[ToolResult]]
 class RequestedAction:
     name: str
     arguments: dict[str, Any] = field(default_factory=dict)
+    call_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +36,7 @@ class AgentTool:
     description: str
     risk: ActionRisk
     handler: ToolHandler
+    parameters: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,7 +52,7 @@ class Brain(Protocol):
     async def think(
         self,
         history: Sequence[Mapping[str, Any]],
-        tools: Sequence[Mapping[str, str]],
+        tools: Sequence[Mapping[str, Any]],
     ) -> AgentStep: ...
 
 
@@ -66,12 +68,13 @@ class ToolShelf:
     def get(self, name: str) -> AgentTool | None:
         return self._tools.get(name)
 
-    def describe(self) -> list[dict[str, str]]:
+    def describe(self) -> list[dict[str, Any]]:
         return [
             {
                 "name": tool.name,
                 "description": tool.description,
                 "risk": tool.risk.value,
+                "parameters": dict(tool.parameters) if tool.parameters is not None else None,
             }
             for tool in self._tools.values()
         ]
@@ -129,6 +132,8 @@ class AgentEngine:
                 {
                     "role": "tool",
                     "name": tool.name,
+                    "call_id": action.call_id,
+                    "arguments": dict(action.arguments),
                     "content": dict(output) if output is not None else None,
                 }
             )

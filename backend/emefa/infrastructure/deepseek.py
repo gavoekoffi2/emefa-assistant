@@ -1,11 +1,12 @@
 """Bounded DeepSeek chat adapter."""
 
+import json
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import httpx
 
-from emefa.domain.agent import AgentStep
+from emefa.domain.agent import AgentStep, RequestedAction
 
 SYSTEM_PROMPT = """Tu es l’assistante personnelle privée de ton utilisateur.
 Tu échanges à l’oral en français naturel, chaleureux et précis. Garde le fil des tours précédents.
@@ -37,36 +38,95 @@ class DeepSeekBrain:
             transport=transport,
         )
 
+    @staticmethod
+    def _to_messages(history: Sequence[Mapping[str, Any]], system_prompt: str) -> list[dict[str, Any]]:
+        messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+        for item in history:
+            role = item.get("role")
+            if role in {"user", "assistant"}:
+                messages.append({"role": str(role), "content": str(item.get("content", ""))})
+            elif role == "tool":
+                call_id = str(item.get("call_id") or f"call_{len(messages)}")
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": str(item.get("name", "")),
+                                    "arguments": json.dumps(
+                                        item.get("arguments") or {}, ensure_ascii=False
+                                    ),
+                                },
+                            }
+                        ],
+                    }
+                )
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": json.dumps(item.get("content"), ensure_ascii=False),
+                    }
+                )
+        return messages
+
+    @staticmethod
+    def _to_tool_payload(tools: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": str(tool["name"]),
+                    "description": str(tool["description"]),
+                    "parameters": tool.get("parameters")
+                    or {"type": "object", "properties": {}},
+                },
+            }
+            for tool in tools
+        ]
+
     async def think(
         self,
         history: Sequence[Mapping[str, Any]],
-        tools: Sequence[Mapping[str, str]],
+        tools: Sequence[Mapping[str, Any]],
     ) -> AgentStep:
-        del tools  # Tool execution remains disabled until structured calls are implemented.
         system_prompt = SYSTEM_PROMPT
         if self.context_provider is not None:
             context = self.context_provider().strip()
             if context:
                 system_prompt = f"{SYSTEM_PROMPT}\n{context}"
-        messages = [{"role": "system", "content": system_prompt}]
-        messages.extend(
-            {"role": str(item.get("role", "user")), "content": str(item.get("content", ""))}
-            for item in history
-            if item.get("role") in {"user", "assistant"}
-        )
-        response = await self.client.post(
-            "/chat/completions",
-            json={
-                "model": self.model,
-                "messages": messages,
-                "temperature": 0.3,
-                "max_tokens": 700,
-                "stream": False,
-            },
-        )
+        request_body: dict[str, Any] = {
+            "model": self.model,
+            "messages": self._to_messages(history, system_prompt),
+            "temperature": 0.3,
+            "max_tokens": 700,
+            "stream": False,
+        }
+        if tools:
+            request_body["tools"] = self._to_tool_payload(tools)
+        response = await self.client.post("/chat/completions", json=request_body)
         response.raise_for_status()
         payload = response.json()
-        answer = payload["choices"][0]["message"]["content"].strip()
+        message = payload["choices"][0]["message"]
+        tool_calls = message.get("tool_calls") or []
+        if tool_calls:
+            call = tool_calls[0]
+            raw_arguments = call.get("function", {}).get("arguments") or "{}"
+            arguments = json.loads(raw_arguments)
+            if not isinstance(arguments, dict):
+                raise ValueError("DeepSeek returned non-object tool arguments")
+            return AgentStep(
+                action=RequestedAction(
+                    name=str(call.get("function", {}).get("name", "")),
+                    arguments=arguments,
+                    call_id=str(call.get("id")) if call.get("id") else None,
+                )
+            )
+        answer = (message.get("content") or "").strip()
         if not answer:
             raise ValueError("DeepSeek returned an empty response")
         return AgentStep(answer=answer)

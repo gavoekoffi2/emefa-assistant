@@ -9,6 +9,19 @@ import type { Session, VoiceState } from './App'
 type ConversationTurn = { id: string; role: 'user' | 'assistant'; text: string }
 type SignedSession = { signed_url: string }
 type VoiceMessage = { message?: string; source?: string; role?: string }
+type AgentRun = {
+  status: 'completed' | 'confirmation_required' | 'blocked' | 'failed'
+  answer?: string | null
+  error?: string | null
+  pending_action?: { name: string } | null
+}
+
+const agentErrorCopy: Record<string, string> = {
+  brain_unavailable: 'Le moteur de langage est momentanément indisponible. Réessayez dans un instant.',
+  unknown_tool: 'EMEFA a tenté une action qu’elle ne connaît pas. Reformulez votre demande.',
+  turn_budget_exhausted: 'Cette demande est trop complexe pour un seul échange. Découpez-la ou reformulez.',
+  invalid_brain_step: 'Le moteur a renvoyé une réponse invalide. Réessayez.',
+}
 
 async function getVoiceTicket(): Promise<SignedSession> {
   const response = await fetch('/v1/realtime/session', { credentials: 'include' })
@@ -96,12 +109,27 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
     await startRealtime()
   }
 
-  const submitTyped = () => {
+  const submitTyped = async () => {
     const value = typed.trim()
     if (!value) return
-    if (conversation.status !== 'connected') { setNotice('Démarrez d’abord la conversation pour envoyer une demande.'); return }
-    setTyped(''); setTranscript(value); setHistory((current) => [...current.slice(-7), { id: crypto.randomUUID(), role: 'user', text: value }]); setState('thinking')
-    conversation.sendUserMessage(value)
+    setTyped(''); setNotice(''); setTranscript(value)
+    setHistory((current) => [...current.slice(-7), { id: crypto.randomUUID(), role: 'user', text: value }])
+    setState('thinking')
+    if (conversation.status === 'connected') { conversation.sendUserMessage(value); return }
+    try {
+      const run = await api<AgentRun>('/v1/agent/runs', { method: 'POST', body: JSON.stringify({ message: value }) })
+      let text: string
+      if (run.status === 'completed' && run.answer) text = run.answer
+      else if (run.status === 'confirmation_required') text = `L’action « ${run.pending_action?.name ?? 'demandée'} » nécessite votre approbation. Ce parcours d’approbation arrive dans une prochaine version.`
+      else if (run.status === 'blocked') text = 'Cette action est bloquée par la politique de sécurité d’EMEFA.'
+      else text = agentErrorCopy[run.error ?? ''] || 'La demande n’a pas abouti.'
+      setAnswer(text)
+      setHistory((current) => [...current.slice(-7), { id: crypto.randomUUID(), role: 'assistant', text }])
+      setState('idle')
+    } catch (cause) {
+      setState('error')
+      setNotice(cause instanceof Error ? cause.message : 'La demande n’a pas abouti.')
+    }
   }
   const latestUser = useMemo(() => [...history].reverse().find((turn) => turn.role === 'user')?.text, [history])
 
@@ -141,7 +169,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
         <div className="voice-copy"><p className="heard">{state === 'listening' && transcript ? `« ${transcript} »` : latestUser ? `« ${latestUser} »` : live ? 'Parlez, je vous écoute…' : 'Touchez le noyau pour commencer à parler'}</p><p className="answer">{answer}</p></div>
         <div className="voice-controls"><button className={live ? 'danger' : ''} onClick={() => void toggleLive()}><span className="mic-symbol">⌁</span>{live ? 'Terminer la conversation' : 'Initialiser la liaison vocale'}</button><small>{live ? 'Conversation continue · interrompez EMEFA à tout moment' : 'Activation unique · échange vocal naturel'}</small></div>
       </main>
-      <section className="command-dock"><span className="dock-prompt">›</span><input value={typed} onChange={(event) => { setTyped(event.target.value); if (live) conversation.sendUserActivity() }} onKeyDown={(event) => { if (event.key === 'Enter') submitTyped() }} placeholder="Transmettre une instruction…" aria-label="Écrire une demande" /><button onClick={submitTyped} disabled={!typed.trim()}>TRANSMETTRE</button></section>
+      <section className="command-dock"><span className="dock-prompt">›</span><input value={typed} onChange={(event) => { setTyped(event.target.value); if (live) conversation.sendUserActivity() }} onKeyDown={(event) => { if (event.key === 'Enter') void submitTyped() }} placeholder="Écrire à EMEFA — avec ou sans la voix…" aria-label="Écrire une demande" /><button onClick={() => void submitTyped()} disabled={!typed.trim()}>TRANSMETTRE</button></section>
       <div className="model-pill"><span>PROTOCOLE</span><strong>VOICE·LIVE</strong><i>●</i></div>
       {notice && <div className="voice-notice" role="alert">{notice}</div>}
       <ProfilePanel open={profileOpen} firstRun={firstRun} onClose={() => { setProfileOpen(false); setFirstRun(false) }} />

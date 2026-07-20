@@ -47,6 +47,17 @@ Make the existing codebase safe to extend without breaking the working voice pro
 
 Met: see/edit profile ✓, persist business context ✓, reload without losing setup ✓ (server-side persistence). Remaining before closing Phase 2: *conversational* onboarding through the agent itself — deliberately deferred to Phase 3 (voice/text convergence), since today's conversation brain is the ElevenLabs dashboard agent which cannot call our profile APIs. Documented in BACKLOG NEXT.
 
+## Completed — Phase 3 slice 1: text through the EMEFA runtime + first governed skills (2026-07-20)
+
+- **Structured tool-calling in `DeepSeekBrain`** (OpenAI-compatible function calling): tool schemas sent when available, `tool_calls` responses parsed into `RequestedAction` (with `call_id`), prior tool executions replayed to the provider as compliant assistant/tool message pairs. `RequestedAction.call_id` and `AgentTool.parameters` added; engine records call id + arguments in history.
+- **First governed skills** (`emefa/skills.py`): `get_profiles` (PERSONAL_READ → RUN) and `update_business_profile` (LOCAL_WRITE → RUN, JSON-schema parameters, field allowlist, audit event). Registered in the app's `ToolShelf`, so every execution passes the deterministic risk policy. This enables **conversational onboarding**: "Mon entreprise s'appelle Horizon…" persists to the business profile and is visible/correctable in the Profil panel.
+- **Typed input now reaches the backend**: when no voice session is live, the command dock posts to `/v1/agent/runs` (thinking state, per-device conversation continuity, profile-aware replies). All four run statuses surfaced honestly in French, including a truthful "approval flow coming" message for `confirmation_required`. Live-session behavior unchanged (`sendUserMessage`).
+- Tests: backend **45 passing** (4 new: skill handlers, schema exposure, DeepSeek tool-call emission/replay via mock transport, end-to-end run that persists the profile through the gateway); web **6 passing**, lint/build clean.
+
+## Known honest limitation
+
+Voice (ElevenLabs session) and the backend text path still have **separate conversation contexts and separate brains**; they share only the persisted profile. Full convergence requires the voice-routing ADR (custom-LLM/webhook vs LiveKit) and a measured baseline — next major step.
+
 ## In Progress
 
 Nothing mid-flight.

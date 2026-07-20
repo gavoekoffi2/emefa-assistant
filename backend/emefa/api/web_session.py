@@ -6,8 +6,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
-from emefa.api.devices import SESSION_COOKIE, current_device
+from emefa.api.devices import SESSION_COOKIE, current_device, enrollment_guard
 from emefa.domain.devices import Device
+from emefa.observability import audit
 
 router = APIRouter(prefix="/v1/web/session", tags=["web-session"])
 
@@ -27,16 +28,20 @@ def activate_session(
     payload: SessionActivationRequest,
     request: Request,
     response: Response,
+    source: Annotated[str, Depends(enrollment_guard)],
 ) -> SessionResponse:
     settings = request.app.state.settings
     if settings.enrollment_code is None:
         raise HTTPException(status_code=503, detail="Web activation is not configured")
     if not secrets.compare_digest(payload.enrollment_code, settings.enrollment_code):
+        request.app.state.activation_limiter.record_failure(source)
+        audit("web_activation_rejected", source=source)
         raise HTTPException(status_code=403, detail="Invalid activation code")
     if request.app.state.devices.count() >= settings.max_devices:
         raise HTTPException(status_code=409, detail="Browser limit reached")
 
     device, token = request.app.state.devices.enroll(payload.name)
+    audit("web_session_activated", device_id=device.device_id, source=source)
     response.set_cookie(
         key=SESSION_COOKIE,
         value=token,
@@ -60,6 +65,7 @@ def revoke_session(
     device: Annotated[Device, Depends(current_device)],
 ) -> Response:
     request.app.state.devices.revoke(device.device_id)
+    audit("web_session_revoked", device_id=device.device_id)
     response = Response(status_code=204)
     response.delete_cookie(
         key=SESSION_COOKIE,

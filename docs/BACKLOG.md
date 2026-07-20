@@ -2,18 +2,16 @@
 
 > New non-blocking ideas land here instead of derailing the current phase (`CLAUDE_EXECUTION_PROMPT.md` §64).
 
-## NOW (Phase 1 — Foundation Stabilization)
+## NOW (Phase 2 — Assistant Identity & Onboarding)
 
-- `.env.example` + README quickstart (TD-1)
-- Rate limiting/lockout on activation & enrollment (S1)
-- Server-side session/token expiry (S2)
-- Structured logging, request IDs, minimal audit events (S4/TD-7)
-- ADR-001: minimal tenant/user/assistant identity model (TD-5)
-- CI pipeline (GitHub Actions) running existing backend/web checks
+- Migration 2: implicit tenant/user/assistant rows + assistant/business profile tables (ADR-001)
+- Profile read/update endpoints (device-authenticated)
+- Conversational onboarding persisting a correctable summary
+- Profile context injected into `DeepSeekBrain` prompt composition
 
-## NEXT (Phases 2–3)
+Done in Phase 1 (2026-07-20): `.env.example` completed, README quickstart, S1 rate limiting, S2 token expiry, structured logging + request IDs + audit events, migration discipline, ADR-001, CI pipeline.
 
-- Assistant profile + conversational onboarding (business profile, preferences, initial ICP)
+## NEXT (Phase 3)
 - Persist conversation history (replace in-process dict) keyed to identity model
 - Wire `/v1/agent/runs` into the product; confirmation UI for `confirmation_required` replies
 - Structured tool-calling in `DeepSeekBrain` (stop discarding tool descriptions)

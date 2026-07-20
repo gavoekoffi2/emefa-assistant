@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from emefa.api.devices import current_device
 from emefa.domain.devices import Device
+from emefa.observability import audit
 
 router = APIRouter(prefix="/v1/realtime", tags=["realtime"])
 
@@ -32,4 +33,5 @@ async def create_realtime_session(
         raise HTTPException(status_code=502, detail="realtime_provider_rejected_session") from exc
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail="realtime_provider_unavailable") from exc
+    audit("realtime_session_issued", device_id=device.device_id)
     return {"signed_url": signed_url}

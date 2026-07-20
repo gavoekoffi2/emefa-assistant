@@ -17,9 +17,20 @@ Make the existing codebase safe to extend without breaking the working voice pro
 - Key architectural finding documented: voice runs entirely on an ElevenLabs dashboard-configured agent; the governed backend `AgentEngine` (+ risk policy, empty `ToolShelf`) is not called by the frontend — "two disconnected brains".
 - Security findings classified (S1 rate limiting HIGH; S2 token expiry MEDIUM; S3 ungoverned voice persona MEDIUM; S4 no audit/logging LOW).
 
+## Completed — Phase 1 slice 1 (2026-07-20)
+
+- **S1 fixed:** failure-based rate limiting on `POST /v1/web/session` and `/v1/devices/enroll` (`domain/ratelimit.py`; per-source + global buckets; 429 lockout; only failures count). Configurable via `EMEFA_ACTIVATION_MAX_FAILURES` / `EMEFA_ACTIVATION_WINDOW_SECONDS`.
+- **S2 fixed:** device tokens now expire server-side after `EMEFA_SESSION_MAX_AGE_SECONDS` (uses stored `created_at`; expired rows purged lazily on authentication).
+- **Observability baseline:** JSON structured logging (`observability.py`), `X-Request-ID` on every response, request logs (method/path/status/duration) for `/v1/*` and `/health`, audit events (`emefa.audit` logger) for enrollment, activation, rejection, rate-limit hits, revocation, agent runs, realtime session issuance. No secrets or message content logged.
+- **Migration discipline:** numbered `MIGRATIONS` list + `schema_migrations` table in `DeviceRepository` (existing DBs adopt version 1 transparently via `CREATE TABLE IF NOT EXISTS`).
+- **ADR-001** (`docs/adr/ADR-001-identity-model.md`): tenant→user→assistant hierarchy defined; single-tenant instance mode for MVP; devices stay the auth transport. Satisfies the "tenant/auth foundation defined" exit criterion.
+- **Handoff hygiene:** `.env.example` completed (all read settings, none invented); README §24 verified quickstart; dead OpenAI-realtime settings removed from `config.py`.
+- **CI:** `.github/workflows/ci.yml` running backend pytest and web lint/test/build on push/PR.
+- Tests: backend suite now **35 passing** (8 new hardening tests, incl. lockout, expiry+purge, migration tracking, request-ID).
+
 ## In Progress
 
-Phase 1 slice 1 (see Next).
+Nothing mid-flight; next slice not started.
 
 ## Blocked
 
@@ -37,13 +48,13 @@ Phase 1 slice 1 (see Next).
 - SQLite retained for single-instance MVP; unused OpenAI-realtime settings to be removed when `config.py` is next touched.
 - Audit docs written in English (matching spec pack); ops runbook remains French.
 
-## Next (Phase 1 — smallest coherent slice, in order)
+## Next
 
-1. `.env.example` + root README quickstart accuracy.
-2. Rate limiting/lockout on `POST /v1/web/session` and `/v1/devices/enroll` (S1).
-3. Server-side session expiry via `devices.created_at` (S2).
-4. Structured logging + request IDs + minimal audit events (auth, agent runs).
-5. ADR-001 minimal identity model (tenant/user/assistant, single-tenant instance).
-6. GitHub Actions CI running the four existing check commands.
+Phase 1 exit gate (roadmap §17) is now satisfied: app starts, UI untouched and working, build passes, tests pass, no critical secret exposure, tenant/auth foundation defined (ADR-001). Remaining Phase 1-adjacent items moved to backlog NEXT (persist conversation state when identity lands).
 
-Phase 1 exit gate (roadmap §17): app starts, UI works, build passes, tests pass, no critical secret exposure, tenant/auth foundation defined.
+**Phase 2 — Assistant Identity & Onboarding** is the next slice:
+1. Migration 2: implicit tenant/user/assistant rows + `assistant_profile` / `business_profile` tables (per ADR-001).
+2. Backend endpoints to read/update the assistant + business profile (device-authenticated).
+3. Conversational onboarding flow reusing the existing conversation UI; persisted summary the user can correct.
+4. Wire profile context into `DeepSeekBrain` system prompt composition.
+Exit gate: create/configure assistant, minimum onboarding persisted, reload without losing setup (roadmap §22).

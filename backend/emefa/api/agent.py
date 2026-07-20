@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from emefa.api.devices import current_device
 from emefa.domain.agent import AgentReply, RequestedAction
 from emefa.domain.devices import Device
+from emefa.observability import audit
 
 router = APIRouter(prefix="/v1/agent", tags=["agent"])
 
@@ -54,5 +55,13 @@ async def run_agent(
     reply = await request.app.state.agent.run(
         payload.message,
         conversation_id=device.device_id,
+    )
+    audit(
+        "agent_run",
+        device_id=device.device_id,
+        status=reply.status,
+        turns=reply.turns,
+        error=reply.error,
+        pending_action=reply.pending_action.name if reply.pending_action else None,
     )
     return serialize_reply(reply)

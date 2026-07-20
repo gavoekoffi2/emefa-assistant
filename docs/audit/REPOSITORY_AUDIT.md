@@ -63,7 +63,7 @@ Frontend: npm ci                        → OK (no vulnerabilities reported)
                                           (319 kB gzip) — three.js dominates
 ```
 
-The application starts and serves without any secret configured (voice returns 503 `realtime_not_configured`; agent replies "not configured" text). No blockers to local development. `.env.example` **does not exist** — required env vars are only documented in `docs/DEPLOIEMENT.md`.
+The application starts and serves without any secret configured (voice returns 503 `realtime_not_configured`; agent replies "not configured" text). No blockers to local development. A root `.env.example` exists but omitted several settings (database path, cookie/session tuning, web dist path) — completed during Phase 1.
 
 ## 4. Working Features (evidence-based)
 
@@ -116,7 +116,7 @@ Positive controls worth preserving: server-side credential brokerage, hashed tok
 
 | ID | P | Item | Impact |
 |---|---|---|---|
-| TD-1 | P0 | No `.env.example`; setup knowledge lives only in the ops runbook | Handoff/reproducibility (contract requirement) |
+| TD-1 | P0 | Incomplete `.env.example` and no quickstart in README; setup knowledge lives mostly in the ops runbook | Handoff/reproducibility (contract requirement) |
 | TD-2 | P0 | S1 rate limiting (see above) | Security |
 | TD-3 | P1 | Two disconnected brains (ElevenLabs agent vs DeepSeek engine); no shared context between voice and `/v1/agent` | Architecture dead-end for memory/skills; HIGH vendor lock-in |
 | TD-4 | P1 | S2 token expiry | Security |

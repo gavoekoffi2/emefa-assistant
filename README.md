@@ -859,3 +859,26 @@ After this updated README:
 7. `docs/VOICE_ARCHITECTURE.md` — LiveKit/provider-flexible realtime strategy and benchmarks.
 
 **Do not begin broad rewrites before the current-state audit and architecture reconciliation are complete.**
+
+---
+
+## 24. Development Quickstart (verified)
+
+```bash
+# Backend (Python >= 3.11)
+cd backend
+pip install -e ".[test]"
+cp ../.env.example ../.env        # then edit values; EMEFA_COOKIE_SECURE=false for local HTTP
+uvicorn emefa.main:app --port 8765
+python -m pytest                  # test suite
+
+# Frontend (Node 22)
+cd web
+npm ci
+npm run dev                       # proxies /v1 and /health to 127.0.0.1:8765
+npm run lint && npm test && npm run build
+```
+
+Without API keys the app runs fully: voice returns 503 `realtime_not_configured` and the text
+agent answers that the language engine is not configured. Production deployment: see
+`docs/DEPLOIEMENT.md`. Current state and next steps: `docs/IMPLEMENTATION_STATUS.md`.

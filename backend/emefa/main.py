@@ -1,5 +1,6 @@
 """Application factory for the greenfield EMEFA backend."""
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -13,8 +14,17 @@ from emefa.api.web_session import router as web_session_router
 from emefa.config import Settings
 from emefa.domain.agent import AgentEngine, AgentStep, Brain, ToolShelf
 from emefa.domain.devices import DeviceRepository
+from emefa.domain.ratelimit import FailureLimiter
 from emefa.infrastructure.deepseek import DeepSeekBrain
 from emefa.infrastructure.realtime import RealtimeGateway
+from emefa.observability import (
+    configure_logging,
+    monotonic_ms,
+    new_request_id,
+    request_id_var,
+)
+
+request_logger = logging.getLogger("emefa.request")
 
 
 class NotConfiguredBrain:
@@ -23,6 +33,7 @@ class NotConfiguredBrain:
 
 
 def create_app(settings: Settings | None = None, brain: Brain | None = None) -> FastAPI:
+    configure_logging()
     active_settings = settings or Settings()
     selected_brain: Brain
     if brain is not None:
@@ -66,6 +77,33 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     application.state.devices = DeviceRepository(active_settings.database_path)
     application.state.agent = AgentEngine(selected_brain, ToolShelf())
     application.state.realtime = realtime_gateway
+    application.state.activation_limiter = FailureLimiter(
+        max_failures=active_settings.activation_max_failures,
+        window_seconds=active_settings.activation_window_seconds,
+    )
+
+    @application.middleware("http")
+    async def request_context(request: Request, call_next):
+        request_id = new_request_id()
+        token = request_id_var.set(request_id)
+        started = monotonic_ms()
+        try:
+            response = await call_next(request)
+        finally:
+            request_id_var.reset(token)
+        response.headers["X-Request-ID"] = request_id
+        if request.url.path.startswith(("/v1/", "/health")):
+            request_logger.info(
+                "request",
+                extra={
+                    "request_id": request_id,
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status_code": response.status_code,
+                    "duration_ms": round(monotonic_ms() - started, 1),
+                },
+            )
+        return response
 
     @application.middleware("http")
     async def security_headers(request: Request, call_next):

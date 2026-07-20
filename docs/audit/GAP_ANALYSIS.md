@@ -28,7 +28,7 @@
 | PWA / mobile / low bandwidth | PARTIAL | Manifest + SW + mobile CSS exist; 1.2 MB bundle; no offline strategy beyond shell | Phase 1/9: code-split three.js; measure on mobile |
 | 3D immersive identity | READY | Distinctive, state-reactive, reduced-motion aware | PRESERVE; later connect HUD data to real state (currently partly decorative) |
 | Tests / CI | PARTIAL | 27 backend tests good; web tests are regex-based; **no CI pipeline** | Phase 1: add GitHub Actions running the 4 existing check commands |
-| Deployment | READY (single-node) | Docker + Traefik + volume; runbook accurate | KEEP; document `.env.example` (missing) |
+| Deployment | READY (single-node) | Docker + Traefik + volume; runbook accurate | KEEP; complete `.env.example` (was partial) |
 
 ## Subsystem decisions (audit vocabulary from CLAUDE.md §5)
 

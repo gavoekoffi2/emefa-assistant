@@ -12,11 +12,10 @@ class Settings(BaseSettings):
     max_devices: int = 3
     cookie_secure: bool = True
     session_max_age_seconds: int = 2_592_000
+    activation_max_failures: int = 5
+    activation_window_seconds: int = 900
     deepseek_api_key: SecretStr | None = None
     deepseek_model: str = "deepseek-v4-flash"
-    openai_api_key: SecretStr | None = None
-    realtime_model: str = "gpt-realtime-2.1"
-    realtime_voice: str = "marin"
     elevenlabs_api_key: SecretStr | None = None
     elevenlabs_agent_id: str | None = None
     web_dist_path: Path | None = None

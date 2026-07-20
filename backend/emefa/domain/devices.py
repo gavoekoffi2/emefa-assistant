@@ -10,16 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-MIGRATIONS: tuple[str, ...] = (
-    """
-    CREATE TABLE IF NOT EXISTS devices (
-        device_id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        token_hash TEXT NOT NULL UNIQUE,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )
-    """,
-)
+from emefa.domain import storage
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,32 +23,13 @@ class Device:
 class DeviceRepository:
     def __init__(self, database_path: Path) -> None:
         self.database_path = database_path
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
-        self._initialize()
+        storage.run_migrations(database_path)
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path)
-        connection.row_factory = sqlite3.Row
-        return connection
-
-    def _initialize(self) -> None:
-        with self._connect() as connection:
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS schema_migrations "
-                "(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
-            )
-            row = connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
-            current = int(row[0]) if row is not None and row[0] is not None else 0
-            for version, statement in enumerate(MIGRATIONS[current:], start=current + 1):
-                connection.execute(statement)
-                connection.execute(
-                    "INSERT INTO schema_migrations (version) VALUES (?)", (version,)
-                )
+        return storage.connect(self.database_path)
 
     def schema_version(self) -> int:
-        with self._connect() as connection:
-            row = connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
-        return int(row[0]) if row is not None and row[0] is not None else 0
+        return storage.schema_version(self.database_path)
 
     @staticmethod
     def _hash_token(token: str) -> str:

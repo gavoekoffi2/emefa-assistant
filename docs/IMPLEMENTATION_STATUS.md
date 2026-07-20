@@ -28,9 +28,17 @@ Make the existing codebase safe to extend without breaking the working voice pro
 - **CI:** `.github/workflows/ci.yml` running backend pytest and web lint/test/build on push/PR.
 - Tests: backend suite now **35 passing** (8 new hardening tests, incl. lockout, expiry+purge, migration tracking, request-ID).
 
+## Completed — Phase 2 slice 1: identity & profile foundation (2026-07-20)
+
+- **Migration 2** (`domain/storage.py`, shared migration runner extracted from `DeviceRepository`): `tenants` / `users` / `assistants` / `business_profiles` tables with ADR-001 single-tenant seed rows (`ten_default` / `usr_default` / `ast_default`); `devices.user_id` column added. Existing databases upgrade transparently.
+- **`ProfileRepository`** (`domain/profiles.py`): assistant profile (name, primary language, interaction style) and business profile (owner, role, company, industry, offer, target customers, goals, constraints); partial updates; `system_context()` composes the French profile block for the model prompt.
+- **API** (`api/profile.py`): device-authenticated `GET/PATCH /v1/assistant/profile` and `/v1/assistant/business`, length-bounded fields, audit events (field names only, never values).
+- **Prompt composition:** `DeepSeekBrain` accepts a `context_provider`; `create_app` wires `profiles.system_context` so agent replies use assistant identity + business context. Base system prompt de-hard-coded from a single named user.
+- Tests: **41 passing** (6 new: seeding, partial persistence, context composition, auth requirement, API roundtrip, prompt injection of context via mock transport).
+
 ## In Progress
 
-Nothing mid-flight; next slice not started.
+Nothing mid-flight. Remaining for Phase 2 exit gate: conversational onboarding UX in the web app writing to these endpoints (roadmap §19–20 summary + correction), then reload-persistence demo.
 
 ## Blocked
 

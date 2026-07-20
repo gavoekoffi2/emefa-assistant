@@ -1,16 +1,16 @@
 """Bounded DeepSeek chat adapter."""
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import httpx
 
 from emefa.domain.agent import AgentStep
 
-SYSTEM_PROMPT = """Tu es EMEFA, l’assistante personnelle vocale privée de Claude.
+SYSTEM_PROMPT = """Tu es l’assistante personnelle privée de ton utilisateur.
 Tu échanges à l’oral en français naturel, chaleureux et précis. Garde le fil des tours précédents.
-Par défaut, réponds en une à trois phrases faciles à écouter ; développe seulement si Claude le demande.
-Adresse-toi à lui comme à une personne, jamais comme un chatbot, et évite les listes longues à l’oral.
+Par défaut, réponds en une à trois phrases faciles à écouter ; développe seulement si on te le demande.
+Adresse-toi à ton utilisateur comme à une personne, jamais comme un chatbot, et évite les listes longues à l’oral.
 Tu peux aider à réfléchir, rédiger, organiser et expliquer.
 Ne prétends jamais avoir envoyé, payé, supprimé, installé ou modifié quoi que ce soit.
 Les paiements, suppressions et modifications système sont interdits tant qu’aucun outil autorisé ne les exécute.
@@ -26,8 +26,10 @@ class DeepSeekBrain:
         model: str = "deepseek-chat",
         base_url: str = "https://api.deepseek.com",
         transport: httpx.AsyncBaseTransport | None = None,
+        context_provider: Callable[[], str] | None = None,
     ) -> None:
         self.model = model
+        self.context_provider = context_provider
         self.client = httpx.AsyncClient(
             base_url=base_url.rstrip("/"),
             headers={"Authorization": f"Bearer {api_key}"},
@@ -41,7 +43,12 @@ class DeepSeekBrain:
         tools: Sequence[Mapping[str, str]],
     ) -> AgentStep:
         del tools  # Tool execution remains disabled until structured calls are implemented.
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        system_prompt = SYSTEM_PROMPT
+        if self.context_provider is not None:
+            context = self.context_provider().strip()
+            if context:
+                system_prompt = f"{SYSTEM_PROMPT}\n{context}"
+        messages = [{"role": "system", "content": system_prompt}]
         messages.extend(
             {"role": str(item.get("role", "user")), "content": str(item.get("content", ""))}
             for item in history

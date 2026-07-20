@@ -9,11 +9,13 @@ from fastapi.staticfiles import StaticFiles
 from emefa import __version__
 from emefa.api.agent import router as agent_router
 from emefa.api.devices import router as devices_router
+from emefa.api.profile import router as profile_router
 from emefa.api.realtime import router as realtime_router
 from emefa.api.web_session import router as web_session_router
 from emefa.config import Settings
 from emefa.domain.agent import AgentEngine, AgentStep, Brain, ToolShelf
 from emefa.domain.devices import DeviceRepository
+from emefa.domain.profiles import ProfileRepository
 from emefa.domain.ratelimit import FailureLimiter
 from emefa.infrastructure.deepseek import DeepSeekBrain
 from emefa.infrastructure.realtime import RealtimeGateway
@@ -35,6 +37,7 @@ class NotConfiguredBrain:
 def create_app(settings: Settings | None = None, brain: Brain | None = None) -> FastAPI:
     configure_logging()
     active_settings = settings or Settings()
+    profiles = ProfileRepository(active_settings.database_path)
     selected_brain: Brain
     if brain is not None:
         selected_brain = brain
@@ -45,6 +48,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
         selected_brain = DeepSeekBrain(
             api_key=active_settings.deepseek_api_key.get_secret_value().strip(),
             model=active_settings.deepseek_model,
+            context_provider=profiles.system_context,
         )
     else:
         selected_brain = NotConfiguredBrain()
@@ -75,6 +79,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     )
     application.state.settings = active_settings
     application.state.devices = DeviceRepository(active_settings.database_path)
+    application.state.profiles = profiles
     application.state.agent = AgentEngine(selected_brain, ToolShelf())
     application.state.realtime = realtime_gateway
     application.state.activation_limiter = FailureLimiter(
@@ -134,6 +139,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     application.include_router(devices_router)
     application.include_router(web_session_router)
     application.include_router(agent_router)
+    application.include_router(profile_router)
     application.include_router(realtime_router)
     if active_settings.web_dist_path is not None and active_settings.web_dist_path.is_dir():
         application.mount(

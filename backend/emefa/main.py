@@ -22,10 +22,12 @@ from emefa.domain.approvals import ApprovalRepository
 from emefa.domain.conversations import ConversationStore
 from emefa.domain.devices import DeviceRepository
 from emefa.domain.profiles import ProfileRepository
+from emefa.domain.email import EmailProvider
 from emefa.domain.memories import MemoryRepository
 from emefa.domain.ratelimit import FailureLimiter
 from emefa.domain.tasks import TaskRepository
 from emefa.infrastructure.deepseek import DeepSeekBrain
+from emefa.infrastructure.email import HimalayaEmailProvider
 from emefa.infrastructure.realtime import RealtimeGateway
 from emefa.infrastructure.voice_llm import VoiceLLMProxy
 from emefa.observability import (
@@ -44,12 +46,23 @@ class NotConfiguredBrain:
         return AgentStep(answer="Le moteur de langage EMEFA n’est pas encore configuré.")
 
 
-def create_app(settings: Settings | None = None, brain: Brain | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    brain: Brain | None = None,
+    email_provider: EmailProvider | None = None,
+) -> FastAPI:
     configure_logging()
     active_settings = settings or Settings()
     profiles = ProfileRepository(active_settings.database_path)
     tasks = TaskRepository(active_settings.database_path)
     memories = MemoryRepository(active_settings.database_path)
+    active_email_provider = email_provider
+    if active_email_provider is None and active_settings.email_account:
+        active_email_provider = HimalayaEmailProvider(
+            account=active_settings.email_account,
+            binary=active_settings.himalaya_binary,
+            config=active_settings.himalaya_config,
+        )
 
     def compose_context() -> str:
         """Profile context plus the bounded durable-memory block.
@@ -139,7 +152,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     application.state.compose_context = compose_context
     application.state.agent = AgentEngine(
         selected_brain,
-        build_tool_shelf(profiles, tasks, memories),
+        build_tool_shelf(profiles, tasks, memories, active_email_provider),
         memory=ConversationStore(active_settings.database_path),
     )
     application.state.approvals = ApprovalRepository(active_settings.database_path)

@@ -66,6 +66,31 @@ curl -fsS https://emefa.76.13.129.252.sslip.io/health
 
 Sans clé, l’application reste accessible et activable, mais affiche que le moteur de langage n’est pas encore configuré.
 
+## Connecteur e-mail provisoire et MCP Google Workspace
+
+Pour les essais, EMEFA peut utiliser le compte Himalaya `graphistegpt` via quatre
+compétences gouvernées : recherche, lecture en aperçu, création de brouillon et
+envoi. L’envoi est classé `communicate` et ne s’exécute qu’après approbation
+explicite portant sur le destinataire, l’objet et le corps exacts.
+
+Configuration du conteneur :
+
+```dotenv
+EMEFA_EMAIL_ACCOUNT=graphistegpt
+EMEFA_HIMALAYA_BINARY=/usr/local/bin/himalaya
+EMEFA_HIMALAYA_CONFIG=/run/secrets/himalaya/config.toml
+```
+
+Le binaire et le dossier de configuration sont montés en lecture seule. Les
+identifiants ne doivent jamais être copiés dans le dépôt ni exposés à l’API.
+
+Pour l’intégration Google Workspace définitive, le candidat retenu est
+[`taylorwilsdon/google_workspace_mcp`](https://github.com/taylorwilsdon/google_workspace_mcp) :
+serveur MCP MIT actif couvrant Gmail, Calendar, Drive, Docs, Sheets, Slides,
+Forms, Tasks, Contacts et Chat, avec OAuth 2.1. Il remplacera l’adaptateur
+Himalaya derrière l’interface `EmailProvider`; il ne doit pas être ajouté au MCP
+global de Hermes comme substitut à l’intégration autonome d’EMEFA.
+
 ## Coût IA
 
 Tarifs officiels DeepSeek consultés lors du déploiement :

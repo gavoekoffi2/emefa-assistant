@@ -12,6 +12,7 @@ from datetime import date
 from typing import Any
 
 from emefa.domain.agent import AgentTool, ToolShelf
+from emefa.domain.email import EmailProvider
 from emefa.domain.memories import CATEGORIES, MemoryRepository
 from emefa.domain.policy import ActionRisk
 from emefa.domain.profiles import ASSISTANT_FIELDS, BUSINESS_FIELDS, ProfileRepository
@@ -34,6 +35,7 @@ def build_tool_shelf(
     profiles: ProfileRepository,
     tasks: TaskRepository | None = None,
     memories: MemoryRepository | None = None,
+    email_provider: EmailProvider | None = None,
 ) -> ToolShelf:
     shelf = ToolShelf()
 
@@ -166,7 +168,85 @@ def build_tool_shelf(
         _add_task_skills(shelf, tasks, profiles)
     if memories is not None:
         _add_memory_skills(shelf, memories)
+    if email_provider is not None:
+        _add_email_skills(shelf, email_provider)
     return shelf
+
+
+def _add_email_skills(shelf: ToolShelf, provider: EmailProvider) -> None:
+    def search(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        query = str(arguments.get("query", "")).strip()[:300]
+        limit = max(1, min(int(arguments.get("limit", 10)), 20))
+        messages = [dict(item) for item in provider.search(query, limit)]
+        return {"count": len(messages), "messages": messages}
+
+    def read(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        return dict(provider.read(str(arguments.get("message_id", "")).strip()))
+
+    def draft(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        return dict(provider.create_draft(
+            str(arguments.get("to", "")),
+            str(arguments.get("subject", "")),
+            str(arguments.get("body", "")),
+        ))
+
+    def send(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        return dict(provider.send(
+            str(arguments.get("to", "")),
+            str(arguments.get("subject", "")),
+            str(arguments.get("body", "")),
+        ))
+
+    message_schema = {
+        "type": "object",
+        "properties": {
+            "to": {"type": "string", "description": "Adresse e-mail exacte du destinataire"},
+            "subject": {"type": "string", "description": "Objet exact"},
+            "body": {"type": "string", "description": "Corps exact du message"},
+        },
+        "required": ["to", "subject", "body"],
+        "additionalProperties": False,
+    }
+    shelf.add(AgentTool(
+        name="email_search",
+        description="Recherche des e-mails dans la boîte connectée sans les modifier.",
+        risk=ActionRisk.PERSONAL_READ,
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Mots à rechercher dans l'objet ou le corps"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+            },
+            "additionalProperties": False,
+        },
+        handler=search,
+    ))
+    shelf.add(AgentTool(
+        name="email_read",
+        description="Lit un e-mail précis sans le marquer comme lu.",
+        risk=ActionRisk.PERSONAL_READ,
+        parameters={
+            "type": "object",
+            "properties": {"message_id": {"type": "string"}},
+            "required": ["message_id"],
+            "additionalProperties": False,
+        },
+        handler=read,
+    ))
+    shelf.add(AgentTool(
+        name="email_create_draft",
+        description="Crée un brouillon d'e-mail sans l'envoyer.",
+        risk=ActionRisk.LOCAL_WRITE,
+        parameters=message_schema,
+        handler=draft,
+    ))
+    shelf.add(AgentTool(
+        name="email_send",
+        description="Envoie un e-mail. Toujours demander une confirmation explicite avant l'envoi.",
+        risk=ActionRisk.COMMUNICATE,
+        parameters=message_schema,
+        handler=send,
+    ))
 
 
 def _add_memory_skills(shelf: ToolShelf, memories: MemoryRepository) -> None:

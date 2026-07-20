@@ -147,6 +147,16 @@ Beyond the 74 backend / 10 web automated tests, the actual product was booted (u
 
 The only step never exercised against the real OpenRouter service is the network call itself — to be confirmed at first production start (see Blocked list).
 
+## Completed — voice↔text conversation convergence (2026-07-20)
+
+- **Voice exchanges are now persisted** by the Custom-LLM bridge into the shared `ConversationStore` under `voice:default` (single-user channel; the bridge has no device binding — revisit at multi-tenant time). Non-streaming answers are captured directly; streamed answers are **reassembled from SSE deltas** in a passthrough relay that never delays the audio path.
+- **Cross-channel context:** the text brain's context now appends a bounded recap (last 6 turns, 200 chars each) of recent voice exchanges — a conversation started by voice can continue in writing. The recap is deliberately absent from the voice bridge's own context (the provider already receives the full voice history in each request), avoiding duplication.
+- **"Effacer la conversation" wipes both channels** (device text history + voice channel).
+- The app now uses a single shared `ConversationStore` instance (engine + bridge + context composition).
+- Tests: backend **77 passing** (persistence + text-context recap + no-duplication guarantee, SSE reassembly incl. UTF-8 split, both-channel wipe); web unchanged (10 passing).
+
+With this, the Phase 3 "text and voice share context" exit criterion is implemented in both directions (voice gets profile+memory; text gets voice recap). Live validation still requires the owner's ElevenLabs dashboard switch.
+
 ## In Progress
 
 Nothing mid-flight.

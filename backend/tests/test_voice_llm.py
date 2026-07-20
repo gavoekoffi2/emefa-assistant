@@ -136,3 +136,78 @@ async def test_upstream_error_maps_to_502(tmp_path):
             headers={"Authorization": "Bearer voice-secret"},
         )
     assert response.status_code == 502
+
+
+@pytest.mark.asyncio
+async def test_voice_exchange_is_persisted_and_shared_with_text_context(tmp_path):
+    def upstream(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "La réunion est confirmée pour jeudi."}}]},
+        )
+
+    app = make_app(tmp_path, upstream_handler=upstream)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as web:
+        response = await web.post(
+            "/v1/voice-llm/chat/completions",
+            json={"messages": [{"role": "user", "content": "Confirme la réunion de jeudi"}]},
+            headers={"Authorization": "Bearer voice-secret"},
+        )
+    assert response.status_code == 200
+    text_context = app.state.compose_text_context()
+    assert "Derniers échanges vocaux" in text_context
+    assert "Confirme la réunion de jeudi" in text_context
+    assert "La réunion est confirmée pour jeudi." in text_context
+    # The voice bridge context must NOT duplicate the recap: the provider
+    # already receives the full voice history in the request messages.
+    assert "Derniers échanges vocaux" not in app.state.compose_context()
+
+
+@pytest.mark.asyncio
+async def test_streamed_voice_answer_is_reassembled_and_persisted(tmp_path):
+    async def chunk_stream():
+        yield b'data: {"choices":[{"delta":{"content":"Bien "}}]}\n\n'
+        yield b'data: {"choices":[{"delta":{"content":"re\xc3\xa7u."}}]}\n\n'
+        yield b"data: [DONE]\n\n"
+
+    def upstream(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=chunk_stream(), headers={"content-type": "text/event-stream"}
+        )
+
+    app = make_app(tmp_path, upstream_handler=upstream)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as web:
+        response = await web.post(
+            "/v1/voice-llm/chat/completions",
+            json={"stream": True, "messages": [{"role": "user", "content": "Note bien"}]},
+            headers={"Authorization": "Bearer voice-secret"},
+        )
+        assert response.status_code == 200
+    text_context = app.state.compose_text_context()
+    assert "Bien reçu." in text_context
+    assert "Note bien" in text_context
+
+
+@pytest.mark.asyncio
+async def test_conversation_clear_also_wipes_voice_channel(tmp_path):
+    def upstream(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": {"content": "Compris."}}]})
+
+    app = make_app(tmp_path, upstream_handler=upstream)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as web:
+        await web.post(
+            "/v1/web/session",
+            json={"name": "Navigateur", "enrollment_code": "CODE-SECRET"},
+        )
+        await web.post(
+            "/v1/voice-llm/chat/completions",
+            json={"messages": [{"role": "user", "content": "Souviens-toi de ça"}]},
+            headers={"Authorization": "Bearer voice-secret"},
+        )
+        assert "Derniers échanges vocaux" in app.state.compose_text_context()
+        cleared = await web.delete("/v1/agent/conversation")
+        assert cleared.status_code == 204
+    assert "Derniers échanges vocaux" not in app.state.compose_text_context()

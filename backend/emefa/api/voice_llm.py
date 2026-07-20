@@ -1,15 +1,61 @@
 """OpenAI-compatible endpoint consumed by the ElevenLabs Custom LLM bridge."""
 
 import hmac
+import json
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
+from emefa.domain.conversations import VOICE_CONVERSATION_ID
 from emefa.observability import audit
 
 router = APIRouter(prefix="/v1/voice-llm", tags=["voice-llm"])
+
+
+def _persist_voice_exchange(request: Request, payload: dict[str, Any], answer: str) -> None:
+    """Store the latest voice exchange so text conversations can continue it."""
+    answer = answer.strip()
+    if not answer:
+        return
+    memory = request.app.state.agent.memory
+    extend = getattr(memory, "extend", None)
+    if not callable(extend):
+        return
+    entries: list[dict[str, Any]] = []
+    last_user = next(
+        (
+            message.get("content")
+            for message in reversed(payload.get("messages") or [])
+            if message.get("role") == "user" and isinstance(message.get("content"), str)
+        ),
+        None,
+    )
+    if last_user and last_user.strip():
+        entries.append({"role": "user", "content": last_user.strip()[:2_000], "channel": "voice"})
+    entries.append({"role": "assistant", "content": answer[:2_000], "channel": "voice"})
+    extend(VOICE_CONVERSATION_ID, entries)
+
+
+def _collect_sse_answer(raw: bytes) -> str:
+    """Reassemble the assistant text from OpenAI-style SSE delta chunks."""
+    parts: list[str] = []
+    for line in raw.decode("utf-8", errors="ignore").splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if not data or data == "[DONE]":
+            continue
+        try:
+            delta = json.loads(data)["choices"][0].get("delta", {}).get("content")
+        except (ValueError, KeyError, IndexError, TypeError):
+            continue
+        if isinstance(delta, str):
+            parts.append(delta)
+    return "".join(parts)
 
 
 def _authorize(request: Request) -> None:
@@ -66,8 +112,18 @@ async def voice_chat_completions(request: Request):
             await upstream.aclose()
             audit("voice_llm_upstream_error", status_code=upstream.status_code)
             raise HTTPException(status_code=502, detail="voice_llm_upstream_error")
+
+        async def relay():
+            raw = b""
+            try:
+                async for chunk in upstream.aiter_raw():
+                    raw += chunk
+                    yield chunk
+            finally:
+                _persist_voice_exchange(request, payload, _collect_sse_answer(raw))
+
         return StreamingResponse(
-            upstream.aiter_raw(),
+            relay(),
             media_type="text/event-stream",
             background=BackgroundTask(upstream.aclose),
         )
@@ -79,4 +135,10 @@ async def voice_chat_completions(request: Request):
     if response.status_code != 200:
         audit("voice_llm_upstream_error", status_code=response.status_code)
         raise HTTPException(status_code=502, detail="voice_llm_upstream_error")
-    return JSONResponse(response.json())
+    body = response.json()
+    try:
+        answer = body["choices"][0]["message"].get("content") or ""
+    except (KeyError, IndexError, TypeError):
+        answer = ""
+    _persist_voice_exchange(request, payload, answer)
+    return JSONResponse(body)

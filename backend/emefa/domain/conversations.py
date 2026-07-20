@@ -9,6 +9,9 @@ from typing import Any
 
 from emefa.domain import storage
 
+# Single-user voice channel; the ElevenLabs bridge has no device binding.
+VOICE_CONVERSATION_ID = "voice:default"
+
 
 class ConversationStore:
     def __init__(self, database_path: Path) -> None:

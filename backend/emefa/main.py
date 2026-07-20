@@ -19,7 +19,7 @@ from emefa.api.web_session import router as web_session_router
 from emefa.config import Settings
 from emefa.domain.agent import AgentEngine, AgentStep, Brain
 from emefa.domain.approvals import ApprovalRepository
-from emefa.domain.conversations import ConversationStore
+from emefa.domain.conversations import VOICE_CONVERSATION_ID, ConversationStore
 from emefa.domain.devices import DeviceRepository
 from emefa.domain.profiles import ProfileRepository
 from emefa.domain.memories import MemoryRepository
@@ -50,6 +50,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     profiles = ProfileRepository(active_settings.database_path)
     tasks = TaskRepository(active_settings.database_path)
     memories = MemoryRepository(active_settings.database_path)
+    conversations = ConversationStore(active_settings.database_path)
 
     def compose_context() -> str:
         """Profile context plus the bounded durable-memory block.
@@ -68,6 +69,22 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
         if memory_block:
             parts.append(memory_block)
         return "\n".join(part for part in parts if part)
+
+    def compose_text_context() -> str:
+        """Text-brain context: shared context plus a bounded recap of the
+        latest voice exchanges, so a spoken conversation can continue in
+        writing. The voice bridge itself receives the voice history from the
+        provider, so the recap is deliberately absent from compose_context().
+        """
+        parts = [compose_context()]
+        voice_turns = conversations.recent(VOICE_CONVERSATION_ID, limit=6)
+        if voice_turns:
+            lines = ["Derniers échanges vocaux avec l'utilisateur (même assistante) :"]
+            for turn in voice_turns:
+                speaker = "Utilisateur" if turn.get("role") == "user" else "EMEFA"
+                lines.append(f"- {speaker} : {str(turn.get('content', ''))[:200]}")
+            parts.append("\n".join(lines))
+        return "\n".join(parts)
     # Resolve the OpenAI-compatible LLM provider once; the text brain and the
     # voice Custom-LLM bridge share it. DeepSeek direct wins over OpenRouter.
     llm_api_key: str | None = None
@@ -94,7 +111,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
             api_key=llm_api_key,
             model=llm_model,
             base_url=llm_base_url,
-            context_provider=compose_context,
+            context_provider=compose_text_context,
         )
     else:
         selected_brain = NotConfiguredBrain()
@@ -137,10 +154,12 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     application.state.tasks = tasks
     application.state.memories = memories
     application.state.compose_context = compose_context
+    application.state.compose_text_context = compose_text_context
+    application.state.conversations = conversations
     application.state.agent = AgentEngine(
         selected_brain,
         build_tool_shelf(profiles, tasks, memories),
-        memory=ConversationStore(active_settings.database_path),
+        memory=conversations,
     )
     application.state.approvals = ApprovalRepository(active_settings.database_path)
     application.state.brain_configured = brain_configured

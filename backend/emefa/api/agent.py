@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from emefa.api.devices import current_device
 from emefa.domain.agent import AgentReply, RequestedAction
+from emefa.domain.conversations import VOICE_CONVERSATION_ID
 from emefa.domain.devices import Device
 from emefa.observability import audit
 
@@ -108,6 +109,7 @@ def clear_conversation(
     forget = getattr(memory, "forget", None)
     if callable(forget):
         forget(device.device_id)
+        forget(VOICE_CONVERSATION_ID)
     audit("conversation_cleared", device_id=device.device_id)
 
 

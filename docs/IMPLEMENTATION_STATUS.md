@@ -138,6 +138,15 @@ Phase 4 exit gate status: memory survives sessions ✅, explicit preference ✅,
 - **Mémoire panel**: "Exporter la mémoire" and "Effacer la conversation" buttons with honest status feedback.
 - Tests: backend **74 passing** (export attachment, conversation clear verified through the brain's next-turn history, framing assertion); web **10 passing**; lint/build clean.
 
+## Verified — real-server end-to-end run (2026-07-20)
+
+Beyond the 74 backend / 10 web automated tests, the actual product was booted (uvicorn + built frontend) and the full user journey exercised over HTTP:
+
+- **Without any provider key:** wrong activation code → 403; activation → session cookie; `/v1/system/status` reports `brain_configured: false` honestly with 11 skills; typed request answers "Le moteur de langage EMEFA n'est pas encore configuré."; tasks/memories empty; memory export downloads as attachment; conversation wipe → 204; voice bridge → 503; the lazy hologram chunk is served.
+- **With the production configuration path** (env vars pointing the OpenRouter settings at a local OpenAI-compatible mock, since the dev sandbox blocks `openrouter.ai`): `brain_configured: true`; "Retiens que le fournisseur livre le mardi" → tool call → `remember` skill → memory persisted (visible via `/v1/memories`) → answer in 2 turns; the voice bridge streams SSE with the correct bearer token and rejects a wrong token with 401.
+
+The only step never exercised against the real OpenRouter service is the network call itself — to be confirmed at first production start (see Blocked list).
+
 ## In Progress
 
 Nothing mid-flight.

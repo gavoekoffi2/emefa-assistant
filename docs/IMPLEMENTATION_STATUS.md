@@ -65,9 +65,19 @@ Voice (ElevenLabs session) and the backend text path still have **separate conve
 - **`AgentEngine`** now takes a `ConversationMemory` (protocol) — the app injects the SQLite store; an in-process fallback remains for tests. Text conversations survive server restarts and are correct under future multi-worker setups (TD-6 resolved for the text path).
 - Tests: **48 passing** (3 new: store roundtrip/trim/forget, engine restart continuity, API-level continuity across `create_app` instances).
 
+## Completed — mobile bundle slimming (2026-07-20)
+
+- `HolographicUniverse` (three.js) is now a lazily loaded chunk: initial JS 1,203 kB → 669 kB (gzip 319 kB → 185 kB); hologram chunk 540 kB loads asynchronously after the shell (TD-9 first step). No behavior change; reduced-motion and mobile budgets unchanged.
+
 ## In Progress
 
 Nothing mid-flight.
+
+## Blocked on product owner
+
+1. **ElevenLabs agent governance (S3):** need the dashboard agent's persona/config exported into the repo, or API access to fetch it.
+2. **Voice routing ADR + baseline benchmark:** requires live credentials to measure latency/interruption/cost before choosing ElevenLabs custom-LLM vs LiveKit.
+3. **First external integrations (email/calendar/documents):** provider choices and credentials needed before Phase 5/6 slices can be real (no fake integrations).
 
 ## Blocked
 

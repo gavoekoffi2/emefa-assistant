@@ -1,8 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { useConversation } from '@elevenlabs/react'
 import { api, BrandMark, graphNodes, palette, statusCopy, VoiceOrb } from './App'
-import { HolographicUniverse } from './HolographicUniverse'
 import { isBusinessEmpty, ProfilePanel } from './ProfilePanel'
+
+// three.js is heavy; load the hologram as its own chunk so the shell stays light.
+const HolographicUniverse = lazy(() =>
+  import('./HolographicUniverse').then((module) => ({ default: module.HolographicUniverse })),
+)
 import type { BusinessProfile } from './ProfilePanel'
 import type { Session, VoiceState } from './App'
 
@@ -135,7 +139,9 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
 
   return (
     <div className={`jarvis-shell state-${state}`}>
-      <HolographicUniverse activeNodes={activeNodes} voiceState={state} />
+      <Suspense fallback={null}>
+        <HolographicUniverse activeNodes={activeNodes} voiceState={state} />
+      </Suspense>
       <div className="hud-atmosphere" aria-hidden="true"><span className="scan-beam" /><span className="film-grain" /></div>
       <div className="hud-frame" aria-hidden="true"><i className="corner top-left" /><i className="corner top-right" /><i className="corner bottom-left" /><i className="corner bottom-right" /></div>
       <div className="space-vignette" />

@@ -87,6 +87,13 @@ Voice (ElevenLabs session) and the backend text path still have **separate conve
 - **`GET /v1/tasks`** (device-authenticated) exposes open tasks with buckets for the future tasks/brief UI.
 - Tests: backend **55 passing** (repository incl. buckets/ordering/idempotence, skill flow incl. error paths, conversation→API end-to-end).
 
+## Completed — daily brief + tasks HUD panel (2026-07-20)
+
+- **`get_daily_brief` skill** (PERSONAL_READ): deterministic brief composition — open tasks grouped by bucket, count, business goals and company name. The flagship demo question "Qu'est-ce qui mérite mon attention aujourd'hui ?" now has grounded data behind it.
+- **`POST /v1/tasks/{id}/complete`** (device-authenticated, audited, 404 once closed).
+- **Tasks panel** in the HUD ("Tâches" nav): open commitments grouped En retard / Aujourd'hui / À venir / Sans échéance, per-task Terminer button, empty-state guidance, and a "Brief du jour" quick action that sends the flagship question through the active channel (voice session if live, EMEFA runtime otherwise). `sendMessage` extracted so typed input, quick actions, and future buttons share one path.
+- Tests: backend **57 passing** (brief composition, completion endpoint idempotence), web **8 passing**; lint/build clean.
+
 ## In Progress
 
 Nothing mid-flight.

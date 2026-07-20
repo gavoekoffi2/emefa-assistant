@@ -40,6 +40,17 @@ test('typed input reaches the EMEFA runtime when the voice session is offline', 
   assert.match(source, /agentErrorCopy/)
 })
 
+test('tasks panel lists commitments and offers the daily brief', () => {
+  const tasksPanel = readFileSync(new URL('../src/TasksPanel.tsx', import.meta.url), 'utf8')
+  assert.match(tasksPanel, /\/v1\/tasks/)
+  assert.match(tasksPanel, /complete/)
+  assert.match(tasksPanel, /En retard/)
+  assert.match(tasksPanel, /Brief du jour/)
+  assert.match(source, /TasksPanel/)
+  assert.match(source, /askBrief/)
+  assert.match(source, /Qu’est-ce qui mérite mon attention aujourd’hui/)
+})
+
 test('consequential actions surface an explicit approval card', () => {
   assert.match(source, /\/v1\/agent\/approvals/)
   assert.match(source, /decideApproval/)

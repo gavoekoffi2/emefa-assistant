@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import asdict
+from datetime import date
 from typing import Any
 
 from emefa.domain.agent import AgentTool, ToolShelf
@@ -114,11 +115,13 @@ def build_tool_shelf(profiles: ProfileRepository, tasks: TaskRepository | None =
         )
     )
     if tasks is not None:
-        _add_task_skills(shelf, tasks)
+        _add_task_skills(shelf, tasks, profiles)
     return shelf
 
 
-def _add_task_skills(shelf: ToolShelf, tasks: TaskRepository) -> None:
+def _add_task_skills(
+    shelf: ToolShelf, tasks: TaskRepository, profiles: ProfileRepository
+) -> None:
     def create_task(arguments: Mapping[str, Any]) -> dict[str, Any]:
         title = str(arguments.get("title", "")).strip()[:200]
         if not title:
@@ -148,6 +151,39 @@ def _add_task_skills(shelf: ToolShelf, tasks: TaskRepository) -> None:
             return {"error": "task_not_found_or_not_open"}
         audit("skill_task_completed", task_id=task.task_id)
         return {"task": asdict(task)}
+
+    def daily_brief(_arguments: Mapping[str, Any]) -> dict[str, Any]:
+        buckets: dict[str, list[dict[str, Any]]] = {
+            "en_retard": [],
+            "aujourdhui": [],
+            "a_venir": [],
+            "sans_echeance": [],
+        }
+        for task in tasks.list_open():
+            buckets[task.bucket()].append(
+                {"task_id": task.task_id, "title": task.title, "due_date": task.due_date}
+            )
+        business = profiles.get_business()
+        return {
+            "date": date.today().isoformat(),
+            "open_task_count": sum(len(items) for items in buckets.values()),
+            "tasks": buckets,
+            "goals": business.goals,
+            "company_name": business.company_name,
+        }
+
+    shelf.add(
+        AgentTool(
+            name="get_daily_brief",
+            description=(
+                "Compose le brief du jour : tâches ouvertes classées (en retard, "
+                "aujourd'hui, à venir, sans échéance) et objectifs professionnels. "
+                "À utiliser quand l'utilisateur demande ce qui mérite son attention."
+            ),
+            risk=ActionRisk.PERSONAL_READ,
+            handler=daily_brief,
+        )
+    )
 
     shelf.add(
         AgentTool(

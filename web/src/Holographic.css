@@ -104,3 +104,14 @@
 .approval-approve{border:1px solid rgba(255,157,87,.65);background:rgba(255,157,87,.16);color:#ffd9b3;font-weight:600}
 .approval-approve:hover{background:rgba(255,157,87,.3)}
 @media(max-width:800px){.approval-card{right:16px;left:16px;bottom:110px;width:auto}}
+
+/* Tasks panel */
+.task-group{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+.task-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid rgba(var(--hud-rgb,110 234 255),.18);border-radius:10px;background:rgba(4,14,26,.7)}
+.task-row div{display:flex;flex-direction:column;gap:2px}
+.task-row strong{font-size:.9rem;color:#eafaff}
+.task-row small{font-size:.72rem;color:rgba(200,228,242,.6)}
+.task-row button{flex:none;padding:7px 14px;border:1px solid rgba(var(--hud-rgb,110 234 255),.4);border-radius:9px;background:transparent;color:var(--hud,#6eeaff);font-size:.78rem;cursor:pointer}
+.task-row button:hover{background:rgba(var(--hud-rgb,110 234 255),.12)}
+.bucket-en_retard{color:#ff8da1}
+.bucket-aujourdhui{color:var(--accent,#ff9d57)}

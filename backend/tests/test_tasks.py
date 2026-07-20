@@ -99,3 +99,46 @@ async def test_task_created_through_conversation_and_visible_via_api(tmp_path):
     assert len(tasks) == 1
     assert tasks[0]["title"] == "Relancer Horizon"
     assert tasks[0]["bucket"] == "aujourdhui"
+
+
+def test_daily_brief_skill_composes_tasks_and_goals(tmp_path):
+    profiles = ProfileRepository(tmp_path / "brief.db")
+    profiles.update_business({"goals": "10 nouveaux clients", "company_name": "Horizon SARL"})
+    tasks = TaskRepository(tmp_path / "brief.db")
+    tasks.create("Relancer Horizon", due_date=date.today().isoformat())
+    tasks.create("Classer les documents")
+
+    shelf = build_tool_shelf(profiles, tasks)
+    brief = shelf.get("get_daily_brief").handler({})
+    assert brief["date"] == date.today().isoformat()
+    assert brief["open_task_count"] == 2
+    assert brief["tasks"]["aujourdhui"][0]["title"] == "Relancer Horizon"
+    assert brief["tasks"]["sans_echeance"][0]["title"] == "Classer les documents"
+    assert brief["goals"] == "10 nouveaux clients"
+    assert brief["company_name"] == "Horizon SARL"
+
+
+@pytest.mark.asyncio
+async def test_complete_endpoint_closes_task_once(tmp_path):
+    app = create_app(
+        Settings(
+            enrollment_code="CODE-SECRET",
+            database_path=tmp_path / "complete.db",
+            cookie_secure=False,
+        ),
+        brain=ScriptedBrain([]),
+    )
+    repository = TaskRepository(tmp_path / "complete.db")
+    task = repository.create("Relancer Horizon")
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as web:
+        await web.post(
+            "/v1/web/session",
+            json={"name": "Navigateur", "enrollment_code": "CODE-SECRET"},
+        )
+        done = await web.post(f"/v1/tasks/{task.task_id}/complete")
+        assert done.status_code == 200
+        assert done.json()["status"] == "done"
+        again = await web.post(f"/v1/tasks/{task.task_id}/complete")
+        assert again.status_code == 404
+        assert (await web.get("/v1/tasks")).json() == []

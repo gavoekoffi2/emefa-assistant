@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { useConversation } from '@elevenlabs/react'
 import { api, BrandMark, graphNodes, palette, statusCopy, VoiceOrb } from './App'
 import { isBusinessEmpty, ProfilePanel } from './ProfilePanel'
+import { TasksPanel } from './TasksPanel'
 
 // three.js is heavy; load the hologram as its own chunk so the shell stays light.
 const HolographicUniverse = lazy(() =>
@@ -53,6 +54,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   const [activeNodes, setActiveNodes] = useState<number[]>([0])
   const [typed, setTyped] = useState('')
   const [profileOpen, setProfileOpen] = useState(false)
+  const [tasksOpen, setTasksOpen] = useState(false)
   const [firstRun, setFirstRun] = useState(false)
   const [approval, setApproval] = useState<PendingApproval | null>(null)
   const [deciding, setDeciding] = useState(false)
@@ -161,10 +163,8 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
     await startRealtime()
   }
 
-  const submitTyped = async () => {
-    const value = typed.trim()
-    if (!value) return
-    setTyped(''); setNotice(''); setTranscript(value)
+  const sendMessage = async (value: string) => {
+    setNotice(''); setTranscript(value)
     setHistory((current) => [...current.slice(-7), { id: crypto.randomUUID(), role: 'user', text: value }])
     setState('thinking')
     if (conversation.status === 'connected') { conversation.sendUserMessage(value); return }
@@ -176,6 +176,15 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       setNotice(cause instanceof Error ? cause.message : 'La demande n’a pas abouti.')
     }
   }
+
+  const submitTyped = () => {
+    const value = typed.trim()
+    if (!value) return
+    setTyped('')
+    void sendMessage(value)
+  }
+
+  const askBrief = () => void sendMessage('Qu’est-ce qui mérite mon attention aujourd’hui ?')
   const latestUser = useMemo(() => [...history].reverse().find((turn) => turn.role === 'user')?.text, [history])
 
   return (
@@ -188,7 +197,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       <div className="space-vignette" />
       <header className="jarvis-header">
         <div className="brand-row"><BrandMark /><div><strong>EMEFA</strong><small>INTELLIGENCE COGNITIVE</small></div></div>
-        <nav><button className={profileOpen ? '' : 'nav-active'} onClick={() => setProfileOpen(false)}>Univers</button><button className={profileOpen ? 'nav-active' : ''} onClick={() => setProfileOpen(true)}>Profil</button></nav>
+        <nav><button className={profileOpen || tasksOpen ? '' : 'nav-active'} onClick={() => { setProfileOpen(false); setTasksOpen(false) }}>Univers</button><button className={tasksOpen ? 'nav-active' : ''} onClick={() => { setProfileOpen(false); setTasksOpen(true) }}>Tâches</button><button className={profileOpen ? 'nav-active' : ''} onClick={() => { setTasksOpen(false); setProfileOpen(true) }}>Profil</button></nav>
         <div className="header-right"><span className="system-clock"><b>SYS</b> EN LIGNE</span><span className="privacy-status"><i /> CHIFFREMENT ACTIF</span><button className="profile-button" onClick={onLogout} title={`Déconnecter ${session.name}`}>CG</button></div>
       </header>
       <aside className="space-sidebar">
@@ -234,6 +243,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
         </div>
       )}
       <ProfilePanel open={profileOpen} firstRun={firstRun} onClose={() => { setProfileOpen(false); setFirstRun(false) }} />
+      <TasksPanel open={tasksOpen} onClose={() => setTasksOpen(false)} onAskBrief={askBrief} />
     </div>
   )
 }

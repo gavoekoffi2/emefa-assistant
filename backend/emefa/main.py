@@ -11,6 +11,7 @@ from emefa.api.agent import router as agent_router
 from emefa.api.devices import router as devices_router
 from emefa.api.profile import router as profile_router
 from emefa.api.realtime import router as realtime_router
+from emefa.api.tasks import router as tasks_router
 from emefa.api.web_session import router as web_session_router
 from emefa.config import Settings
 from emefa.domain.agent import AgentEngine, AgentStep, Brain
@@ -19,6 +20,7 @@ from emefa.domain.conversations import ConversationStore
 from emefa.domain.devices import DeviceRepository
 from emefa.domain.profiles import ProfileRepository
 from emefa.domain.ratelimit import FailureLimiter
+from emefa.domain.tasks import TaskRepository
 from emefa.infrastructure.deepseek import DeepSeekBrain
 from emefa.infrastructure.realtime import RealtimeGateway
 from emefa.observability import (
@@ -41,6 +43,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     configure_logging()
     active_settings = settings or Settings()
     profiles = ProfileRepository(active_settings.database_path)
+    tasks = TaskRepository(active_settings.database_path)
     selected_brain: Brain
     if brain is not None:
         selected_brain = brain
@@ -83,9 +86,10 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     application.state.settings = active_settings
     application.state.devices = DeviceRepository(active_settings.database_path)
     application.state.profiles = profiles
+    application.state.tasks = tasks
     application.state.agent = AgentEngine(
         selected_brain,
-        build_tool_shelf(profiles),
+        build_tool_shelf(profiles, tasks),
         memory=ConversationStore(active_settings.database_path),
     )
     application.state.approvals = ApprovalRepository(active_settings.database_path)
@@ -148,6 +152,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     application.include_router(web_session_router)
     application.include_router(agent_router)
     application.include_router(profile_router)
+    application.include_router(tasks_router)
     application.include_router(realtime_router)
     if active_settings.web_dist_path is not None and active_settings.web_dist_path.is_dir():
         application.mount(

@@ -79,6 +79,14 @@ Voice (ElevenLabs session) and the backend text path still have **separate conve
 - **Web:** approval card (alertdialog) with Approuver/Refuser, argument preview, French skill labels; pending approvals restored on page load; honest `rejected` surface. Amber styling distinct from the cyan HUD.
 - Tests: backend **52 passing** (approve executes + profile actually cleared; reject never executes; replay/foreign 404; unknown-tool guard); web **7 passing**; lint/build clean.
 
+## Completed — tasks & commitments foundation (2026-07-20)
+
+- **Migration 5:** `tasks` table (tenant/user-scoped; status open/done; optional ISO due date).
+- **`TaskRepository`** (`domain/tasks.py`): create (due-date validated), open list ordered by due date, complete (idempotence guarded); bucket classification `en_retard / aujourdhui / a_venir / sans_echeance`.
+- **Three governed skills** registered in the shelf: `create_task`, `list_tasks`, `complete_task` (LOCAL_WRITE/PERSONAL_READ → RUN policy; structured error returns; audit events). "Rappelle-moi de relancer Horizon demain" now persists a real commitment through the gateway.
+- **`GET /v1/tasks`** (device-authenticated) exposes open tasks with buckets for the future tasks/brief UI.
+- Tests: backend **55 passing** (repository incl. buckets/ordering/idempotence, skill flow incl. error paths, conversation→API end-to-end).
+
 ## In Progress
 
 Nothing mid-flight.

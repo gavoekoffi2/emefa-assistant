@@ -119,6 +119,23 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         ON pending_actions(conversation_id, status)
         """,
     ),
+    # 5 — tasks and commitments (administrative assistant foundation).
+    (
+        f"""
+        CREATE TABLE tasks (
+            task_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            title TEXT NOT NULL,
+            details TEXT NOT NULL DEFAULT '',
+            due_date TEXT,
+            status TEXT NOT NULL DEFAULT 'open',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            completed_at TEXT
+        )
+        """,
+        "CREATE INDEX idx_tasks_open ON tasks(user_id, status, due_date)",
+    ),
 )
 
 

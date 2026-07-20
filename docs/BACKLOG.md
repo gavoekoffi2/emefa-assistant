@@ -21,6 +21,7 @@ Done in Phase 2 (2026-07-20): identity migration + seeds, ProfileRepository + en
 
 ## LATER
 
+- Tasks UI panel (list/complete from the HUD) + daily brief slice combining tasks and commitments (done backend-side 2026-07-20: migration 5, TaskRepository, create/list/complete skills, GET /v1/tasks)
 - Memory system (structured first; provenance, user inspection/correction/forget)
 - Skills gateway grown from `ToolShelf` (schemas, permissions, audit, timeouts); first native skills (memory.retrieve, task.create)
 - Administrative slices: daily brief, meeting preparation, document generation (OfficeCLI spike: `docs/spikes/OFFICECLI_EVALUATION.md`)

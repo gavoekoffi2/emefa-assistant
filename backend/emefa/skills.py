@@ -13,6 +13,7 @@ from typing import Any
 from emefa.domain.agent import AgentTool, ToolShelf
 from emefa.domain.policy import ActionRisk
 from emefa.domain.profiles import BUSINESS_FIELDS, ProfileRepository
+from emefa.domain.tasks import TaskRepository
 from emefa.observability import audit
 
 _BUSINESS_FIELD_DESCRIPTIONS = {
@@ -27,7 +28,7 @@ _BUSINESS_FIELD_DESCRIPTIONS = {
 }
 
 
-def build_tool_shelf(profiles: ProfileRepository) -> ToolShelf:
+def build_tool_shelf(profiles: ProfileRepository, tasks: TaskRepository | None = None) -> ToolShelf:
     shelf = ToolShelf()
 
     def get_profiles(_arguments: Mapping[str, Any]) -> dict[str, Any]:
@@ -112,4 +113,87 @@ def build_tool_shelf(profiles: ProfileRepository) -> ToolShelf:
             handler=update_business,
         )
     )
+    if tasks is not None:
+        _add_task_skills(shelf, tasks)
     return shelf
+
+
+def _add_task_skills(shelf: ToolShelf, tasks: TaskRepository) -> None:
+    def create_task(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        title = str(arguments.get("title", "")).strip()[:200]
+        if not title:
+            return {"error": "title_required"}
+        details = str(arguments.get("details", "")).strip()[:2_000]
+        due_date = arguments.get("due_date")
+        try:
+            task = tasks.create(
+                title, details, str(due_date) if due_date else None
+            )
+        except ValueError:
+            return {"error": "invalid_due_date", "expected_format": "AAAA-MM-JJ"}
+        audit("skill_task_created", task_id=task.task_id)
+        return {"task": asdict(task)}
+
+    def list_tasks(_arguments: Mapping[str, Any]) -> dict[str, Any]:
+        open_tasks = tasks.list_open()
+        return {
+            "count": len(open_tasks),
+            "tasks": [{**asdict(task), "bucket": task.bucket()} for task in open_tasks],
+        }
+
+    def complete_task(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        task_id = str(arguments.get("task_id", "")).strip()
+        task = tasks.complete(task_id) if task_id else None
+        if task is None:
+            return {"error": "task_not_found_or_not_open"}
+        audit("skill_task_completed", task_id=task.task_id)
+        return {"task": asdict(task)}
+
+    shelf.add(
+        AgentTool(
+            name="create_task",
+            description=(
+                "Crée une tâche ou un engagement à suivre pour l'utilisateur. "
+                "due_date est optionnelle, au format AAAA-MM-JJ."
+            ),
+            risk=ActionRisk.LOCAL_WRITE,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Intitulé court de la tâche"},
+                    "details": {"type": "string", "description": "Détails éventuels"},
+                    "due_date": {"type": "string", "description": "Échéance AAAA-MM-JJ"},
+                },
+                "required": ["title"],
+                "additionalProperties": False,
+            },
+            handler=create_task,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="list_tasks",
+            description=(
+                "Liste les tâches ouvertes de l'utilisateur avec leur échéance et leur "
+                "catégorie (en_retard, aujourdhui, a_venir, sans_echeance)."
+            ),
+            risk=ActionRisk.PERSONAL_READ,
+            handler=list_tasks,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="complete_task",
+            description="Marque une tâche comme terminée à partir de son task_id.",
+            risk=ActionRisk.LOCAL_WRITE,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string", "description": "Identifiant de la tâche"}
+                },
+                "required": ["task_id"],
+                "additionalProperties": False,
+            },
+            handler=complete_task,
+        )
+    )

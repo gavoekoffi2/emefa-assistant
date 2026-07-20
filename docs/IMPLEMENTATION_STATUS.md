@@ -119,6 +119,17 @@ Voice (ElevenLabs session) and the backend text path still have **separate conve
 - Tests: backend **66 passing** (auth/token, 503 unconfigured, context injection order, SSE passthrough, upstream error mapping).
 - **Remaining for the Phase 3 exit gate:** owner flips the ElevenLabs agent to the Custom LLM URL, then live validation of latency/interruption. Voice conversation memory (feeding `ConversationStore` from voice turns) is the next convergence step after the bridge is confirmed working.
 
+## Completed — Phase 4 memory MVP (2026-07-20)
+
+- **Migration 6:** `memories` table (tenant/user-scoped, category, provenance `source`, timestamps). Structured entries — not raw chat storage.
+- **`MemoryRepository`:** remember (whitespace-normalised, 500-char cap, category validated), list, hard forget, and a **bounded** `context_block()` (max 12 entries × 200 chars) so memory can never crowd out conversation.
+- **Three governed skills:** `remember` (LOCAL_WRITE; prompts a short self-contained sentence, warns against unsolicited sensitive data), `list_memories` (PERSONAL_READ), `forget_memory` (**DESTRUCTIVE → approval loop**). "Retiens que le fournisseur livre le mardi" now persists a controllable memory.
+- **Shared context composition:** `compose_context()` (profiles + memory block) now feeds **both** the text brain and the voice Custom-LLM bridge — voice and text share profile *and* memory.
+- **User control (spec §26):** `GET /v1/memories`, `DELETE /v1/memories/{id}` (404 once gone, audited) and a **Mémoire panel** in the HUD (category chips, dates, per-entry "Oublier", honest empty state).
+- Tests: backend **71 passing** (repository bounds, skills incl. risk levels, API auth/delete, context composition, voice-bridge memory injection); web **10 passing**; lint/build clean.
+
+Phase 4 exit gate status: memory survives sessions ✅, explicit preference ✅, correction ✅ (delete + re-remember; panel), forget ✅ (user-direct + approval-gated via agent), bounded injection ✅, cross-tenant leakage N/A single-tenant (scoped columns ready). Remaining for full Phase 4: episodic summaries and memory export.
+
 ## In Progress
 
 Nothing mid-flight.

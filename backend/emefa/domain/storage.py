@@ -136,6 +136,21 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         """,
         "CREATE INDEX idx_tasks_open ON tasks(user_id, status, due_date)",
     ),
+    # 6 — durable, user-controllable memory (Phase 4 MVP).
+    (
+        f"""
+        CREATE TABLE memories (
+            memory_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            category TEXT NOT NULL DEFAULT 'fact',
+            content TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'conversation',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE INDEX idx_memories_user ON memories(user_id, created_at)",
+    ),
 )
 
 

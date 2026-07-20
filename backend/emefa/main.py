@@ -11,6 +11,7 @@ from emefa.api.agent import router as agent_router
 from emefa.api.devices import router as devices_router
 from emefa.api.profile import router as profile_router
 from emefa.api.realtime import router as realtime_router
+from emefa.api.memories import router as memories_router
 from emefa.api.system import router as system_router
 from emefa.api.tasks import router as tasks_router
 from emefa.api.voice_llm import router as voice_llm_router
@@ -21,6 +22,7 @@ from emefa.domain.approvals import ApprovalRepository
 from emefa.domain.conversations import ConversationStore
 from emefa.domain.devices import DeviceRepository
 from emefa.domain.profiles import ProfileRepository
+from emefa.domain.memories import MemoryRepository
 from emefa.domain.ratelimit import FailureLimiter
 from emefa.domain.tasks import TaskRepository
 from emefa.infrastructure.deepseek import DeepSeekBrain
@@ -47,6 +49,15 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     active_settings = settings or Settings()
     profiles = ProfileRepository(active_settings.database_path)
     tasks = TaskRepository(active_settings.database_path)
+    memories = MemoryRepository(active_settings.database_path)
+
+    def compose_context() -> str:
+        """Profile context plus the bounded durable-memory block."""
+        parts = [profiles.system_context()]
+        memory_block = memories.context_block()
+        if memory_block:
+            parts.append(memory_block)
+        return "\n".join(part for part in parts if part)
     # Resolve the OpenAI-compatible LLM provider once; the text brain and the
     # voice Custom-LLM bridge share it. DeepSeek direct wins over OpenRouter.
     llm_api_key: str | None = None
@@ -73,7 +84,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
             api_key=llm_api_key,
             model=llm_model,
             base_url=llm_base_url,
-            context_provider=profiles.system_context,
+            context_provider=compose_context,
         )
     else:
         selected_brain = NotConfiguredBrain()
@@ -83,7 +94,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
         api_key=llm_api_key,
         model=llm_model,
         base_url=llm_base_url,
-        context_provider=profiles.system_context,
+        context_provider=compose_context,
     )
 
     realtime_key = (
@@ -114,9 +125,11 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     application.state.devices = DeviceRepository(active_settings.database_path)
     application.state.profiles = profiles
     application.state.tasks = tasks
+    application.state.memories = memories
+    application.state.compose_context = compose_context
     application.state.agent = AgentEngine(
         selected_brain,
-        build_tool_shelf(profiles, tasks),
+        build_tool_shelf(profiles, tasks, memories),
         memory=ConversationStore(active_settings.database_path),
     )
     application.state.approvals = ApprovalRepository(active_settings.database_path)
@@ -181,6 +194,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     application.include_router(web_session_router)
     application.include_router(agent_router)
     application.include_router(profile_router)
+    application.include_router(memories_router)
     application.include_router(system_router)
     application.include_router(tasks_router)
     application.include_router(voice_llm_router)

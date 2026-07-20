@@ -3,6 +3,7 @@ import { useConversation } from '@elevenlabs/react'
 import { api, BrandMark, graphNodes, palette, statusCopy, VoiceOrb } from './App'
 import { isBusinessEmpty, ProfilePanel } from './ProfilePanel'
 import { TasksPanel } from './TasksPanel'
+import { MemoryPanel } from './MemoryPanel'
 
 // three.js is heavy; load the hologram as its own chunk so the shell stays light.
 const HolographicUniverse = lazy(() =>
@@ -62,6 +63,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   const [typed, setTyped] = useState('')
   const [profileOpen, setProfileOpen] = useState(false)
   const [tasksOpen, setTasksOpen] = useState(false)
+  const [memoryOpen, setMemoryOpen] = useState(false)
   const [firstRun, setFirstRun] = useState(false)
   const [approval, setApproval] = useState<PendingApproval | null>(null)
   const [deciding, setDeciding] = useState(false)
@@ -215,7 +217,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       <div className="space-vignette" />
       <header className="jarvis-header">
         <div className="brand-row"><BrandMark /><div><strong>EMEFA</strong><small>INTELLIGENCE COGNITIVE</small></div></div>
-        <nav><button className={profileOpen || tasksOpen ? '' : 'nav-active'} onClick={() => { setProfileOpen(false); setTasksOpen(false) }}>Univers</button><button className={tasksOpen ? 'nav-active' : ''} onClick={() => { setProfileOpen(false); setTasksOpen(true) }}>Tâches</button><button className={profileOpen ? 'nav-active' : ''} onClick={() => { setTasksOpen(false); setProfileOpen(true) }}>Profil</button></nav>
+        <nav><button className={profileOpen || tasksOpen || memoryOpen ? '' : 'nav-active'} onClick={() => { setProfileOpen(false); setTasksOpen(false); setMemoryOpen(false) }}>Univers</button><button className={tasksOpen ? 'nav-active' : ''} onClick={() => { setProfileOpen(false); setMemoryOpen(false); setTasksOpen(true) }}>Tâches</button><button className={memoryOpen ? 'nav-active' : ''} onClick={() => { setProfileOpen(false); setTasksOpen(false); setMemoryOpen(true) }}>Mémoire</button><button className={profileOpen ? 'nav-active' : ''} onClick={() => { setTasksOpen(false); setMemoryOpen(false); setProfileOpen(true) }}>Profil</button></nav>
         <div className="header-right"><span className="system-clock"><b>SYS</b> EN LIGNE</span><span className="privacy-status"><i /> {window.location.protocol === 'https:' ? 'CHIFFREMENT ACTIF' : 'CONNEXION LOCALE'}</span><button className="profile-button" onClick={onLogout} title={`Déconnecter ${session.name}`}>CG</button></div>
       </header>
       <aside className="space-sidebar">
@@ -262,6 +264,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       )}
       <ProfilePanel open={profileOpen} firstRun={firstRun} onClose={() => { setProfileOpen(false); setFirstRun(false) }} />
       <TasksPanel open={tasksOpen} onClose={() => setTasksOpen(false)} onAskBrief={askBrief} />
+      <MemoryPanel open={memoryOpen} onClose={() => setMemoryOpen(false)} />
     </div>
   )
 }

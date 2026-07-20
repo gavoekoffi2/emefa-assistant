@@ -36,7 +36,7 @@ async def test_system_status_reports_real_state(tmp_path):
     assert body["brain_configured"] is True  # explicit brain injected
     assert body["voice_configured"] is False  # no ElevenLabs key in tests
     assert body["open_task_count"] == 1
-    assert body["schema_version"] == 5
+    assert body["schema_version"] == 6
     skill_names = {skill["name"] for skill in body["skills"]}
     assert {
         "get_profiles",

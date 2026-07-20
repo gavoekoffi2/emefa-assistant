@@ -12,6 +12,7 @@ from datetime import date
 from typing import Any
 
 from emefa.domain.agent import AgentTool, ToolShelf
+from emefa.domain.memories import CATEGORIES, MemoryRepository
 from emefa.domain.policy import ActionRisk
 from emefa.domain.profiles import ASSISTANT_FIELDS, BUSINESS_FIELDS, ProfileRepository
 from emefa.domain.tasks import TaskRepository
@@ -29,7 +30,11 @@ _BUSINESS_FIELD_DESCRIPTIONS = {
 }
 
 
-def build_tool_shelf(profiles: ProfileRepository, tasks: TaskRepository | None = None) -> ToolShelf:
+def build_tool_shelf(
+    profiles: ProfileRepository,
+    tasks: TaskRepository | None = None,
+    memories: MemoryRepository | None = None,
+) -> ToolShelf:
     shelf = ToolShelf()
 
     def get_profiles(_arguments: Mapping[str, Any]) -> dict[str, Any]:
@@ -159,7 +164,89 @@ def build_tool_shelf(profiles: ProfileRepository, tasks: TaskRepository | None =
     )
     if tasks is not None:
         _add_task_skills(shelf, tasks, profiles)
+    if memories is not None:
+        _add_memory_skills(shelf, memories)
     return shelf
+
+
+def _add_memory_skills(shelf: ToolShelf, memories: MemoryRepository) -> None:
+    def remember(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        content = str(arguments.get("content", "")).strip()
+        if len(content) < 3:
+            return {"error": "content_too_short"}
+        memory = memories.remember(
+            content, category=str(arguments.get("category", "fact"))
+        )
+        audit("skill_memory_saved", memory_id=memory.memory_id, category=memory.category)
+        return {"memory": asdict(memory)}
+
+    def list_memories(_arguments: Mapping[str, Any]) -> dict[str, Any]:
+        entries = memories.list_all()
+        return {"count": len(entries), "memories": [asdict(entry) for entry in entries]}
+
+    def forget_memory(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        memory_id = str(arguments.get("memory_id", "")).strip()
+        if not memory_id or not memories.forget(memory_id):
+            return {"error": "memory_not_found"}
+        audit("skill_memory_forgotten", memory_id=memory_id)
+        return {"forgotten": memory_id}
+
+    shelf.add(
+        AgentTool(
+            name="remember",
+            description=(
+                "Mémorise durablement un fait, une préférence, une relation ou une "
+                "procédure que l'utilisateur souhaite voir retenue. Une phrase "
+                "courte et autonome par souvenir. Ne pas mémoriser d'informations "
+                "sensibles non sollicitées."
+            ),
+            risk=ActionRisk.LOCAL_WRITE,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "Le souvenir, en une phrase autonome",
+                    },
+                    "category": {
+                        "type": "string",
+                        "enum": list(CATEGORIES),
+                        "description": "Catégorie du souvenir",
+                    },
+                },
+                "required": ["content"],
+                "additionalProperties": False,
+            },
+            handler=remember,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="list_memories",
+            description="Liste les souvenirs durables enregistrés, avec leur identifiant.",
+            risk=ActionRisk.PERSONAL_READ,
+            handler=list_memories,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="forget_memory",
+            description=(
+                "Efface définitivement un souvenir à partir de son memory_id "
+                "(obtenu via list_memories). Irréversible."
+            ),
+            risk=ActionRisk.DESTRUCTIVE,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "memory_id": {"type": "string", "description": "Identifiant du souvenir"}
+                },
+                "required": ["memory_id"],
+                "additionalProperties": False,
+            },
+            handler=forget_memory,
+        )
+    )
 
 
 def _add_task_skills(

@@ -115,3 +115,8 @@
 .task-row button:hover{background:rgba(var(--hud-rgb,110 234 255),.12)}
 .bucket-en_retard{color:#ff8da1}
 .bucket-aujourdhui{color:var(--accent,#ff9d57)}
+
+/* Memory panel */
+.memory-row div{max-width:calc(100% - 90px)}
+.memory-category{align-self:flex-start;padding:2px 8px;border-radius:999px;border:1px solid rgba(var(--hud-rgb,110 234 255),.35);font-size:.62rem;letter-spacing:.12em;text-transform:uppercase;color:var(--hud,#6eeaff)}
+.memory-row strong{font-weight:500;line-height:1.4}

@@ -61,6 +61,15 @@ test('tasks panel lists commitments and offers the daily brief', () => {
   assert.match(source, /Qu’est-ce qui mérite mon attention aujourd’hui/)
 })
 
+test('memory panel exposes durable memory with user-controlled forgetting', () => {
+  const memoryPanel = readFileSync(new URL('../src/MemoryPanel.tsx', import.meta.url), 'utf8')
+  assert.match(memoryPanel, /\/v1\/memories/)
+  assert.match(memoryPanel, /DELETE/)
+  assert.match(memoryPanel, /Oublier/)
+  assert.match(source, /MemoryPanel/)
+  assert.match(source, /Mémoire/)
+})
+
 test('consequential actions surface an explicit approval card', () => {
   assert.match(source, /\/v1\/agent\/approvals/)
   assert.match(source, /decideApproval/)

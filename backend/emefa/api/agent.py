@@ -99,6 +99,18 @@ async def run_agent(
     return _register_pending(request, device, serialize_reply(reply))
 
 
+@router.delete("/conversation", status_code=204)
+def clear_conversation(
+    request: Request,
+    device: Annotated[Device, Depends(current_device)],
+) -> None:
+    memory = request.app.state.agent.memory
+    forget = getattr(memory, "forget", None)
+    if callable(forget):
+        forget(device.device_id)
+    audit("conversation_cleared", device_id=device.device_id)
+
+
 @router.get("/approvals", response_model=list[ApprovalSummary])
 def list_approvals(
     request: Request,

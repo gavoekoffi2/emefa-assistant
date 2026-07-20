@@ -1,8 +1,10 @@
-"""User-facing memory inspection and deletion API."""
+"""User-facing memory inspection, export, and deletion API."""
 
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from emefa.api.devices import current_device
@@ -35,6 +37,33 @@ def list_memories(
         })
         for memory in request.app.state.memories.list_all()
     ]
+
+
+@router.get("/export")
+def export_memories(
+    request: Request,
+    device: Annotated[Device, Depends(current_device)],
+) -> JSONResponse:
+    memories = request.app.state.memories.list_all(limit=10_000)
+    audit("memories_exported", device_id=device.device_id, count=len(memories))
+    payload = {
+        "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "count": len(memories),
+        "memories": [
+            {
+                "memory_id": memory.memory_id,
+                "category": memory.category,
+                "content": memory.content,
+                "source": memory.source,
+                "created_at": memory.created_at,
+            }
+            for memory in memories
+        ],
+    }
+    return JSONResponse(
+        payload,
+        headers={"Content-Disposition": 'attachment; filename="emefa-memoire.json"'},
+    )
 
 
 @router.delete("/{memory_id}", status_code=204)

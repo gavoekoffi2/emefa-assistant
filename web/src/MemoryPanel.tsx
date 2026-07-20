@@ -17,6 +17,7 @@ export function MemoryPanel({ open, onClose }: { open: boolean; onClose: () => v
   const [memories, setMemories] = useState<MemoryItem[] | null>(null)
   const [error, setError] = useState('')
   const [busyId, setBusyId] = useState('')
+  const [status, setStatus] = useState('')
 
   const reload = useCallback(() => {
     api<MemoryItem[]>('/v1/memories')
@@ -27,6 +28,15 @@ export function MemoryPanel({ open, onClose }: { open: boolean; onClose: () => v
   useEffect(() => { if (open) { setMemories(null); reload() } }, [open, reload])
 
   if (!open) return null
+
+  const clearConversation = async () => {
+    try {
+      await api<void>('/v1/agent/conversation', { method: 'DELETE' })
+      setStatus('Historique de conversation effacé. La prochaine discussion repartira de zéro.')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Effacement impossible.')
+    }
+  }
 
   const forget = async (memoryId: string) => {
     setBusyId(memoryId)
@@ -65,6 +75,15 @@ export function MemoryPanel({ open, onClose }: { open: boolean; onClose: () => v
             </button>
           </div>
         ))}
+        <div className="task-group">
+          <span className="profile-section">Conversation</span>
+          <p className="profile-status">L’historique utilisé par le cerveau texte peut être effacé à tout moment.</p>
+          {status && <p className="profile-status" role="status">{status}</p>}
+          <div className="profile-actions">
+            <button type="button" className="profile-later" onClick={() => void clearConversation()}>Effacer la conversation</button>
+            <button type="button" className="profile-later" onClick={() => window.open('/v1/memories/export', '_blank')}>Exporter la mémoire</button>
+          </div>
+        </div>
         <footer className="profile-actions">
           <button type="button" className="profile-later" onClick={onClose}>Fermer</button>
         </footer>

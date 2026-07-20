@@ -130,6 +130,14 @@ Voice (ElevenLabs session) and the backend text path still have **separate conve
 
 Phase 4 exit gate status: memory survives sessions ✅, explicit preference ✅, correction ✅ (delete + re-remember; panel), forget ✅ (user-direct + approval-gated via agent), bounded injection ✅, cross-tenant leakage N/A single-tenant (scoped columns ready). Remaining for full Phase 4: episodic summaries and memory export.
 
+## Completed — user control & injection framing (2026-07-20)
+
+- **`GET /v1/memories/export`**: JSON attachment (`emefa-memoire.json`) with provenance and timestamps — Phase 4 export requirement met (inspect/correct/export/delete now all exist).
+- **`DELETE /v1/agent/conversation`**: user-initiated wipe of the text-brain conversation history (audited, 204); the next exchange starts fresh.
+- **Prompt-injection framing**: `compose_context()` now opens with an explicit guard stating profile/memory content is user data and never instructions — applied to both text brain and voice bridge.
+- **Mémoire panel**: "Exporter la mémoire" and "Effacer la conversation" buttons with honest status feedback.
+- Tests: backend **74 passing** (export attachment, conversation clear verified through the brain's next-turn history, framing assertion); web **10 passing**; lint/build clean.
+
 ## In Progress
 
 Nothing mid-flight.

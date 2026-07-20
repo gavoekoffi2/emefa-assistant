@@ -40,6 +40,15 @@ test('typed input reaches the EMEFA runtime when the voice session is offline', 
   assert.match(source, /agentErrorCopy/)
 })
 
+test('live voice can execute governed EMEFA actions through the authenticated client tool', () => {
+  assert.match(source, /clientTools:\s*\{[\s\S]*emefa_execute:/)
+  assert.match(source, /emefa_execute:[\s\S]*\/v1\/agent\/runs/)
+  assert.match(source, /JSON\.stringify\(\{ message: request \}\)/)
+  assert.match(source, /credentials: 'include'/)
+  assert.match(source, /setApproval\(\{[\s\S]*action_id: run\.action_id/)
+  assert.match(source, /conversation\.sendContextualUpdate\(run\.answer\)/)
+})
+
 test('HUD telemetry reflects real system state instead of decorative numbers', () => {
   assert.match(source, /\/v1\/system\/status/)
   assert.match(source, /compétences actives/)

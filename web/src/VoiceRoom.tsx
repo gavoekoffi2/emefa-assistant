@@ -117,6 +117,11 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       })
       setApproval(null)
       applyAgentRun(run)
+
+      // If we have an active conversation and the action was approved, send the result as a contextual update
+      if (approve && conversation.status === 'connected' && run.status === 'completed' && run.answer) {
+        conversation.sendContextualUpdate(run.answer)
+      }
     } catch (cause) {
       setState('error')
       setNotice(cause instanceof Error ? cause.message : 'La décision n’a pas pu être transmise.')
@@ -169,6 +174,33 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
         workletPaths: {
           rawAudioProcessor: '/worklets/raw-audio-processor.js',
           audioConcatProcessor: '/worklets/audio-concat-processor.js',
+        },
+        clientTools: {
+          emefa_execute: async ({ request }: { request: string }) => {
+            try {
+              const run = await api<AgentRun>('/v1/agent/runs', {
+                method: 'POST',
+                body: JSON.stringify({ message: request }),
+                credentials: 'include',
+              })
+
+              if (run.status === 'completed' && run.answer) {
+                return run.answer
+              } else if (run.status === 'confirmation_required' && run.action_id && run.pending_action) {
+                setApproval({
+                  action_id: run.action_id,
+                  name: run.pending_action.name,
+                  arguments: run.pending_action.arguments,
+                })
+                return 'Une approbation est requise pour cette action.'
+              } else if (run.error) {
+                return `Erreur: ${agentErrorCopy[run.error] || run.error}`
+              }
+              return 'Action terminée sans résultat.'
+            } catch (error) {
+              return `Erreur réseau: ${error instanceof Error ? error.message : 'Impossible de contacter le serveur EMEFA.'}`
+            }
+          },
         },
       })
     } catch (cause) {

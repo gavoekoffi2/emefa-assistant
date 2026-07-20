@@ -12,6 +12,7 @@ from datetime import date
 from typing import Any
 
 from emefa.domain.agent import AgentTool, ToolShelf
+from emefa.domain.documents import DocumentNotFoundError, DocumentStore
 from emefa.domain.email import EmailProvider
 from emefa.domain.memories import CATEGORIES, MemoryRepository
 from emefa.domain.policy import ActionRisk
@@ -36,6 +37,7 @@ def build_tool_shelf(
     tasks: TaskRepository | None = None,
     memories: MemoryRepository | None = None,
     email_provider: EmailProvider | None = None,
+    documents: DocumentStore | None = None,
 ) -> ToolShelf:
     shelf = ToolShelf()
 
@@ -170,7 +172,71 @@ def build_tool_shelf(
         _add_memory_skills(shelf, memories)
     if email_provider is not None:
         _add_email_skills(shelf, email_provider)
+    if documents is not None:
+        _add_document_skills(shelf, documents)
     return shelf
+
+
+def _add_document_skills(shelf: ToolShelf, documents: DocumentStore) -> None:
+    common_properties = {
+        "title": {"type": "string", "description": "Titre professionnel du document"},
+        "content": {
+            "type": "string",
+            "description": "Contenu complet du document, avec une ligne par paragraphe",
+        },
+    }
+
+    def create(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        result = documents.create(arguments.get("title", ""), arguments.get("content", ""))
+        audit("skill_document_created", document_id=result["document_id"])
+        return result
+
+    def edit(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        try:
+            result = documents.edit(
+                str(arguments.get("document_id", "")),
+                arguments.get("title"),
+                arguments.get("content", ""),
+            )
+        except DocumentNotFoundError:
+            return {"error": "document_not_found"}
+        audit("skill_document_edited", document_id=result["document_id"])
+        return result
+
+    shelf.add(AgentTool(
+        name="document_create",
+        description=(
+            "Crée réellement un nouveau document Word DOCX persistant et renvoie son lien de "
+            "téléchargement. Utilise cet outil dès que l'utilisateur demande de rédiger, créer "
+            "ou produire un document Word, un rapport, une lettre ou un compte rendu."
+        ),
+        risk=ActionRisk.LOCAL_WRITE,
+        parameters={
+            "type": "object",
+            "properties": common_properties,
+            "required": ["title", "content"],
+            "additionalProperties": False,
+        },
+        handler=create,
+    ))
+    shelf.add(AgentTool(
+        name="document_edit",
+        description=(
+            "Remplace le titre et le contenu d'un document Word EMEFA existant. Cette action "
+            "modifie un artefact et exige donc l'approbation explicite de l'utilisateur."
+        ),
+        risk=ActionRisk.DESTRUCTIVE,
+        parameters={
+            "type": "object",
+            "properties": {
+                "document_id": {"type": "string", "description": "Identifiant UUID du document"},
+                **common_properties,
+            },
+            "required": ["document_id", "content"],
+            "additionalProperties": False,
+        },
+        handler=edit,
+    ))
 
 
 def _add_email_skills(shelf: ToolShelf, provider: EmailProvider) -> None:

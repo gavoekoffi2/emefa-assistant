@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from emefa import __version__
 from emefa.api.agent import router as agent_router
 from emefa.api.devices import router as devices_router
+from emefa.api.documents import router as documents_router
 from emefa.api.profile import router as profile_router
 from emefa.api.realtime import router as realtime_router
 from emefa.api.memories import router as memories_router
@@ -21,6 +22,7 @@ from emefa.domain.agent import AgentEngine, AgentStep, Brain
 from emefa.domain.approvals import ApprovalRepository
 from emefa.domain.conversations import ConversationStore
 from emefa.domain.devices import DeviceRepository
+from emefa.domain.documents import DocumentStore
 from emefa.domain.profiles import ProfileRepository
 from emefa.domain.email import EmailProvider
 from emefa.domain.memories import MemoryRepository
@@ -149,10 +151,17 @@ def create_app(
     application.state.profiles = profiles
     application.state.tasks = tasks
     application.state.memories = memories
+    application.state.documents = DocumentStore(active_settings.database_path)
     application.state.compose_context = compose_context
     application.state.agent = AgentEngine(
         selected_brain,
-        build_tool_shelf(profiles, tasks, memories, active_email_provider),
+        build_tool_shelf(
+            profiles,
+            tasks,
+            memories,
+            active_email_provider,
+            application.state.documents,
+        ),
         memory=ConversationStore(active_settings.database_path),
     )
     application.state.approvals = ApprovalRepository(active_settings.database_path)
@@ -214,6 +223,7 @@ def create_app(
         }
 
     application.include_router(devices_router)
+    application.include_router(documents_router)
     application.include_router(web_session_router)
     application.include_router(agent_router)
     application.include_router(profile_router)

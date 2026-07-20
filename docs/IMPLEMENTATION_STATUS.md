@@ -110,6 +110,15 @@ Voice (ElevenLabs session) and the backend text path still have **separate conve
 - The owner supplied an OpenRouter key (kept out of the repository; must be set as `EMEFA_OPENROUTER_API_KEY` in the server `.env` — see `docs/DEPLOIEMENT.md`). **Live verification was not possible from this development sandbox** (its network policy denies `openrouter.ai`); first production start should confirm via `/v1/system/status` (`brain_configured: true`) and a text exchange. If the default model name is rejected, set `EMEFA_OPENROUTER_MODEL` to a current tool-capable model from openrouter.ai/models.
 - Backend **61 passing** (new test: OpenRouter key ⇒ brain configured).
 
+## Completed — voice→brain bridge, Custom LLM endpoint (2026-07-20)
+
+- **`POST /v1/voice-llm/chat/completions`**: OpenAI-compatible endpoint for the ElevenLabs "Custom LLM" option. Injects EMEFA's profile context (assistant + business) as a leading system message, preserves the agent persona message, forces the configured provider/model, and forwards streaming (SSE passthrough) or non-streaming requests to the same provider as the text brain.
+- **Auth:** `EMEFA_VOICE_LLM_TOKEN` bearer secret (constant-time compare); 503 when the token or the provider is unconfigured; upstream failures map to 502; audit events without content logging.
+- **Shared provider resolution** in `create_app`: DeepSeek direct → OpenRouter → not configured, used by both the text brain and the voice bridge.
+- Deployment guide: dashboard steps + instant rollback (re-select the ElevenLabs LLM).
+- Tests: backend **66 passing** (auth/token, 503 unconfigured, context injection order, SSE passthrough, upstream error mapping).
+- **Remaining for the Phase 3 exit gate:** owner flips the ElevenLabs agent to the Custom LLM URL, then live validation of latency/interruption. Voice conversation memory (feeding `ConversationStore` from voice turns) is the next convergence step after the bridge is confirmed working.
+
 ## In Progress
 
 Nothing mid-flight.

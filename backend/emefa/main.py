@@ -13,6 +13,7 @@ from emefa.api.profile import router as profile_router
 from emefa.api.realtime import router as realtime_router
 from emefa.api.system import router as system_router
 from emefa.api.tasks import router as tasks_router
+from emefa.api.voice_llm import router as voice_llm_router
 from emefa.api.web_session import router as web_session_router
 from emefa.config import Settings
 from emefa.domain.agent import AgentEngine, AgentStep, Brain
@@ -24,6 +25,7 @@ from emefa.domain.ratelimit import FailureLimiter
 from emefa.domain.tasks import TaskRepository
 from emefa.infrastructure.deepseek import DeepSeekBrain
 from emefa.infrastructure.realtime import RealtimeGateway
+from emefa.infrastructure.voice_llm import VoiceLLMProxy
 from emefa.observability import (
     configure_logging,
     monotonic_ms,
@@ -45,33 +47,44 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     active_settings = settings or Settings()
     profiles = ProfileRepository(active_settings.database_path)
     tasks = TaskRepository(active_settings.database_path)
-    selected_brain: Brain
-    if brain is not None:
-        selected_brain = brain
-    elif (
+    # Resolve the OpenAI-compatible LLM provider once; the text brain and the
+    # voice Custom-LLM bridge share it. DeepSeek direct wins over OpenRouter.
+    llm_api_key: str | None = None
+    llm_model = active_settings.deepseek_model
+    llm_base_url = "https://api.deepseek.com"
+    if (
         active_settings.deepseek_api_key is not None
         and active_settings.deepseek_api_key.get_secret_value().strip()
     ):
-        selected_brain = DeepSeekBrain(
-            api_key=active_settings.deepseek_api_key.get_secret_value().strip(),
-            model=active_settings.deepseek_model,
-            context_provider=profiles.system_context,
-        )
+        llm_api_key = active_settings.deepseek_api_key.get_secret_value().strip()
     elif (
         active_settings.openrouter_api_key is not None
         and active_settings.openrouter_api_key.get_secret_value().strip()
     ):
-        # OpenRouter speaks the same OpenAI-compatible protocol as DeepSeek,
-        # so the existing adapter is reused with a different base URL.
+        llm_api_key = active_settings.openrouter_api_key.get_secret_value().strip()
+        llm_model = active_settings.openrouter_model
+        llm_base_url = active_settings.openrouter_base_url
+
+    selected_brain: Brain
+    if brain is not None:
+        selected_brain = brain
+    elif llm_api_key:
         selected_brain = DeepSeekBrain(
-            api_key=active_settings.openrouter_api_key.get_secret_value().strip(),
-            model=active_settings.openrouter_model,
-            base_url=active_settings.openrouter_base_url,
+            api_key=llm_api_key,
+            model=llm_model,
+            base_url=llm_base_url,
             context_provider=profiles.system_context,
         )
     else:
         selected_brain = NotConfiguredBrain()
     brain_configured = not isinstance(selected_brain, NotConfiguredBrain)
+
+    voice_llm_proxy = VoiceLLMProxy(
+        api_key=llm_api_key,
+        model=llm_model,
+        base_url=llm_base_url,
+        context_provider=profiles.system_context,
+    )
 
     realtime_key = (
         active_settings.elevenlabs_api_key.get_secret_value().strip()
@@ -108,6 +121,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     )
     application.state.approvals = ApprovalRepository(active_settings.database_path)
     application.state.brain_configured = brain_configured
+    application.state.voice_llm = voice_llm_proxy
     application.state.realtime = realtime_gateway
     application.state.activation_limiter = FailureLimiter(
         max_failures=active_settings.activation_max_failures,
@@ -169,6 +183,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     application.include_router(profile_router)
     application.include_router(system_router)
     application.include_router(tasks_router)
+    application.include_router(voice_llm_router)
     application.include_router(realtime_router)
     if active_settings.web_dist_path is not None and active_settings.web_dist_path.is_dir():
         application.mount(

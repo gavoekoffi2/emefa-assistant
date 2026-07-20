@@ -120,19 +120,54 @@ class AgentEngine:
     async def run(self, message: str, conversation_id: str | None = None) -> AgentReply:
         previous = self.memory.recent(conversation_id) if conversation_id else []
         history: list[dict[str, Any]] = [*previous, {"role": "user", "content": message}]
+        return await self._advance(history, len(previous), conversation_id)
 
+    async def execute_approved(
+        self, action: RequestedAction, conversation_id: str | None = None
+    ) -> AgentReply:
+        """Execute a user-approved action, then let the brain conclude the turn."""
+        tool = self.tools.get(action.name)
+        if tool is None:
+            return AgentReply(status="failed", error="unknown_tool", turns=0)
+        if decide(tool.risk) is Decision.BLOCK:
+            return AgentReply(status="blocked", error="risk_blocked", turns=0)
+        previous = self.memory.recent(conversation_id) if conversation_id else []
+        entry = await self._execute_tool(tool, action)
+        history: list[dict[str, Any]] = [*previous, entry]
+        return await self._advance(history, len(previous), conversation_id)
+
+    async def _execute_tool(self, tool: AgentTool, action: RequestedAction) -> dict[str, Any]:
+        output = tool.handler(action.arguments)
+        if inspect.isawaitable(output):
+            output = await output
+        return {
+            "role": "tool",
+            "name": tool.name,
+            "call_id": action.call_id,
+            "arguments": dict(action.arguments),
+            "content": dict(output) if output is not None else None,
+        }
+
+    def _persist(
+        self, conversation_id: str | None, history: list[dict[str, Any]], persisted: int
+    ) -> None:
+        if conversation_id and len(history) > persisted:
+            self.memory.extend(conversation_id, history[persisted:])
+
+    async def _advance(
+        self,
+        history: list[dict[str, Any]],
+        persisted: int,
+        conversation_id: str | None,
+    ) -> AgentReply:
         for turn in range(1, self.max_turns + 1):
             try:
                 step = await self.brain.think(history, self.tools.describe())
             except Exception:
                 return AgentReply(status="failed", error="brain_unavailable", turns=turn)
             if step.answer is not None:
-                if conversation_id:
-                    new_entries = [
-                        *history[len(previous):],
-                        {"role": "assistant", "content": step.answer},
-                    ]
-                    self.memory.extend(conversation_id, new_entries)
+                history.append({"role": "assistant", "content": step.answer})
+                self._persist(conversation_id, history, persisted)
                 return AgentReply(status="completed", answer=step.answer, turns=turn)
 
             action = step.action
@@ -147,23 +182,15 @@ class AgentEngine:
             if decision is Decision.BLOCK:
                 return AgentReply(status="blocked", error="risk_blocked", turns=turn)
             if decision is Decision.ASK:
+                # Persist the context so the approved action can resume later,
+                # even after a restart.
+                self._persist(conversation_id, history, persisted)
                 return AgentReply(
                     status="confirmation_required",
                     pending_action=action,
                     turns=turn,
                 )
 
-            output = tool.handler(action.arguments)
-            if inspect.isawaitable(output):
-                output = await output
-            history.append(
-                {
-                    "role": "tool",
-                    "name": tool.name,
-                    "call_id": action.call_id,
-                    "arguments": dict(action.arguments),
-                    "content": dict(output) if output is not None else None,
-                }
-            )
+            history.append(await self._execute_tool(tool, action))
 
         return AgentReply(status="failed", error="turn_budget_exhausted", turns=self.max_turns)

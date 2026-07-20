@@ -40,6 +40,15 @@ test('typed input reaches the EMEFA runtime when the voice session is offline', 
   assert.match(source, /agentErrorCopy/)
 })
 
+test('consequential actions surface an explicit approval card', () => {
+  assert.match(source, /\/v1\/agent\/approvals/)
+  assert.match(source, /decideApproval/)
+  assert.match(source, /Approuver/)
+  assert.match(source, /Refuser/)
+  assert.match(source, /APPROBATION REQUISE/)
+  assert.match(holographicCss, /approval-card/)
+})
+
 test('profile panel lets the user view and edit assistant and business context', () => {
   const panel = readFileSync(new URL('../src/ProfilePanel.tsx', import.meta.url), 'utf8')
   assert.match(panel, /\/v1\/assistant\/profile/)

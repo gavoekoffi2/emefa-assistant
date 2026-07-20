@@ -69,6 +69,16 @@ Voice (ElevenLabs session) and the backend text path still have **separate conve
 
 - `HolographicUniverse` (three.js) is now a lazily loaded chunk: initial JS 1,203 kB → 669 kB (gzip 319 kB → 185 kB); hologram chunk 540 kB loads asynchronously after the shell (TD-9 first step). No behavior change; reduced-motion and mobile budgets unchanged.
 
+## Completed — approval loop end-to-end (2026-07-20)
+
+- **Migration 4:** `pending_actions` table (tenant/user-scoped, indexed by conversation/status).
+- **`ApprovalRepository`** (`domain/approvals.py`): create/get/list-pending/resolve with JSON arguments; replay of a resolved action returns 404.
+- **`AgentEngine`** refactor: shared `_advance` loop; on an ASK decision the context is persisted so the action can resume after reload/restart; new `execute_approved()` runs the approved tool then lets the brain conclude (chained approvals supported).
+- **API:** `GET /v1/agent/approvals`, `POST /v1/agent/approvals/{id}/decision` (approve/reject, device-scoped, 404 on foreign/resolved actions); `RunResponse` gains `action_id` and a `rejected` status. Audit events: approval_created/approved/rejected.
+- **First real destructive skill:** `reset_business_profile` (DESTRUCTIVE → ASK; optional field list; irreversible-marked description; audit) — approval binds to the exact persisted action, satisfying "approval must bind to exact action" (`CLAUDE_EXECUTION_PROMPT` §37).
+- **Web:** approval card (alertdialog) with Approuver/Refuser, argument preview, French skill labels; pending approvals restored on page load; honest `rejected` surface. Amber styling distinct from the cyan HUD.
+- Tests: backend **52 passing** (approve executes + profile actually cleared; reject never executes; replay/foreign 404; unknown-tool guard); web **7 passing**; lint/build clean.
+
 ## In Progress
 
 Nothing mid-flight.

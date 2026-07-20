@@ -98,6 +98,27 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         ON conversation_turns(conversation_id, turn_id)
         """,
     ),
+    # 4 — pending consequential actions awaiting user approval.
+    (
+        f"""
+        CREATE TABLE pending_actions (
+            action_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            conversation_id TEXT NOT NULL,
+            tool_name TEXT NOT NULL,
+            arguments TEXT NOT NULL,
+            call_id TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            resolved_at TEXT
+        )
+        """,
+        """
+        CREATE INDEX idx_pending_actions_conversation
+        ON pending_actions(conversation_id, status)
+        """,
+    ),
 )
 
 

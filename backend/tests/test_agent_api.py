@@ -39,6 +39,7 @@ async def test_agent_run_requires_device_and_returns_structured_reply(tmp_path):
         "turns": 1,
         "answer": "Bonjour Claude, EMEFA est prête.",
         "pending_action": None,
+        "action_id": None,
         "error": None,
     }
 

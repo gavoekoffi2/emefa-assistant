@@ -14,6 +14,7 @@ from emefa.api.realtime import router as realtime_router
 from emefa.api.web_session import router as web_session_router
 from emefa.config import Settings
 from emefa.domain.agent import AgentEngine, AgentStep, Brain
+from emefa.domain.approvals import ApprovalRepository
 from emefa.domain.conversations import ConversationStore
 from emefa.domain.devices import DeviceRepository
 from emefa.domain.profiles import ProfileRepository
@@ -87,6 +88,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
         build_tool_shelf(profiles),
         memory=ConversationStore(active_settings.database_path),
     )
+    application.state.approvals = ApprovalRepository(active_settings.database_path)
     application.state.realtime = realtime_gateway
     application.state.activation_limiter = FailureLimiter(
         max_failures=active_settings.activation_max_failures,

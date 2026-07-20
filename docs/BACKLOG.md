@@ -5,7 +5,7 @@
 ## NOW (Phase 3 — Realtime Voice/Text Core, continued)
 
 - ADR: route voice reasoning through EMEFA backend (ElevenLabs custom-LLM/webhook vs LiveKit) after baseline benchmark — needs owner input on ElevenLabs agent config access
-- Approval UI + pending-action persistence for `confirmation_required` runs (prerequisite for the first COMMUNICATE-risk skill)
+- ~~Approval UI + pending-action persistence~~ — done 2026-07-20 (migration 4, ApprovalRepository, decision endpoints, approval card, reset_business_profile skill)
 Done in Phase 3 slice 1 (2026-07-20): DeepSeek function calling, first governed skills (get_profiles, update_business_profile), typed input through `/v1/agent/runs` when voice is offline, conversational onboarding via the agent.
 Done in Phase 3 slice 2 (2026-07-20): durable conversation history (`conversation_turns` + `ConversationStore` injected into the engine).
 

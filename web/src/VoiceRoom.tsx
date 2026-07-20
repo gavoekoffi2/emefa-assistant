@@ -14,10 +14,18 @@ type ConversationTurn = { id: string; role: 'user' | 'assistant'; text: string }
 type SignedSession = { signed_url: string }
 type VoiceMessage = { message?: string; source?: string; role?: string }
 type AgentRun = {
-  status: 'completed' | 'confirmation_required' | 'blocked' | 'failed'
+  status: 'completed' | 'confirmation_required' | 'blocked' | 'failed' | 'rejected'
   answer?: string | null
   error?: string | null
-  pending_action?: { name: string } | null
+  pending_action?: { name: string; arguments: Record<string, unknown> } | null
+  action_id?: string | null
+}
+type PendingApproval = { action_id: string; name: string; arguments: Record<string, unknown> }
+
+const skillLabels: Record<string, string> = {
+  reset_business_profile: 'Effacer le profil professionnel',
+  update_business_profile: 'Mettre à jour le profil professionnel',
+  get_profiles: 'Consulter les profils',
 }
 
 const agentErrorCopy: Record<string, string> = {
@@ -46,6 +54,8 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   const [typed, setTyped] = useState('')
   const [profileOpen, setProfileOpen] = useState(false)
   const [firstRun, setFirstRun] = useState(false)
+  const [approval, setApproval] = useState<PendingApproval | null>(null)
+  const [deciding, setDeciding] = useState(false)
 
   useEffect(() => {
     api<BusinessProfile>('/v1/assistant/business')
@@ -53,7 +63,45 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
         if (isBusinessEmpty(profile)) { setFirstRun(true); setProfileOpen(true) }
       })
       .catch(() => undefined)
+    api<PendingApproval[]>('/v1/agent/approvals')
+      .then((pending) => { if (pending.length > 0) setApproval(pending[0]) })
+      .catch(() => undefined)
   }, [])
+
+  const applyAgentRun = (run: AgentRun) => {
+    let text: string
+    if (run.status === 'completed' && run.answer) text = run.answer
+    else if (run.status === 'rejected') text = run.answer || 'Action annulée. Rien n’a été exécuté.'
+    else if (run.status === 'confirmation_required') {
+      const label = skillLabels[run.pending_action?.name ?? ''] || run.pending_action?.name || 'cette action'
+      text = `Avant de continuer, EMEFA attend votre approbation pour : ${label}.`
+      if (run.action_id && run.pending_action) {
+        setApproval({ action_id: run.action_id, name: run.pending_action.name, arguments: run.pending_action.arguments })
+      }
+    } else if (run.status === 'blocked') text = 'Cette action est bloquée par la politique de sécurité d’EMEFA.'
+    else text = agentErrorCopy[run.error ?? ''] || 'La demande n’a pas abouti.'
+    setAnswer(text)
+    setHistory((current) => [...current.slice(-7), { id: crypto.randomUUID(), role: 'assistant', text }])
+    setState('idle')
+  }
+
+  const decideApproval = async (approve: boolean) => {
+    if (!approval || deciding) return
+    setDeciding(true); setState('thinking')
+    try {
+      const run = await api<AgentRun>(`/v1/agent/approvals/${approval.action_id}/decision`, {
+        method: 'POST',
+        body: JSON.stringify({ approve }),
+      })
+      setApproval(null)
+      applyAgentRun(run)
+    } catch (cause) {
+      setState('error')
+      setNotice(cause instanceof Error ? cause.message : 'La décision n’a pas pu être transmise.')
+    } finally {
+      setDeciding(false)
+    }
+  }
 
   const conversation = useConversation({
     onConnect: () => { setNotice(''); setState('listening') },
@@ -122,14 +170,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
     if (conversation.status === 'connected') { conversation.sendUserMessage(value); return }
     try {
       const run = await api<AgentRun>('/v1/agent/runs', { method: 'POST', body: JSON.stringify({ message: value }) })
-      let text: string
-      if (run.status === 'completed' && run.answer) text = run.answer
-      else if (run.status === 'confirmation_required') text = `L’action « ${run.pending_action?.name ?? 'demandée'} » nécessite votre approbation. Ce parcours d’approbation arrive dans une prochaine version.`
-      else if (run.status === 'blocked') text = 'Cette action est bloquée par la politique de sécurité d’EMEFA.'
-      else text = agentErrorCopy[run.error ?? ''] || 'La demande n’a pas abouti.'
-      setAnswer(text)
-      setHistory((current) => [...current.slice(-7), { id: crypto.randomUUID(), role: 'assistant', text }])
-      setState('idle')
+      applyAgentRun(run)
     } catch (cause) {
       setState('error')
       setNotice(cause instanceof Error ? cause.message : 'La demande n’a pas abouti.')
@@ -178,6 +219,20 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       <section className="command-dock"><span className="dock-prompt">›</span><input value={typed} onChange={(event) => { setTyped(event.target.value); if (live) conversation.sendUserActivity() }} onKeyDown={(event) => { if (event.key === 'Enter') void submitTyped() }} placeholder="Écrire à EMEFA — avec ou sans la voix…" aria-label="Écrire une demande" /><button onClick={() => void submitTyped()} disabled={!typed.trim()}>TRANSMETTRE</button></section>
       <div className="model-pill"><span>PROTOCOLE</span><strong>VOICE·LIVE</strong><i>●</i></div>
       {notice && <div className="voice-notice" role="alert">{notice}</div>}
+      {approval && (
+        <div className="approval-card" role="alertdialog" aria-labelledby="approval-title">
+          <span className="approval-badge">APPROBATION REQUISE</span>
+          <strong id="approval-title">{skillLabels[approval.name] || approval.name}</strong>
+          {Object.keys(approval.arguments).length > 0 && (
+            <code className="approval-args">{JSON.stringify(approval.arguments)}</code>
+          )}
+          <p>EMEFA n’exécutera cette action qu’avec votre accord explicite.</p>
+          <div className="approval-actions">
+            <button className="approval-reject" onClick={() => void decideApproval(false)} disabled={deciding}>Refuser</button>
+            <button className="approval-approve" onClick={() => void decideApproval(true)} disabled={deciding}>{deciding ? 'Traitement…' : 'Approuver'}</button>
+          </div>
+        </div>
+      )}
       <ProfilePanel open={profileOpen} firstRun={firstRun} onClose={() => { setProfileOpen(false); setFirstRun(false) }} />
     </div>
   )

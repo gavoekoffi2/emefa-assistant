@@ -57,6 +57,41 @@ def build_tool_shelf(profiles: ProfileRepository) -> ToolShelf:
             handler=get_profiles,
         )
     )
+    def reset_business(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        requested = arguments.get("fields")
+        if isinstance(requested, list):
+            targets = [field for field in requested if field in BUSINESS_FIELDS]
+            if not targets:
+                targets = list(BUSINESS_FIELDS)
+        else:
+            targets = list(BUSINESS_FIELDS)
+        profiles.update_business({field: "" for field in targets})
+        audit("skill_business_profile_reset", fields=sorted(targets))
+        return {"cleared_fields": sorted(targets)}
+
+    shelf.add(
+        AgentTool(
+            name="reset_business_profile",
+            description=(
+                "Efface définitivement tout ou partie du profil professionnel "
+                "enregistré. Action irréversible : à n'utiliser que si l'utilisateur "
+                "le demande explicitement. Sans le paramètre fields, tout est effacé."
+            ),
+            risk=ActionRisk.DESTRUCTIVE,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "fields": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": list(BUSINESS_FIELDS)},
+                        "description": "Champs à effacer ; omettre pour tout effacer.",
+                    }
+                },
+                "additionalProperties": False,
+            },
+            handler=reset_business,
+        )
+    )
     shelf.add(
         AgentTool(
             name="update_business_profile",

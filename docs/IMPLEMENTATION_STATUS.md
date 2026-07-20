@@ -175,6 +175,18 @@ With this, the Phase 3 "text and voice share context" exit criterion is implemen
 - Deliberately excluded (needs vetted providers + anti-spam guardrails): prospect discovery, enrichment, automated outreach. Tracking only — no uncontrolled prospecting (CLAUDE.md §29).
 - Tests: backend **86 passing** (repository incl. won-prospect exits pipeline, skills incl. stage validation, brief integration, conversation→API end-to-end).
 
+## Completed — reconciled e-mail suite + voice actions (2026-07-20)
+
+**Audit first:** the requested `email_search/read/create_draft/send` skills and the "graphistegpt" account did **not** exist anywhere in the repo (all branches searched); `main` had simply been fast-forwarded to commit 84e552a. Rather than a second integration, the existing SMTP skill was **reconciled**: `send_email` → **`email_send`** (same COMMUNICATE→approval path), plus a new stdlib-`imaplib` client providing **`email_search`**, **`email_read`** (both PERSONAL_READ, results framed as external data — never instructions), and **`email_create_draft`** (LOCAL_WRITE, saved to the mailbox Drafts folder, no send). Settings `EMEFA_IMAP_*` with fallback to the SMTP credentials (single graphistegpt account). Skills register only when configured.
+
+**Voice bridge now routes through the governed engine:** each Custom-LLM turn runs `AgentEngine.run()` on the shared voice conversation — voice has the same skills, policy, approvals, and history as text. `confirmation_required` becomes a **pending approval + oral announcement** ("l'envoi attend votre approbation, la carte vient d'apparaître"); the reply is served as synthesized OpenAI SSE. Voice-channel approvals are listed/decidable from any authenticated device (single-user mode, documented), and the HUD polls approvals every 4 s during a live session so the card surfaces mid-conversation. The now-redundant streaming proxy (`infrastructure/voice_llm.py`) was removed.
+
+**Pipeline panel (Phase 7)** in the HUD: prospects grouped by stage, due follow-ups highlighted with a RELANCE badge and a call-to-action pairing with `email_send`.
+
+**Verified end-to-end on the real server** (uvicorn + built frontend + local OpenAI-compatible mock + a **real local SMTP server** on loopback): spoken request → SSE announcement with recipient/subject → pending approval visible in `/v1/agent/approvals` → approval → **message actually delivered over SMTP** (`From: graphistegpt@gmail.com`, `To: ama@exemple.com`, `Subject: Test EMEFA` observed on the wire) → next voice turn answers "l'e-mail est parti". **Honest limit:** the audio/microphone leg (ElevenLabs ↔ browser) cannot run from this sandbox — validate at the deployment after switching the agent to the Custom LLM URL.
+
+Tests: backend **85 passing**, web **12 passing**, lint/build clean.
+
 ## In Progress
 
 Nothing mid-flight.

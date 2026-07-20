@@ -97,46 +97,6 @@ async def test_memory_api_and_context_composition(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_voice_bridge_context_includes_memories(tmp_path):
-    import json as jsonlib
-
-    from emefa.infrastructure.voice_llm import VoiceLLMProxy
-
-    seen: list[dict] = []
-
-    def upstream(request: httpx.Request) -> httpx.Response:
-        seen.append(jsonlib.loads(request.content))
-        return httpx.Response(200, json={"choices": [{"message": {"content": "Oui."}}]})
-
-    app = create_app(
-        Settings(
-            enrollment_code="CODE-SECRET",
-            database_path=tmp_path / "voice.db",
-            cookie_secure=False,
-            openrouter_api_key=SecretStr("sk-or-test"),
-            voice_llm_token=SecretStr("voice-secret"),
-        )
-    )
-    MemoryRepository(tmp_path / "voice.db").remember("Livraison le mardi")
-    app.state.voice_llm = VoiceLLMProxy(
-        api_key="sk-or-test",
-        model="m",
-        base_url="https://upstream.test/v1",
-        context_provider=app.state.compose_context,
-        transport=httpx.MockTransport(upstream),
-    )
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as web:
-        response = await web.post(
-            "/v1/voice-llm/chat/completions",
-            json={"messages": [{"role": "user", "content": "Quand livre-t-on ?"}]},
-            headers={"Authorization": "Bearer voice-secret"},
-        )
-    assert response.status_code == 200
-    assert "Livraison le mardi" in seen[0]["messages"][0]["content"]
-
-
-@pytest.mark.asyncio
 async def test_memory_export_returns_attachment(tmp_path):
     class Brain:
         async def think(self, history, tools):

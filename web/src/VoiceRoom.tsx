@@ -4,6 +4,7 @@ import { api, BrandMark, graphNodes, palette, statusCopy, VoiceOrb } from './App
 import { isBusinessEmpty, ProfilePanel } from './ProfilePanel'
 import { TasksPanel } from './TasksPanel'
 import { MemoryPanel } from './MemoryPanel'
+import { PipelinePanel } from './PipelinePanel'
 
 // three.js is heavy; load the hologram as its own chunk so the shell stays light.
 const HolographicUniverse = lazy(() =>
@@ -36,7 +37,8 @@ const skillLabels: Record<string, string> = {
   update_business_profile: 'Mettre à jour le profil professionnel',
   get_profiles: 'Consulter les profils',
   forget_memory: 'Oublier un souvenir',
-  send_email: 'Envoyer un e-mail',
+  email_send: 'Envoyer un e-mail',
+  email_create_draft: 'Créer un brouillon d’e-mail',
 }
 
 const agentErrorCopy: Record<string, string> = {
@@ -66,6 +68,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   const [profileOpen, setProfileOpen] = useState(false)
   const [tasksOpen, setTasksOpen] = useState(false)
   const [memoryOpen, setMemoryOpen] = useState(false)
+  const [pipelineOpen, setPipelineOpen] = useState(false)
   const [firstRun, setFirstRun] = useState(false)
   const [approval, setApproval] = useState<PendingApproval | null>(null)
   const [deciding, setDeciding] = useState(false)
@@ -90,6 +93,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       .then((pending) => { if (pending.length > 0) setApproval(pending[0]) })
       .catch(() => undefined)
   }, [])
+
 
   const applyAgentRun = (run: AgentRun) => {
     let text: string
@@ -153,6 +157,18 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   })
 
   const live = conversation.status !== 'disconnected'
+
+  // During a live voice session, actions prepared orally create pending
+  // approvals server-side; poll so the card surfaces without a reload.
+  useEffect(() => {
+    if (!live) return
+    const timer = setInterval(() => {
+      api<PendingApproval[]>('/v1/agent/approvals')
+        .then((pending) => { if (pending.length > 0) setApproval((current) => current ?? pending[0]) })
+        .catch(() => undefined)
+    }, 4000)
+    return () => clearInterval(timer)
+  }, [live])
 
   useEffect(() => {
     if (conversation.status === 'connecting') setState('thinking')
@@ -219,7 +235,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       <div className="space-vignette" />
       <header className="jarvis-header">
         <div className="brand-row"><BrandMark /><div><strong>EMEFA</strong><small>INTELLIGENCE COGNITIVE</small></div></div>
-        <nav><button className={profileOpen || tasksOpen || memoryOpen ? '' : 'nav-active'} onClick={() => { setProfileOpen(false); setTasksOpen(false); setMemoryOpen(false) }}>Univers</button><button className={tasksOpen ? 'nav-active' : ''} onClick={() => { setProfileOpen(false); setMemoryOpen(false); setTasksOpen(true) }}>Tâches</button><button className={memoryOpen ? 'nav-active' : ''} onClick={() => { setProfileOpen(false); setTasksOpen(false); setMemoryOpen(true) }}>Mémoire</button><button className={profileOpen ? 'nav-active' : ''} onClick={() => { setTasksOpen(false); setMemoryOpen(false); setProfileOpen(true) }}>Profil</button></nav>
+        <nav><button className={profileOpen || tasksOpen || memoryOpen || pipelineOpen ? '' : 'nav-active'} onClick={() => { setProfileOpen(false); setTasksOpen(false); setMemoryOpen(false); setPipelineOpen(false) }}>Univers</button><button className={tasksOpen ? 'nav-active' : ''} onClick={() => { setProfileOpen(false); setMemoryOpen(false); setPipelineOpen(false); setTasksOpen(true) }}>Tâches</button><button className={pipelineOpen ? 'nav-active' : ''} onClick={() => { setProfileOpen(false); setTasksOpen(false); setMemoryOpen(false); setPipelineOpen(true) }}>Pipeline</button><button className={memoryOpen ? 'nav-active' : ''} onClick={() => { setProfileOpen(false); setTasksOpen(false); setPipelineOpen(false); setMemoryOpen(true) }}>Mémoire</button><button className={profileOpen ? 'nav-active' : ''} onClick={() => { setTasksOpen(false); setMemoryOpen(false); setPipelineOpen(false); setProfileOpen(true) }}>Profil</button></nav>
         <div className="header-right"><span className="system-clock"><b>SYS</b> EN LIGNE</span><span className="privacy-status"><i /> {window.location.protocol === 'https:' ? 'CHIFFREMENT ACTIF' : 'CONNEXION LOCALE'}</span><button className="profile-button" onClick={onLogout} title={`Déconnecter ${session.name}`}>CG</button></div>
       </header>
       <aside className="space-sidebar">
@@ -267,6 +283,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       <ProfilePanel open={profileOpen} firstRun={firstRun} onClose={() => { setProfileOpen(false); setFirstRun(false) }} />
       <TasksPanel open={tasksOpen} onClose={() => setTasksOpen(false)} onAskBrief={askBrief} />
       <MemoryPanel open={memoryOpen} onClose={() => setMemoryOpen(false)} />
+      <PipelinePanel open={pipelineOpen} onClose={() => setPipelineOpen(false)} />
     </div>
   )
 }

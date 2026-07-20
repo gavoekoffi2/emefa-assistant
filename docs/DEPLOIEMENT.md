@@ -48,10 +48,16 @@ envoi demande votre approbation explicite dans l'interface avant de partir.
      deux étapes → Mots de passe des applications), jamais votre mot de passe
      principal.
    - `EMEFA_SMTP_FROM` (votre adresse d'expéditeur)
-2. Redémarrer le service. La compétence `send_email` n'apparaît dans
-   `/v1/system/status` que si cette configuration est présente.
-3. Test : demandez par écrit « Envoie-moi un e-mail de test à … » — la carte
-   d'approbation doit apparaître avant tout envoi.
+2. Pour la recherche, la lecture et les brouillons (IMAP), ajouter aussi :
+   - `EMEFA_IMAP_HOST` (ex. `imap.gmail.com`)
+   - `EMEFA_IMAP_PORT` (993 par défaut)
+   - `EMEFA_IMAP_USERNAME` / `EMEFA_IMAP_PASSWORD` (repli automatique sur les
+     identifiants SMTP si absents — même compte, ex. graphistegpt).
+3. Redémarrer le service. Les compétences `email_send`, `email_search`,
+   `email_read` et `email_create_draft` n'apparaissent dans
+   `/v1/system/status` que si la configuration correspondante est présente.
+4. Test : demandez par écrit ou à la voix « Envoie un e-mail de test à … » —
+   la carte d'approbation doit apparaître avant tout envoi.
 
 ## Brancher la voix sur le cerveau EMEFA (Custom LLM)
 
@@ -63,9 +69,12 @@ et le même contexte métier que le texte :
 2. Dans le dashboard ElevenLabs → votre agent → **LLM** : choisir **Custom LLM**,
    renseigner l'URL `https://<votre-domaine>/v1/voice-llm/chat/completions`
    et, comme clé API, la valeur exacte de `EMEFA_VOICE_LLM_TOKEN`.
-3. Garder la persona ElevenLabs courte : EMEFA injecte automatiquement le
-   contexte métier (profil assistante + profil professionnel) en tête de chaque
-   requête.
+3. Garder la persona ElevenLabs courte : chaque tour vocal passe désormais par
+   le moteur gouverné d'EMEFA — profil, mémoire, tâches, pipeline et e-mail y
+   sont accessibles à la voix. Les actions à conséquence (envoi d'e-mail,
+   effacements) ne s'exécutent jamais depuis la voix seule : EMEFA annonce
+   oralement qu'une approbation attend à l'écran, et reprend une fois votre
+   décision prise.
 4. Rollback immédiat possible : re-sélectionner le LLM ElevenLabs d'origine dans
    le dashboard, sans redéploiement.
 

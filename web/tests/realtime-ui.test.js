@@ -104,3 +104,17 @@ test('interface renders a state-reactive WebGL holographic HUD', () => {
   assert.match(holographicCss, /prefers-reduced-motion/)
   assert.match(holographicCss, /@media\(max-width:800px\)/)
 })
+
+test('pipeline panel shows the sales funnel with due follow-ups', () => {
+  const pipelinePanel = readFileSync(new URL('../src/PipelinePanel.tsx', import.meta.url), 'utf8')
+  assert.match(pipelinePanel, /\/v1\/prospects/)
+  assert.match(pipelinePanel, /Relance due/)
+  assert.match(pipelinePanel, /Qualifié/)
+  assert.match(source, /PipelinePanel/)
+  assert.match(source, /Pipeline/)
+})
+
+test('pending approvals are polled during a live voice session', () => {
+  assert.match(source, /setInterval/)
+  assert.match(source, /email_send: 'Envoyer un e-mail'/)
+})

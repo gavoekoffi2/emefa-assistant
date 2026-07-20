@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     smtp_password: SecretStr | None = None
     smtp_from: str | None = None
     smtp_starttls: bool = True
+    imap_host: str | None = None
+    imap_port: int = 993
+    imap_username: str | None = None
+    imap_password: SecretStr | None = None
     elevenlabs_api_key: SecretStr | None = None
     elevenlabs_agent_id: str | None = None
     web_dist_path: Path | None = None

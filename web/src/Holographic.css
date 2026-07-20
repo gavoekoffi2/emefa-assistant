@@ -120,3 +120,8 @@
 .memory-row div{max-width:calc(100% - 90px)}
 .memory-category{align-self:flex-start;padding:2px 8px;border-radius:999px;border:1px solid rgba(var(--hud-rgb,110 234 255),.35);font-size:.62rem;letter-spacing:.12em;text-transform:uppercase;color:var(--hud,#6eeaff)}
 .memory-row strong{font-weight:500;line-height:1.4}
+
+/* Pipeline panel */
+.prospect-row strong em{font-style:normal;font-weight:400;color:rgba(200,228,242,.65)}
+.prospect-row.due{border-color:rgba(255,157,87,.55);box-shadow:inset 0 0 20px rgba(255,157,87,.05)}
+.due-badge{flex:none;padding:3px 9px;border-radius:999px;border:1px solid rgba(255,157,87,.6);color:var(--accent,#ff9d57);font-size:.6rem;font-weight:700;letter-spacing:.2em}

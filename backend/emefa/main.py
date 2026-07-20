@@ -28,9 +28,8 @@ from emefa.domain.prospects import ProspectRepository
 from emefa.domain.ratelimit import FailureLimiter
 from emefa.domain.tasks import TaskRepository
 from emefa.infrastructure.deepseek import DeepSeekBrain
-from emefa.infrastructure.email import SmtpEmailSender
+from emefa.infrastructure.email import ImapEmailClient, SmtpEmailSender
 from emefa.infrastructure.realtime import RealtimeGateway
-from emefa.infrastructure.voice_llm import VoiceLLMProxy
 from emefa.observability import (
     configure_logging,
     monotonic_ms,
@@ -121,12 +120,6 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
         selected_brain = NotConfiguredBrain()
     brain_configured = not isinstance(selected_brain, NotConfiguredBrain)
 
-    voice_llm_proxy = VoiceLLMProxy(
-        api_key=llm_api_key,
-        model=llm_model,
-        base_url=llm_base_url,
-        context_provider=compose_context,
-    )
 
     realtime_key = (
         active_settings.elevenlabs_api_key.get_secret_value().strip()
@@ -170,6 +163,18 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
             starttls=active_settings.smtp_starttls,
         )
 
+    imap_client = None
+    if active_settings.imap_host:
+        imap_password = active_settings.imap_password or active_settings.smtp_password
+        imap_client = ImapEmailClient(
+            host=active_settings.imap_host,
+            port=active_settings.imap_port,
+            username=active_settings.imap_username or active_settings.smtp_username,
+            password=(
+                imap_password.get_secret_value() if imap_password is not None else None
+            ),
+        )
+
     application.state.tasks = tasks
     application.state.memories = memories
     application.state.prospects = prospects
@@ -178,12 +183,11 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     application.state.conversations = conversations
     application.state.agent = AgentEngine(
         selected_brain,
-        build_tool_shelf(profiles, tasks, memories, email_sender, prospects),
+        build_tool_shelf(profiles, tasks, memories, email_sender, prospects, imap_client),
         memory=conversations,
     )
     application.state.approvals = ApprovalRepository(active_settings.database_path)
     application.state.brain_configured = brain_configured
-    application.state.voice_llm = voice_llm_proxy
     application.state.realtime = realtime_gateway
     application.state.activation_limiter = FailureLimiter(
         max_failures=active_settings.activation_max_failures,

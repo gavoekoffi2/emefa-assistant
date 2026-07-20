@@ -1,7 +1,8 @@
 """Application factory for the greenfield EMEFA backend."""
 
+import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
@@ -11,6 +12,7 @@ from emefa.api.agent import router as agent_router
 from emefa.api.devices import router as devices_router
 from emefa.api.profile import router as profile_router
 from emefa.api.realtime import router as realtime_router
+from emefa.api.briefings import router as briefings_router
 from emefa.api.memories import router as memories_router
 from emefa.api.prospects import router as prospects_router
 from emefa.api.system import router as system_router
@@ -23,6 +25,7 @@ from emefa.domain.approvals import ApprovalRepository
 from emefa.domain.conversations import VOICE_CONVERSATION_ID, ConversationStore
 from emefa.domain.devices import DeviceRepository
 from emefa.domain.profiles import ProfileRepository
+from emefa.domain.briefings import BriefingRepository
 from emefa.domain.memories import MemoryRepository
 from emefa.domain.prospects import ProspectRepository
 from emefa.domain.ratelimit import FailureLimiter
@@ -36,6 +39,7 @@ from emefa.observability import (
     new_request_id,
     request_id_var,
 )
+from emefa.scheduler import brief_scheduler_loop
 from emefa.skills import build_tool_shelf
 
 request_logger = logging.getLogger("emefa.request")
@@ -53,6 +57,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     tasks = TaskRepository(active_settings.database_path)
     memories = MemoryRepository(active_settings.database_path)
     prospects = ProspectRepository(active_settings.database_path)
+    briefings = BriefingRepository(active_settings.database_path)
     conversations = ConversationStore(active_settings.database_path)
 
     def compose_context() -> str:
@@ -132,8 +137,25 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     )
 
     @asynccontextmanager
-    async def lifespan(_application: FastAPI):
+    async def lifespan(application_: FastAPI):
+        scheduler_task = None
+        if active_settings.brief_hour is not None:
+            scheduler_task = asyncio.create_task(
+                brief_scheduler_loop(
+                    active_settings.brief_hour,
+                    profiles,
+                    tasks,
+                    prospects,
+                    briefings,
+                    email_sender,
+                    active_settings.brief_email_to,
+                )
+            )
         yield
+        if scheduler_task is not None:
+            scheduler_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await scheduler_task
         close = getattr(selected_brain, "close", None)
         if close is not None:
             await close()
@@ -178,6 +200,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     application.state.tasks = tasks
     application.state.memories = memories
     application.state.prospects = prospects
+    application.state.briefings = briefings
     application.state.compose_context = compose_context
     application.state.compose_text_context = compose_text_context
     application.state.conversations = conversations
@@ -247,6 +270,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     application.include_router(web_session_router)
     application.include_router(agent_router)
     application.include_router(profile_router)
+    application.include_router(briefings_router)
     application.include_router(memories_router)
     application.include_router(prospects_router)
     application.include_router(system_router)

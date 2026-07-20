@@ -187,6 +187,15 @@ With this, the Phase 3 "text and voice share context" exit criterion is implemen
 
 Tests: backend **85 passing**, web **12 passing**, lint/build clean.
 
+## Completed — Phase 8 seed: proactive morning brief (2026-07-20)
+
+- **Migration 8:** `briefings` table (one per date, upsert, `emailed` flag).
+- **`compose_daily_brief` / `format_brief_text`** extracted from the skill so the scheduler and the API share the same deterministic composition (tasks by bucket, due sales follow-ups, goals) and French plain-text rendering.
+- **Bounded scheduler** (`emefa/scheduler.py`): sleeps until `EMEFA_BRIEF_HOUR` (off by default — no proactive work without explicit configuration), runs one idempotent job per day (per-iteration error handling, ≥60 s guard, clean cancellation in the app lifespan). Per §34: explicit stop conditions, no unbounded autonomy.
+- **Standing scoped approval (§24 level 5):** `EMEFA_BRIEF_EMAIL_TO` authorizes exactly one e-mail per day (the brief) — sent at most once (flag-guarded), revocable by removing the variable. Without it, the brief is stored but never sent.
+- **`GET /v1/briefings/today`** + HUD **"Votre brief du jour est prêt"** dismissible strip that displays the brief in the answer panel.
+- Tests: backend **90 passing** (schedule math, repository upsert/emailed, French rendering, job idempotence incl. *e-mailed exactly once* and *never without the standing approval*, endpoint auth/404/content); web **13 passing**; lint/build clean.
+
 ## In Progress
 
 Nothing mid-flight.

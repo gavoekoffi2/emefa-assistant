@@ -118,3 +118,9 @@ test('pending approvals are polled during a live voice session', () => {
   assert.match(source, /setInterval/)
   assert.match(source, /email_send: 'Envoyer un e-mail'/)
 })
+
+test('proactive morning brief surfaces as a dismissible strip', () => {
+  assert.match(source, /\/v1\/briefings\/today/)
+  assert.match(source, /brief du jour est prêt/)
+  assert.match(holographicCss, /brief-strip/)
+})

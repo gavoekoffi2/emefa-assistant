@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     imap_port: int = 993
     imap_username: str | None = None
     imap_password: SecretStr | None = None
+    brief_hour: int | None = None
+    brief_email_to: str | None = None
     elevenlabs_api_key: SecretStr | None = None
     elevenlabs_agent_id: str | None = None
     web_dist_path: Path | None = None

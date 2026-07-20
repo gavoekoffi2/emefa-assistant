@@ -59,6 +59,18 @@ envoi demande votre approbation explicite dans l'interface avant de partir.
 4. Test : demandez par écrit ou à la voix « Envoie un e-mail de test à … » —
    la carte d'approbation doit apparaître avant tout envoi.
 
+## Activer le brief matinal proactif (optionnel)
+
+1. Dans `.env`, définir `EMEFA_BRIEF_HOUR` (heure locale du serveur, ex. `7`).
+   Sans cette variable, aucun travail proactif ne s'exécute.
+2. Optionnel : `EMEFA_BRIEF_EMAIL_TO=votre@adresse` pour recevoir le brief par
+   e-mail chaque matin (nécessite la configuration SMTP ci-dessus). **Cette
+   variable vaut approbation permanente et cadrée** pour ce seul envoi
+   quotidien — aucune autre communication n'est couverte. Retirez-la pour
+   révoquer.
+3. Le brief du jour apparaît aussi dans l'interface (bandeau « Votre brief du
+   jour est prêt ») et via `GET /v1/briefings/today`.
+
 ## Brancher la voix sur le cerveau EMEFA (Custom LLM)
 
 Une fois le moteur agent activé ci-dessus, la voix peut utiliser le même cerveau

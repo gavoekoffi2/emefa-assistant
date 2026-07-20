@@ -73,6 +73,20 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   const [approval, setApproval] = useState<PendingApproval | null>(null)
   const [deciding, setDeciding] = useState(false)
   const [system, setSystem] = useState<SystemStatus | null>(null)
+  const [morningBrief, setMorningBrief] = useState<string | null>(null)
+
+  useEffect(() => {
+    api<{ text: string }>('/v1/briefings/today')
+      .then((briefing) => setMorningBrief(briefing.text))
+      .catch(() => undefined)
+  }, [])
+
+  const showMorningBrief = () => {
+    if (!morningBrief) return
+    setAnswer(morningBrief)
+    setHistory((current) => [...current.slice(-7), { id: crypto.randomUUID(), role: 'assistant', text: morningBrief }])
+    setMorningBrief(null)
+  }
 
   const refreshSystem = () => {
     api<SystemStatus>('/v1/system/status').then(setSystem).catch(() => undefined)
@@ -266,6 +280,13 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       <section className="command-dock"><span className="dock-prompt">›</span><input value={typed} onChange={(event) => { setTyped(event.target.value); if (live) conversation.sendUserActivity() }} onKeyDown={(event) => { if (event.key === 'Enter') void submitTyped() }} placeholder="Écrire à EMEFA — avec ou sans la voix…" aria-label="Écrire une demande" /><button onClick={() => void submitTyped()} disabled={!typed.trim()}>TRANSMETTRE</button></section>
       <div className="model-pill"><span>PROTOCOLE</span><strong>VOICE·LIVE</strong><i>●</i></div>
       {notice && <div className="voice-notice" role="alert">{notice}</div>}
+      {morningBrief && (
+        <div className="brief-strip" role="status">
+          <span>☀ Votre brief du jour est prêt.</span>
+          <button onClick={showMorningBrief}>L’afficher</button>
+          <button className="brief-dismiss" onClick={() => setMorningBrief(null)} aria-label="Ignorer le brief">✕</button>
+        </div>
+      )}
       {approval && (
         <div className="approval-card" role="alertdialog" aria-labelledby="approval-title">
           <span className="approval-badge">APPROBATION REQUISE</span>

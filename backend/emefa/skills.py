@@ -23,6 +23,83 @@ from emefa.observability import audit
 
 _EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
+
+def compose_daily_brief(
+    profiles: ProfileRepository,
+    tasks: TaskRepository,
+    prospects: ProspectRepository | None = None,
+) -> dict[str, Any]:
+    """Deterministic daily brief: open tasks by bucket, goals, due follow-ups."""
+    buckets: dict[str, list[dict[str, Any]]] = {
+        "en_retard": [],
+        "aujourdhui": [],
+        "a_venir": [],
+        "sans_echeance": [],
+    }
+    for task in tasks.list_open():
+        buckets[task.bucket()].append(
+            {"task_id": task.task_id, "title": task.title, "due_date": task.due_date}
+        )
+    business = profiles.get_business()
+    brief: dict[str, Any] = {
+        "date": date.today().isoformat(),
+        "open_task_count": sum(len(items) for items in buckets.values()),
+        "tasks": buckets,
+        "goals": business.goals,
+        "company_name": business.company_name,
+    }
+    if prospects is not None:
+        brief["due_follow_ups"] = [
+            {
+                "prospect_id": p.prospect_id,
+                "name": p.name,
+                "company": p.company,
+                "stage": p.stage,
+                "next_action": p.next_action,
+                "next_action_date": p.next_action_date,
+            }
+            for p in prospects.due_follow_ups()
+        ]
+    return brief
+
+
+_BUCKET_TITLES = (
+    ("en_retard", "En retard"),
+    ("aujourdhui", "Aujourd'hui"),
+    ("a_venir", "À venir"),
+    ("sans_echeance", "Sans échéance"),
+)
+
+
+def format_brief_text(brief: Mapping[str, Any]) -> str:
+    """French plain-text rendering of a brief, for e-mail and display."""
+    lines = [f"Brief EMEFA du {brief.get('date', '')}"]
+    if brief.get("company_name"):
+        lines[0] += f" — {brief['company_name']}"
+    task_buckets = brief.get("tasks", {})
+    if brief.get("open_task_count"):
+        lines.append("")
+        lines.append(f"Tâches ouvertes : {brief['open_task_count']}")
+        for key, title in _BUCKET_TITLES:
+            for task in task_buckets.get(key, []):
+                due = f" (échéance {task['due_date']})" if task.get("due_date") else ""
+                lines.append(f"- [{title}] {task['title']}{due}")
+    else:
+        lines.append("")
+        lines.append("Aucune tâche ouverte.")
+    follow_ups = brief.get("due_follow_ups", [])
+    if follow_ups:
+        lines.append("")
+        lines.append("Relances commerciales dues :")
+        for p in follow_ups:
+            company = f" ({p['company']})" if p.get("company") else ""
+            action = f" — {p['next_action']}" if p.get("next_action") else ""
+            lines.append(f"- {p['name']}{company}{action}")
+    if brief.get("goals"):
+        lines.append("")
+        lines.append(f"Objectifs : {brief['goals']}")
+    return "\n".join(lines)
+
 _BUSINESS_FIELD_DESCRIPTIONS = {
     "owner_name": "Nom de l'utilisateur",
     "owner_role": "Rôle ou fonction de l'utilisateur",
@@ -559,37 +636,7 @@ def _add_task_skills(
         return {"task": asdict(task)}
 
     def daily_brief(_arguments: Mapping[str, Any]) -> dict[str, Any]:
-        buckets: dict[str, list[dict[str, Any]]] = {
-            "en_retard": [],
-            "aujourdhui": [],
-            "a_venir": [],
-            "sans_echeance": [],
-        }
-        for task in tasks.list_open():
-            buckets[task.bucket()].append(
-                {"task_id": task.task_id, "title": task.title, "due_date": task.due_date}
-            )
-        business = profiles.get_business()
-        brief: dict[str, Any] = {
-            "date": date.today().isoformat(),
-            "open_task_count": sum(len(items) for items in buckets.values()),
-            "tasks": buckets,
-            "goals": business.goals,
-            "company_name": business.company_name,
-        }
-        if prospects is not None:
-            brief["due_follow_ups"] = [
-                {
-                    "prospect_id": p.prospect_id,
-                    "name": p.name,
-                    "company": p.company,
-                    "stage": p.stage,
-                    "next_action": p.next_action,
-                    "next_action_date": p.next_action_date,
-                }
-                for p in prospects.due_follow_ups()
-            ]
-        return brief
+        return compose_daily_brief(profiles, tasks, prospects)
 
     shelf.add(
         AgentTool(

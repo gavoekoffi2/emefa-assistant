@@ -172,6 +172,19 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         """,
         "CREATE INDEX idx_prospects_stage ON prospects(user_id, stage, next_action_date)",
     ),
+    # 8 — proactive daily briefings (recurring workflow seed).
+    (
+        f"""
+        CREATE TABLE briefings (
+            brief_date TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            content TEXT NOT NULL,
+            emailed INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+    ),
 )
 
 

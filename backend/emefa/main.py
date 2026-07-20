@@ -14,6 +14,7 @@ from emefa.api.realtime import router as realtime_router
 from emefa.api.web_session import router as web_session_router
 from emefa.config import Settings
 from emefa.domain.agent import AgentEngine, AgentStep, Brain
+from emefa.domain.conversations import ConversationStore
 from emefa.domain.devices import DeviceRepository
 from emefa.domain.profiles import ProfileRepository
 from emefa.domain.ratelimit import FailureLimiter
@@ -81,7 +82,11 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     application.state.settings = active_settings
     application.state.devices = DeviceRepository(active_settings.database_path)
     application.state.profiles = profiles
-    application.state.agent = AgentEngine(selected_brain, build_tool_shelf(profiles))
+    application.state.agent = AgentEngine(
+        selected_brain,
+        build_tool_shelf(profiles),
+        memory=ConversationStore(active_settings.database_path),
+    )
     application.state.realtime = realtime_gateway
     application.state.activation_limiter = FailureLimiter(
         max_failures=active_settings.activation_max_failures,

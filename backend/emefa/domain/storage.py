@@ -81,6 +81,23 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         """,
         f"ALTER TABLE devices ADD COLUMN user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}'",
     ),
+    # 3 — durable conversation history for the EMEFA runtime.
+    (
+        f"""
+        CREATE TABLE conversation_turns (
+            turn_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            conversation_id TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        """
+        CREATE INDEX idx_conversation_turns_lookup
+        ON conversation_turns(conversation_id, turn_id)
+        """,
+    ),
 )
 
 

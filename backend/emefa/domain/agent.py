@@ -80,17 +80,45 @@ class ToolShelf:
         ]
 
 
+class ConversationMemory(Protocol):
+    def recent(self, conversation_id: str, limit: int = 12) -> list[dict[str, Any]]: ...
+
+    def extend(
+        self, conversation_id: str, entries: Sequence[Mapping[str, Any]]
+    ) -> None: ...
+
+
+class InProcessConversationMemory:
+    """Fallback memory for tests and store-less setups; lost on restart."""
+
+    def __init__(self) -> None:
+        self._conversations: dict[str, list[dict[str, Any]]] = {}
+
+    def recent(self, conversation_id: str, limit: int = 12) -> list[dict[str, Any]]:
+        return self._conversations.get(conversation_id, [])[-limit:]
+
+    def extend(self, conversation_id: str, entries: Sequence[Mapping[str, Any]]) -> None:
+        bucket = self._conversations.setdefault(conversation_id, [])
+        bucket.extend(dict(entry) for entry in entries)
+
+
 class AgentEngine:
-    def __init__(self, brain: Brain, tools: ToolShelf, max_turns: int = 4) -> None:
+    def __init__(
+        self,
+        brain: Brain,
+        tools: ToolShelf,
+        max_turns: int = 4,
+        memory: ConversationMemory | None = None,
+    ) -> None:
         if max_turns < 1:
             raise ValueError("max_turns must be positive")
         self.brain = brain
         self.tools = tools
         self.max_turns = max_turns
-        self._conversations: dict[str, list[dict[str, Any]]] = {}
+        self.memory = memory or InProcessConversationMemory()
 
     async def run(self, message: str, conversation_id: str | None = None) -> AgentReply:
-        previous = self._conversations.get(conversation_id, []) if conversation_id else []
+        previous = self.memory.recent(conversation_id) if conversation_id else []
         history: list[dict[str, Any]] = [*previous, {"role": "user", "content": message}]
 
         for turn in range(1, self.max_turns + 1):
@@ -100,11 +128,11 @@ class AgentEngine:
                 return AgentReply(status="failed", error="brain_unavailable", turns=turn)
             if step.answer is not None:
                 if conversation_id:
-                    completed_history = [
-                        *history,
+                    new_entries = [
+                        *history[len(previous):],
                         {"role": "assistant", "content": step.answer},
                     ]
-                    self._conversations[conversation_id] = completed_history[-12:]
+                    self.memory.extend(conversation_id, new_entries)
                 return AgentReply(status="completed", answer=step.answer, turns=turn)
 
             action = step.action

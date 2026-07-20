@@ -6,9 +6,8 @@
 
 - ADR: route voice reasoning through EMEFA backend (ElevenLabs custom-LLM/webhook vs LiveKit) after baseline benchmark — needs owner input on ElevenLabs agent config access
 - Approval UI + pending-action persistence for `confirmation_required` runs (prerequisite for the first COMMUNICATE-risk skill)
-- Persist backend conversation history (replace in-process dict), shared key with future voice convergence
-
 Done in Phase 3 slice 1 (2026-07-20): DeepSeek function calling, first governed skills (get_profiles, update_business_profile), typed input through `/v1/agent/runs` when voice is offline, conversational onboarding via the agent.
+Done in Phase 3 slice 2 (2026-07-20): durable conversation history (`conversation_turns` + `ConversationStore` injected into the engine).
 
 Done in Phase 1 (2026-07-20): `.env.example`, README quickstart, S1 rate limiting, S2 token expiry, structured logging + audit, migration discipline, ADR-001, CI.
 Done in Phase 2 (2026-07-20): identity migration + seeds, ProfileRepository + endpoints, prompt context injection, profile panel UI + first-run onboarding.

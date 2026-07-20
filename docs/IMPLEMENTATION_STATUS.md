@@ -58,6 +58,13 @@ Met: see/edit profile ✓, persist business context ✓, reload without losing s
 
 Voice (ElevenLabs session) and the backend text path still have **separate conversation contexts and separate brains**; they share only the persisted profile. Full convergence requires the voice-routing ADR (custom-LLM/webhook vs LiveKit) and a measured baseline — next major step.
 
+## Completed — Phase 3 slice 2: durable conversation history (2026-07-20)
+
+- **Migration 3:** `conversation_turns` table (tenant/user-scoped per ADR-001 discipline, indexed by conversation).
+- **`ConversationStore`** (`domain/conversations.py`): append-only JSON payloads, `recent(limit=12)` window, `forget()`.
+- **`AgentEngine`** now takes a `ConversationMemory` (protocol) — the app injects the SQLite store; an in-process fallback remains for tests. Text conversations survive server restarts and are correct under future multi-worker setups (TD-6 resolved for the text path).
+- Tests: **48 passing** (3 new: store roundtrip/trim/forget, engine restart continuity, API-level continuity across `create_app` instances).
+
 ## In Progress
 
 Nothing mid-flight.

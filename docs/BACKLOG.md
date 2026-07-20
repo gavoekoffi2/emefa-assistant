@@ -2,16 +2,16 @@
 
 > New non-blocking ideas land here instead of derailing the current phase (`CLAUDE_EXECUTION_PROMPT.md` §64).
 
-## NOW (Phase 2 — Assistant Identity & Onboarding)
+## NOW (Phase 3 — Realtime Voice/Text Core)
 
-- Migration 2: implicit tenant/user/assistant rows + assistant/business profile tables (ADR-001)
-- Profile read/update endpoints (device-authenticated)
-- Conversational onboarding persisting a correctable summary
-- Profile context injected into `DeepSeekBrain` prompt composition
+- Wire `/v1/agent/runs` into the UI (text path through the EMEFA runtime, confirmation UI for `confirmation_required`)
+- Conversational onboarding through the agent (replaces the form-first flow as primary; panel remains for corrections)
+- ADR: route voice reasoning through EMEFA backend (ElevenLabs custom-LLM/webhook vs LiveKit) after baseline benchmark
 
-Done in Phase 1 (2026-07-20): `.env.example` completed, README quickstart, S1 rate limiting, S2 token expiry, structured logging + request IDs + audit events, migration discipline, ADR-001, CI pipeline.
+Done in Phase 1 (2026-07-20): `.env.example`, README quickstart, S1 rate limiting, S2 token expiry, structured logging + audit, migration discipline, ADR-001, CI.
+Done in Phase 2 (2026-07-20): identity migration + seeds, ProfileRepository + endpoints, prompt context injection, profile panel UI + first-run onboarding.
 
-## NEXT (Phase 3)
+## NEXT (Phase 3, continued)
 - Persist conversation history (replace in-process dict) keyed to identity model
 - Wire `/v1/agent/runs` into the product; confirmation UI for `confirmation_required` replies
 - Structured tool-calling in `DeepSeekBrain` (stop discarding tool descriptions)

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useConversation } from '@elevenlabs/react'
-import { BrandMark, graphNodes, palette, statusCopy, VoiceOrb } from './App'
+import { api, BrandMark, graphNodes, palette, statusCopy, VoiceOrb } from './App'
 import { HolographicUniverse } from './HolographicUniverse'
+import { isBusinessEmpty, ProfilePanel } from './ProfilePanel'
+import type { BusinessProfile } from './ProfilePanel'
 import type { Session, VoiceState } from './App'
 
 type ConversationTurn = { id: string; role: 'user' | 'assistant'; text: string }
@@ -25,6 +27,16 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   const [history, setHistory] = useState<ConversationTurn[]>([])
   const [activeNodes, setActiveNodes] = useState<number[]>([0])
   const [typed, setTyped] = useState('')
+  const [profileOpen, setProfileOpen] = useState(false)
+  const [firstRun, setFirstRun] = useState(false)
+
+  useEffect(() => {
+    api<BusinessProfile>('/v1/assistant/business')
+      .then((profile) => {
+        if (isBusinessEmpty(profile)) { setFirstRun(true); setProfileOpen(true) }
+      })
+      .catch(() => undefined)
+  }, [])
 
   const conversation = useConversation({
     onConnect: () => { setNotice(''); setState('listening') },
@@ -101,7 +113,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       <div className="space-vignette" />
       <header className="jarvis-header">
         <div className="brand-row"><BrandMark /><div><strong>EMEFA</strong><small>INTELLIGENCE COGNITIVE</small></div></div>
-        <nav><button className="nav-active">Univers</button><button>Mémoire</button><button>Outils</button></nav>
+        <nav><button className={profileOpen ? '' : 'nav-active'} onClick={() => setProfileOpen(false)}>Univers</button><button className={profileOpen ? 'nav-active' : ''} onClick={() => setProfileOpen(true)}>Profil</button></nav>
         <div className="header-right"><span className="system-clock"><b>SYS</b> EN LIGNE</span><span className="privacy-status"><i /> CHIFFREMENT ACTIF</span><button className="profile-button" onClick={onLogout} title={`Déconnecter ${session.name}`}>CG</button></div>
       </header>
       <aside className="space-sidebar">
@@ -132,6 +144,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       <section className="command-dock"><span className="dock-prompt">›</span><input value={typed} onChange={(event) => { setTyped(event.target.value); if (live) conversation.sendUserActivity() }} onKeyDown={(event) => { if (event.key === 'Enter') submitTyped() }} placeholder="Transmettre une instruction…" aria-label="Écrire une demande" /><button onClick={submitTyped} disabled={!typed.trim()}>TRANSMETTRE</button></section>
       <div className="model-pill"><span>PROTOCOLE</span><strong>VOICE·LIVE</strong><i>●</i></div>
       {notice && <div className="voice-notice" role="alert">{notice}</div>}
+      <ProfilePanel open={profileOpen} firstRun={firstRun} onClose={() => { setProfileOpen(false); setFirstRun(false) }} />
     </div>
   )
 }

@@ -33,6 +33,17 @@ test('voice room supports a continuous session, typed turns, and clean shutdown'
   assert.match(source, /Conversation continue · interrompez EMEFA à tout moment/)
 })
 
+test('profile panel lets the user view and edit assistant and business context', () => {
+  const panel = readFileSync(new URL('../src/ProfilePanel.tsx', import.meta.url), 'utf8')
+  assert.match(panel, /\/v1\/assistant\/profile/)
+  assert.match(panel, /\/v1\/assistant\/business/)
+  assert.match(panel, /method: 'PATCH'/)
+  assert.match(panel, /isBusinessEmpty/)
+  assert.match(source, /ProfilePanel/)
+  assert.match(source, /firstRun/)
+  assert.match(holographicCss, /profile-panel/)
+})
+
 test('interface renders a state-reactive WebGL holographic HUD', () => {
   assert.match(source, /HolographicUniverse/)
   assert.match(source, /telemetry-panel/)

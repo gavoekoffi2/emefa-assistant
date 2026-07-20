@@ -10,7 +10,7 @@ export type VoiceState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'error
 type GraphNode = { id: number; label: string; group: string; x: number; y: number; z: number; size: number }
 type GraphLink = { source: number; target: number }
 
-const api = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+export const api = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
   const response = await fetch(path, {
     ...options,
     credentials: 'include',

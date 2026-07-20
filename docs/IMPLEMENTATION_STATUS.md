@@ -36,9 +36,20 @@ Make the existing codebase safe to extend without breaking the working voice pro
 - **Prompt composition:** `DeepSeekBrain` accepts a `context_provider`; `create_app` wires `profiles.system_context` so agent replies use assistant identity + business context. Base system prompt de-hard-coded from a single named user.
 - Tests: **41 passing** (6 new: seeding, partial persistence, context composition, auth requirement, API roundtrip, prompt injection of context via mock transport).
 
+## Completed — Phase 2 slice 2: profile UI & first-run onboarding (2026-07-20)
+
+- **`web/src/ProfilePanel.tsx`**: HUD-styled dialog to view/edit the assistant identity (name, interaction style) and the full business profile; loads via `GET /v1/assistant/*`, saves via `PATCH`; French copy; mobile full-screen; accessible (dialog role, labels, alerts).
+- **First-run onboarding (progressive):** on entering the voice room, if the business profile is empty the panel opens automatically with a "Faisons connaissance" invitation; user can defer ("Plus tard").
+- Header nav: decorative "Mémoire/Outils" buttons replaced by a functional "Profil" toggle (honest-state principle).
+- Checks: web lint clean, 5/5 web tests, build OK; backend 41/41.
+
+## Phase 2 exit gate status (roadmap §22)
+
+Met: see/edit profile ✓, persist business context ✓, reload without losing setup ✓ (server-side persistence). Remaining before closing Phase 2: *conversational* onboarding through the agent itself — deliberately deferred to Phase 3 (voice/text convergence), since today's conversation brain is the ElevenLabs dashboard agent which cannot call our profile APIs. Documented in BACKLOG NEXT.
+
 ## In Progress
 
-Nothing mid-flight. Remaining for Phase 2 exit gate: conversational onboarding UX in the web app writing to these endpoints (roadmap §19–20 summary + correction), then reload-persistence demo.
+Nothing mid-flight.
 
 ## Blocked
 

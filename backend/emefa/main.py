@@ -26,6 +26,7 @@ from emefa.domain.memories import MemoryRepository
 from emefa.domain.ratelimit import FailureLimiter
 from emefa.domain.tasks import TaskRepository
 from emefa.infrastructure.deepseek import DeepSeekBrain
+from emefa.infrastructure.email import SmtpEmailSender
 from emefa.infrastructure.realtime import RealtimeGateway
 from emefa.infrastructure.voice_llm import VoiceLLMProxy
 from emefa.observability import (
@@ -151,6 +152,21 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     application.state.settings = active_settings
     application.state.devices = DeviceRepository(active_settings.database_path)
     application.state.profiles = profiles
+    email_sender = None
+    if active_settings.smtp_host and active_settings.smtp_from:
+        email_sender = SmtpEmailSender(
+            host=active_settings.smtp_host,
+            port=active_settings.smtp_port,
+            sender=active_settings.smtp_from,
+            username=active_settings.smtp_username,
+            password=(
+                active_settings.smtp_password.get_secret_value()
+                if active_settings.smtp_password is not None
+                else None
+            ),
+            starttls=active_settings.smtp_starttls,
+        )
+
     application.state.tasks = tasks
     application.state.memories = memories
     application.state.compose_context = compose_context
@@ -158,7 +174,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     application.state.conversations = conversations
     application.state.agent = AgentEngine(
         selected_brain,
-        build_tool_shelf(profiles, tasks, memories),
+        build_tool_shelf(profiles, tasks, memories, email_sender),
         memory=conversations,
     )
     application.state.approvals = ApprovalRepository(active_settings.database_path)

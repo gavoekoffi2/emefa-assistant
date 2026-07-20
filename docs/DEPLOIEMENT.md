@@ -35,6 +35,24 @@ Deux options — la clé ne doit jamais être commitée dans le dépôt ni expos
 2. Optionnel : choisir le modèle avec `EMEFA_OPENROUTER_MODEL` (défaut : `deepseek/deepseek-chat`, économique et compatible avec les appels d'outils). Vérifier le nom exact sur openrouter.ai/models si le modèle par défaut renvoie une erreur.
 3. Si les deux clés sont présentes, DeepSeek direct est prioritaire.
 
+## Activer l'envoi d'e-mails (SMTP)
+
+EMEFA peut envoyer des e-mails depuis votre adresse professionnelle. Chaque
+envoi demande votre approbation explicite dans l'interface avant de partir.
+
+1. Dans `.env`, renseigner :
+   - `EMEFA_SMTP_HOST` (ex. `smtp.gmail.com`)
+   - `EMEFA_SMTP_PORT` (587 par défaut)
+   - `EMEFA_SMTP_USERNAME` et `EMEFA_SMTP_PASSWORD` — pour Gmail, créer un
+     **mot de passe d'application** (compte Google → Sécurité → Validation en
+     deux étapes → Mots de passe des applications), jamais votre mot de passe
+     principal.
+   - `EMEFA_SMTP_FROM` (votre adresse d'expéditeur)
+2. Redémarrer le service. La compétence `send_email` n'apparaît dans
+   `/v1/system/status` que si cette configuration est présente.
+3. Test : demandez par écrit « Envoie-moi un e-mail de test à … » — la carte
+   d'approbation doit apparaître avant tout envoi.
+
 ## Brancher la voix sur le cerveau EMEFA (Custom LLM)
 
 Une fois le moteur agent activé ci-dessus, la voix peut utiliser le même cerveau

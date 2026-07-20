@@ -35,6 +35,8 @@ const skillLabels: Record<string, string> = {
   reset_business_profile: 'Effacer le profil professionnel',
   update_business_profile: 'Mettre à jour le profil professionnel',
   get_profiles: 'Consulter les profils',
+  forget_memory: 'Oublier un souvenir',
+  send_email: 'Envoyer un e-mail',
 }
 
 const agentErrorCopy: Record<string, string> = {

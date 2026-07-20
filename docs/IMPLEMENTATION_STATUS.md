@@ -157,6 +157,14 @@ The only step never exercised against the real OpenRouter service is the network
 
 With this, the Phase 3 "text and voice share context" exit criterion is implemented in both directions (voice gets profile+memory; text gets voice recap). Live validation still requires the owner's ElevenLabs dashboard switch.
 
+## Completed — first external capability: governed SMTP e-mail (2026-07-20)
+
+- **`SmtpEmailSender`** (`infrastructure/email.py`): stdlib `smtplib` via `asyncio.to_thread` (no new dependency), STARTTLS + login, provider-neutral (Gmail app password, Outlook, any host). Settings `EMEFA_SMTP_HOST/PORT/USERNAME/PASSWORD/FROM/STARTTLS`; credentials server-side only.
+- **`send_email` skill** (COMMUNICATE → **ASK**): every send goes through the approval card; recipient validated, subject/body capped, single recipient per send; server refusals surfaced as errors, not fake success; audit logs recipient **domain only**.
+- **Honest capability listing:** the skill is registered only when SMTP is configured, so `/v1/system/status` and the HUD never advertise an e-mail ability that doesn't exist.
+- This satisfies the **Phase 5 exit-gate pattern**: a real external capability through Skill Registry → permission check → adapter → verification (SMTP acceptance) → audit, with no bypass. It is also the first slice of the **Phase 6 e-mail MVP** (send path; inbox/reply flows still open).
+- Tests: backend **82 passing** (adapter STARTTLS/login/message assembly via faked `smtplib.SMTP`, conditional registration + policy = ASK, input validation, approval E2E proving *nothing is sent before approval* and *rejection never sends*).
+
 ## In Progress
 
 Nothing mid-flight.

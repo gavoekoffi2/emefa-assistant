@@ -1,4 +1,4 @@
-"""First governed skills: read and update the user profiles.
+"""Governed skills: profiles, tasks, memory, and outbound e-mail.
 
 Every skill goes through the ToolShelf so the risk policy in
 emefa.domain.policy applies before any handler runs.
@@ -6,6 +6,7 @@ emefa.domain.policy applies before any handler runs.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import asdict
 from datetime import date
@@ -16,7 +17,10 @@ from emefa.domain.memories import CATEGORIES, MemoryRepository
 from emefa.domain.policy import ActionRisk
 from emefa.domain.profiles import ASSISTANT_FIELDS, BUSINESS_FIELDS, ProfileRepository
 from emefa.domain.tasks import TaskRepository
+from emefa.infrastructure.email import SmtpEmailSender
 from emefa.observability import audit
+
+_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 _BUSINESS_FIELD_DESCRIPTIONS = {
     "owner_name": "Nom de l'utilisateur",
@@ -34,6 +38,7 @@ def build_tool_shelf(
     profiles: ProfileRepository,
     tasks: TaskRepository | None = None,
     memories: MemoryRepository | None = None,
+    email_sender: SmtpEmailSender | None = None,
 ) -> ToolShelf:
     shelf = ToolShelf()
 
@@ -166,7 +171,54 @@ def build_tool_shelf(
         _add_task_skills(shelf, tasks, profiles)
     if memories is not None:
         _add_memory_skills(shelf, memories)
+    if email_sender is not None and email_sender.configured:
+        _add_email_skill(shelf, email_sender)
     return shelf
+
+
+def _add_email_skill(shelf: ToolShelf, sender: SmtpEmailSender) -> None:
+    async def send_email(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        to = str(arguments.get("to", "")).strip()
+        if not _EMAIL_PATTERN.match(to):
+            return {"error": "invalid_recipient"}
+        subject = str(arguments.get("subject", "")).strip()[:200]
+        body = str(arguments.get("body", "")).strip()[:10_000]
+        if not subject or not body:
+            return {"error": "subject_and_body_required"}
+        try:
+            result = await sender.send(to, subject, body)
+        except Exception:
+            audit("skill_email_send_failed", to_domain=to.rsplit("@", 1)[-1])
+            return {"error": "smtp_send_failed"}
+        if not result.get("accepted"):
+            audit("skill_email_send_refused", to_domain=to.rsplit("@", 1)[-1])
+            return {"error": "recipient_refused_by_server"}
+        audit("skill_email_sent", to_domain=to.rsplit("@", 1)[-1])
+        return {"status": "sent", "to": to, "subject": subject}
+
+    shelf.add(
+        AgentTool(
+            name="send_email",
+            description=(
+                "Envoie un e-mail depuis l'adresse professionnelle de l'utilisateur. "
+                "Chaque envoi est soumis à l'approbation explicite de l'utilisateur "
+                "avant transmission : prépare le message exactement comme il doit "
+                "partir. Un seul destinataire par envoi."
+            ),
+            risk=ActionRisk.COMMUNICATE,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "to": {"type": "string", "description": "Adresse e-mail du destinataire"},
+                    "subject": {"type": "string", "description": "Objet du message"},
+                    "body": {"type": "string", "description": "Corps du message, texte simple"},
+                },
+                "required": ["to", "subject", "body"],
+                "additionalProperties": False,
+            },
+            handler=send_email,
+        )
+    )
 
 
 def _add_memory_skills(shelf: ToolShelf, memories: MemoryRepository) -> None:

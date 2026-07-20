@@ -104,6 +104,12 @@ Voice (ElevenLabs session) and the backend text path still have **separate conve
 
 - **`update_assistant_profile` skill** (LOCAL_WRITE → RUN): durable adjustments to the assistant's name, primary language, or interaction style through conversation ("tutoie-moi", "sois plus concise"). Field allowlist, blank-value rejection, audit event. Changes flow into `system_context()` so the next turns immediately reflect the new style. Backend **60 passing**.
 
+## Completed — OpenRouter brain option (2026-07-20)
+
+- New settings `EMEFA_OPENROUTER_API_KEY`, `EMEFA_OPENROUTER_MODEL` (default `deepseek/deepseek-chat`), `EMEFA_OPENROUTER_BASE_URL`. The existing OpenAI-compatible adapter is reused with a different base URL — no new code path to maintain. Selection order: explicit brain (tests) → DeepSeek key → OpenRouter key → not configured.
+- The owner supplied an OpenRouter key (kept out of the repository; must be set as `EMEFA_OPENROUTER_API_KEY` in the server `.env` — see `docs/DEPLOIEMENT.md`). **Live verification was not possible from this development sandbox** (its network policy denies `openrouter.ai`); first production start should confirm via `/v1/system/status` (`brain_configured: true`) and a text exchange. If the default model name is rejected, set `EMEFA_OPENROUTER_MODEL` to a current tool-capable model from openrouter.ai/models.
+- Backend **61 passing** (new test: OpenRouter key ⇒ brain configured).
+
 ## In Progress
 
 Nothing mid-flight.

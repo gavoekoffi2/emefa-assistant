@@ -57,6 +57,18 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
             model=active_settings.deepseek_model,
             context_provider=profiles.system_context,
         )
+    elif (
+        active_settings.openrouter_api_key is not None
+        and active_settings.openrouter_api_key.get_secret_value().strip()
+    ):
+        # OpenRouter speaks the same OpenAI-compatible protocol as DeepSeek,
+        # so the existing adapter is reused with a different base URL.
+        selected_brain = DeepSeekBrain(
+            api_key=active_settings.openrouter_api_key.get_secret_value().strip(),
+            model=active_settings.openrouter_model,
+            base_url=active_settings.openrouter_base_url,
+            context_provider=profiles.system_context,
+        )
     else:
         selected_brain = NotConfiguredBrain()
     brain_configured = not isinstance(selected_brain, NotConfiguredBrain)

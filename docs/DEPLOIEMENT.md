@@ -20,11 +20,22 @@ Trois navigateurs au maximum peuvent être activés. La déconnexion révoque le
 3. La clé ne doit jamais être envoyée au navigateur : `/v1/realtime/session` génère une URL de conversation éphémère après vérification du navigateur privé.
 4. La conversation utilise ElevenLabs Agents en continu : détection de parole, synthèse vocale et interruption pendant la réponse.
 
-## Activer le moteur agent DeepSeek
+## Activer le moteur agent (DeepSeek ou OpenRouter)
+
+Deux options — la clé ne doit jamais être commitée dans le dépôt ni exposée au navigateur.
+
+**Option A — DeepSeek direct :**
 
 1. Dans le même fichier `.env`, renseigner `EMEFA_DEEPSEEK_API_KEY` sans guillemets.
 2. Conserver `EMEFA_DEEPSEEK_MODEL=deepseek-v4-flash`.
-3. Recréer seulement le service EMEFA :
+
+**Option B — OpenRouter (recommandé si vous avez une clé `sk-or-…`) :**
+
+1. Dans le même fichier `.env`, renseigner `EMEFA_OPENROUTER_API_KEY` sans guillemets.
+2. Optionnel : choisir le modèle avec `EMEFA_OPENROUTER_MODEL` (défaut : `deepseek/deepseek-chat`, économique et compatible avec les appels d'outils). Vérifier le nom exact sur openrouter.ai/models si le modèle par défaut renvoie une erreur.
+3. Si les deux clés sont présentes, DeepSeek direct est prioritaire.
+
+Puis recréer seulement le service EMEFA :
 
 ```bash
 cd /root/projets/emefa

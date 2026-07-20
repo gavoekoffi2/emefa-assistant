@@ -68,3 +68,25 @@ async def test_unconfigured_brain_is_reported_honestly(tmp_path):
         )
         body = (await web.get("/v1/system/status")).json()
     assert body["brain_configured"] is False
+
+
+@pytest.mark.asyncio
+async def test_openrouter_key_configures_the_brain(tmp_path):
+    from pydantic import SecretStr
+
+    app = create_app(
+        Settings(
+            enrollment_code="CODE-SECRET",
+            database_path=tmp_path / "router.db",
+            cookie_secure=False,
+            openrouter_api_key=SecretStr("sk-or-test"),
+        )
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as web:
+        await web.post(
+            "/v1/web/session",
+            json={"name": "Navigateur", "enrollment_code": "CODE-SECRET"},
+        )
+        body = (await web.get("/v1/system/status")).json()
+    assert body["brain_configured"] is True

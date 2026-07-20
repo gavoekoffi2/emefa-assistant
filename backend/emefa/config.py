@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     activation_window_seconds: int = 900
     deepseek_api_key: SecretStr | None = None
     deepseek_model: str = "deepseek-v4-flash"
+    openrouter_api_key: SecretStr | None = None
+    openrouter_model: str = "deepseek/deepseek-chat"
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
     elevenlabs_api_key: SecretStr | None = None
     elevenlabs_agent_id: str | None = None
     web_dist_path: Path | None = None

@@ -11,6 +11,7 @@ from emefa.api.agent import router as agent_router
 from emefa.api.devices import router as devices_router
 from emefa.api.profile import router as profile_router
 from emefa.api.realtime import router as realtime_router
+from emefa.api.system import router as system_router
 from emefa.api.tasks import router as tasks_router
 from emefa.api.web_session import router as web_session_router
 from emefa.config import Settings
@@ -58,6 +59,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
         )
     else:
         selected_brain = NotConfiguredBrain()
+    brain_configured = not isinstance(selected_brain, NotConfiguredBrain)
 
     realtime_key = (
         active_settings.elevenlabs_api_key.get_secret_value().strip()
@@ -93,6 +95,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
         memory=ConversationStore(active_settings.database_path),
     )
     application.state.approvals = ApprovalRepository(active_settings.database_path)
+    application.state.brain_configured = brain_configured
     application.state.realtime = realtime_gateway
     application.state.activation_limiter = FailureLimiter(
         max_failures=active_settings.activation_max_failures,
@@ -152,6 +155,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     application.include_router(web_session_router)
     application.include_router(agent_router)
     application.include_router(profile_router)
+    application.include_router(system_router)
     application.include_router(tasks_router)
     application.include_router(realtime_router)
     if active_settings.web_dist_path is not None and active_settings.web_dist_path.is_dir():

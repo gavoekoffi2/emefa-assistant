@@ -94,6 +94,12 @@ Voice (ElevenLabs session) and the backend text path still have **separate conve
 - **Tasks panel** in the HUD ("Tâches" nav): open commitments grouped En retard / Aujourd'hui / À venir / Sans échéance, per-task Terminer button, empty-state guidance, and a "Brief du jour" quick action that sends the flagship question through the active channel (voice session if live, EMEFA runtime otherwise). `sendMessage` extracted so typed input, quick actions, and future buttons share one path.
 - Tests: backend **57 passing** (brief composition, completion endpoint idempotence), web **8 passing**; lint/build clean.
 
+## Completed — honest HUD telemetry, TD-10 (2026-07-20)
+
+- **`GET /v1/system/status`** (device-authenticated): brain configured?, voice configured?, registered skills with risk levels, open task count, schema version. No decorative values.
+- **HUD wired to reality:** "16 sources synchronisées" → real skill count; "NOYAU COGNITIF 98.7%" → EN LIGNE / NON CONFIGURÉ from actual brain state; "LIAISON VOCALE" states ACTIVE / VEILLE / NON CONFIGURÉE; radar "16 NŒUDS" → real open-commitment count; "CHIFFREMENT ACTIF" only claimed on HTTPS (CONNEXION LOCALE otherwise). Status refreshes after each agent run and when the Tasks panel closes. Purely decorative ambiance (hex flux, radar sweep) kept — it decorates without asserting facts.
+- Tests: backend **59 passing** (status content incl. skill risks; unconfigured brain reported honestly), web **9 passing** (asserts fake numbers are gone); lint/build clean.
+
 ## In Progress
 
 Nothing mid-flight.

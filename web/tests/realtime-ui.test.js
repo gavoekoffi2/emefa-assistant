@@ -40,6 +40,16 @@ test('typed input reaches the EMEFA runtime when the voice session is offline', 
   assert.match(source, /agentErrorCopy/)
 })
 
+test('HUD telemetry reflects real system state instead of decorative numbers', () => {
+  assert.match(source, /\/v1\/system\/status/)
+  assert.match(source, /compétences actives/)
+  assert.match(source, /NON CONFIGURÉ/)
+  assert.match(source, /ENGAGEMENTS/)
+  assert.doesNotMatch(source, /98\.7%/)
+  assert.doesNotMatch(source, /sources synchronisées/)
+  assert.doesNotMatch(source, /16 NŒUDS/)
+})
+
 test('tasks panel lists commitments and offers the daily brief', () => {
   const tasksPanel = readFileSync(new URL('../src/TasksPanel.tsx', import.meta.url), 'utf8')
   assert.match(tasksPanel, /\/v1\/tasks/)

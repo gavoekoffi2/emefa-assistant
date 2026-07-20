@@ -22,6 +22,13 @@ type AgentRun = {
   action_id?: string | null
 }
 type PendingApproval = { action_id: string; name: string; arguments: Record<string, unknown> }
+type SystemStatus = {
+  brain_configured: boolean
+  voice_configured: boolean
+  skills: Array<{ name: string; risk: string }>
+  open_task_count: number
+  schema_version: number
+}
 
 const skillLabels: Record<string, string> = {
   reset_business_profile: 'Effacer le profil professionnel',
@@ -58,6 +65,16 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   const [firstRun, setFirstRun] = useState(false)
   const [approval, setApproval] = useState<PendingApproval | null>(null)
   const [deciding, setDeciding] = useState(false)
+  const [system, setSystem] = useState<SystemStatus | null>(null)
+
+  const refreshSystem = () => {
+    api<SystemStatus>('/v1/system/status').then(setSystem).catch(() => undefined)
+  }
+
+  useEffect(() => {
+    refreshSystem()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasksOpen])
 
   useEffect(() => {
     api<BusinessProfile>('/v1/assistant/business')
@@ -85,6 +102,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
     setAnswer(text)
     setHistory((current) => [...current.slice(-7), { id: crypto.randomUUID(), role: 'assistant', text }])
     setState('idle')
+    refreshSystem()
   }
 
   const decideApproval = async (approve: boolean) => {
@@ -198,19 +216,19 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       <header className="jarvis-header">
         <div className="brand-row"><BrandMark /><div><strong>EMEFA</strong><small>INTELLIGENCE COGNITIVE</small></div></div>
         <nav><button className={profileOpen || tasksOpen ? '' : 'nav-active'} onClick={() => { setProfileOpen(false); setTasksOpen(false) }}>Univers</button><button className={tasksOpen ? 'nav-active' : ''} onClick={() => { setProfileOpen(false); setTasksOpen(true) }}>Tâches</button><button className={profileOpen ? 'nav-active' : ''} onClick={() => { setTasksOpen(false); setProfileOpen(true) }}>Profil</button></nav>
-        <div className="header-right"><span className="system-clock"><b>SYS</b> EN LIGNE</span><span className="privacy-status"><i /> CHIFFREMENT ACTIF</span><button className="profile-button" onClick={onLogout} title={`Déconnecter ${session.name}`}>CG</button></div>
+        <div className="header-right"><span className="system-clock"><b>SYS</b> EN LIGNE</span><span className="privacy-status"><i /> {window.location.protocol === 'https:' ? 'CHIFFREMENT ACTIF' : 'CONNEXION LOCALE'}</span><button className="profile-button" onClick={onLogout} title={`Déconnecter ${session.name}`}>CG</button></div>
       </header>
       <aside className="space-sidebar">
         <span className="sidebar-label">MATRICE COGNITIVE</span>
         {['EMEFA', 'Projets', 'Mémoire', 'Outils', 'Documents', 'Idées'].map((group, index) => <button key={group} className={group === 'EMEFA' ? 'selected' : ''}><span className="module-index">0{index + 1}</span><i style={{ background: palette[group] }} />{group}</button>)}
         <div className="sidebar-signal"><span /><span /><span /><span /><span /><small>SIGNAL NEURAL</small></div>
-        <div className="sidebar-bottom"><span>16</span><small>sources synchronisées</small></div>
+        <div className="sidebar-bottom"><span>{system ? system.skills.length : '—'}</span><small>compétences actives</small></div>
       </aside>
       <aside className="telemetry-panel" aria-label="Télémétrie EMEFA">
         <div className="telemetry-heading"><span>DIAGNOSTIC</span><i /></div>
-        <div className="telemetry-card"><small>NOYAU COGNITIF</small><strong>98.7%</strong><div className="meter"><i style={{ width: '98.7%' }} /></div></div>
-        <div className="telemetry-card"><small>LIAISON VOCALE</small><strong className={live ? 'online' : ''}>{live ? 'ACTIVE' : 'VEILLE'}</strong><div className="wave-mini">{Array.from({ length: 18 }, (_, index) => <i key={index} />)}</div></div>
-        <div className="radar-widget"><span className="radar-sweep" /><i className="radar-point p1" /><i className="radar-point p2" /><i className="radar-point p3" /><b>RÉSEAU</b><small>16 NŒUDS</small></div>
+        <div className="telemetry-card"><small>NOYAU COGNITIF</small><strong className={system?.brain_configured ? 'online' : ''}>{system ? (system.brain_configured ? 'EN LIGNE' : 'NON CONFIGURÉ') : '…'}</strong><div className="meter"><i style={{ width: system?.brain_configured ? '100%' : '6%' }} /></div></div>
+        <div className="telemetry-card"><small>LIAISON VOCALE</small><strong className={live ? 'online' : ''}>{live ? 'ACTIVE' : system && !system.voice_configured ? 'NON CONFIGURÉE' : 'VEILLE'}</strong><div className="wave-mini">{Array.from({ length: 18 }, (_, index) => <i key={index} />)}</div></div>
+        <div className="radar-widget"><span className="radar-sweep" /><i className="radar-point p1" /><i className="radar-point p2" /><i className="radar-point p3" /><b>SUIVI</b><small>{system ? system.open_task_count : '—'} ENGAGEMENTS</small></div>
         <div className="data-stream"><span>FLUX</span><code>7F A2 09 C4</code><code>1B E8 33 D0</code><code>AE 04 F9 71</code></div>
       </aside>
       <div className="cognitive-flux" aria-hidden="true"><span>FLUX COGNITIF</span><div>{Array.from({ length: 24 }, (_, index) => <i key={index} />)}</div><small>SYNCHRONISATION CONTINUE</small></div>

@@ -32,6 +32,7 @@ from emefa.infrastructure.deepseek import DeepSeekBrain
 from emefa.infrastructure.email import HimalayaEmailProvider
 from emefa.infrastructure.realtime import RealtimeGateway
 from emefa.infrastructure.voice_llm import VoiceLLMProxy
+from emefa.infrastructure.website_profile import WebsiteProfileImporter
 from emefa.observability import (
     configure_logging,
     monotonic_ms,
@@ -152,6 +153,7 @@ def create_app(
     application.state.tasks = tasks
     application.state.memories = memories
     application.state.documents = DocumentStore(active_settings.database_path)
+    application.state.website_importer = WebsiteProfileImporter()
     application.state.compose_context = compose_context
     application.state.agent = AgentEngine(
         selected_brain,

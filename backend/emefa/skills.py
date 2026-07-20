@@ -29,6 +29,8 @@ _BUSINESS_FIELD_DESCRIPTIONS = {
     "target_customers": "Clients cibles",
     "goals": "Objectifs professionnels",
     "constraints_notes": "Contraintes et notes diverses",
+    "website_url": "Adresse du site web officiel",
+    "website_summary": "Informations publiques extraites du site web officiel",
 }
 
 

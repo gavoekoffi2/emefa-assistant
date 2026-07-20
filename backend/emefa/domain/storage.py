@@ -151,6 +151,11 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         """,
         "CREATE INDEX idx_memories_user ON memories(user_id, created_at)",
     ),
+    # 7 — public website context used for automatic profile preconfiguration.
+    (
+        "ALTER TABLE business_profiles ADD COLUMN website_url TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE business_profiles ADD COLUMN website_summary TEXT NOT NULL DEFAULT ''",
+    ),
 )
 
 

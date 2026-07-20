@@ -18,6 +18,8 @@ BUSINESS_FIELDS = (
     "target_customers",
     "goals",
     "constraints_notes",
+    "website_url",
+    "website_summary",
 )
 
 
@@ -40,6 +42,8 @@ class BusinessProfile:
     target_customers: str
     goals: str
     constraints_notes: str
+    website_url: str
+    website_summary: str
 
     def is_empty(self) -> bool:
         return not any(getattr(self, field) for field in BUSINESS_FIELDS)
@@ -119,6 +123,8 @@ class ProfileRepository:
                 "target_customers": "Clients cibles",
                 "goals": "Objectifs",
                 "constraints_notes": "Contraintes et notes",
+                "website_url": "Site web officiel",
+                "website_summary": "Informations publiques importées du site",
             }
             for field, label in labels.items():
                 value = getattr(business, field)

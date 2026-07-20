@@ -102,6 +102,18 @@ test('profile panel lets the user view and edit assistant and business context',
   assert.match(holographicCss, /profile-panel/)
 })
 
+test('personalization is conversational or imported from one website URL', () => {
+  const panel = readFileSync(new URL('../src/ProfilePanel.tsx', import.meta.url), 'utf8')
+  assert.match(panel, /Parler avec EMEFA/)
+  assert.match(panel, /Importer votre site/)
+  assert.match(panel, /\/v1\/assistant\/business\/import/)
+  assert.match(panel, /onStartInterview/)
+  assert.match(panel, /profile-advanced/)
+  assert.match(source, /startProfileInterview/)
+  assert.match(source, /Pose une seule question courte à la fois/)
+  assert.match(source, /appelle emefa_execute/)
+})
+
 test('interface renders a state-reactive WebGL holographic HUD', () => {
   assert.match(source, /HolographicUniverse/)
   assert.match(source, /telemetry-panel/)

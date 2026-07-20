@@ -203,16 +203,34 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
           },
         },
       })
+      return true
     } catch (cause) {
       setState('error')
       const denied = cause instanceof DOMException && ['NotAllowedError', 'PermissionDeniedError'].includes(cause.name)
       setNotice(denied ? 'Autorisez le microphone pour parler directement à EMEFA.' : cause instanceof Error ? cause.message : 'EMEFA ne peut pas ouvrir la conversation vocale.')
+      return false
     }
   }
 
   const toggleLive = async () => {
     if (live) { await conversation.endSession(); return }
     await startRealtime()
+  }
+
+  const startProfileInterview = async () => {
+    setProfileOpen(false)
+    setFirstRun(false)
+    if (conversation.status !== 'connected') {
+      const connected = await startRealtime()
+      if (!connected) return
+    }
+    conversation.sendContextualUpdate(
+      'L’utilisateur choisit un entretien de personnalisation. Pose une seule question courte à la fois. '
+      + 'Commence par son nom et son rôle, puis son activité, ses clients, ses objectifs et ses préférences de travail. '
+      + 'Après chaque réponse, appelle emefa_execute pour enregistrer uniquement les informations confirmées dans le profil professionnel. '
+      + 'Ne dis jamais qu’une information est enregistrée si le résultat de l’outil ne le confirme pas.',
+    )
+    conversation.sendUserMessage('Je souhaite que tu apprennes à me connaître pour mieux travailler avec moi.')
   }
 
   const sendMessage = async (value: string) => {
@@ -294,7 +312,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
           </div>
         </div>
       )}
-      <ProfilePanel open={profileOpen} firstRun={firstRun} onClose={() => { setProfileOpen(false); setFirstRun(false) }} />
+      <ProfilePanel open={profileOpen} firstRun={firstRun} onClose={() => { setProfileOpen(false); setFirstRun(false) }} onStartInterview={() => void startProfileInterview()} />
       <TasksPanel open={tasksOpen} onClose={() => setTasksOpen(false)} onAskBrief={askBrief} />
       <MemoryPanel open={memoryOpen} onClose={() => setMemoryOpen(false)} />
     </div>

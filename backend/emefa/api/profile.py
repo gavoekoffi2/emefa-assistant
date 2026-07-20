@@ -3,7 +3,7 @@
 from dataclasses import asdict
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from emefa.api.devices import current_device
@@ -39,6 +39,8 @@ class BusinessProfileResponse(BaseModel):
     target_customers: str
     goals: str
     constraints_notes: str
+    website_url: str
+    website_summary: str
 
 
 class BusinessProfileUpdate(BaseModel):
@@ -50,6 +52,17 @@ class BusinessProfileUpdate(BaseModel):
     target_customers: str | None = Long
     goals: str | None = Long
     constraints_notes: str | None = Long
+    website_url: str | None = Field(default=None, max_length=2_000)
+    website_summary: str | None = Field(default=None, max_length=8_000)
+
+
+class WebsiteImportRequest(BaseModel):
+    url: str = Field(min_length=4, max_length=2_000)
+
+
+class WebsiteImportResponse(BaseModel):
+    profile: BusinessProfileResponse
+    pages_imported: int
 
 
 @router.get("/profile", response_model=AssistantProfileResponse)
@@ -92,3 +105,37 @@ def update_business(
     profile = request.app.state.profiles.update_business(changes)
     audit("business_profile_updated", device_id=device.device_id, fields=sorted(changes))
     return BusinessProfileResponse(**asdict(profile))
+
+
+@router.post("/business/import", response_model=WebsiteImportResponse)
+async def import_business_website(
+    payload: WebsiteImportRequest,
+    request: Request,
+    device: Annotated[Device, Depends(current_device)],
+) -> WebsiteImportResponse:
+    try:
+        imported = await request.app.state.website_importer.import_site(payload.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    current = request.app.state.profiles.get_business()
+    changes = {
+        "website_url": imported.url,
+        "website_summary": imported.summary,
+    }
+    if not current.company_name and imported.company_name:
+        changes["company_name"] = imported.company_name
+    if not current.offer and imported.description:
+        changes["offer"] = imported.description
+    profile = request.app.state.profiles.update_business(changes)
+    audit(
+        "business_website_imported",
+        device_id=device.device_id,
+        pages_imported=imported.pages_imported,
+    )
+    return WebsiteImportResponse(
+        profile=BusinessProfileResponse(**asdict(profile)),
+        pages_imported=imported.pages_imported,
+    )

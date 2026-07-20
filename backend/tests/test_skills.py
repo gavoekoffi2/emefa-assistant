@@ -158,3 +158,16 @@ async def test_agent_run_executes_profile_skill_end_to_end(client, tmp_path):
     assert body["status"] == "completed"
     assert body["turns"] == 2
     assert ProfileRepository(tmp_path / "agent.db").get_business().company_name == "Horizon SARL"
+
+
+def test_update_assistant_profile_skill(tmp_path):
+    profiles = ProfileRepository(tmp_path / "assistant.db")
+    shelf = build_tool_shelf(profiles)
+    result = shelf.get("update_assistant_profile").handler(
+        {"interaction_style": "Tutoiement, réponses brèves", "ignored": "x", "name": "  "}
+    )
+    assert result["updated_fields"] == ["interaction_style"]
+    assert profiles.get_assistant().interaction_style == "Tutoiement, réponses brèves"
+    assert profiles.get_assistant().name == "EMEFA"
+    empty = shelf.get("update_assistant_profile").handler({"name": "   "})
+    assert empty["error"] == "no_valid_fields"

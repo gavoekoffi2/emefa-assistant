@@ -13,7 +13,7 @@ from typing import Any
 
 from emefa.domain.agent import AgentTool, ToolShelf
 from emefa.domain.policy import ActionRisk
-from emefa.domain.profiles import BUSINESS_FIELDS, ProfileRepository
+from emefa.domain.profiles import ASSISTANT_FIELDS, BUSINESS_FIELDS, ProfileRepository
 from emefa.domain.tasks import TaskRepository
 from emefa.observability import audit
 
@@ -59,6 +59,49 @@ def build_tool_shelf(profiles: ProfileRepository, tasks: TaskRepository | None =
             handler=get_profiles,
         )
     )
+    def update_assistant(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        changes = {
+            field: str(arguments[field]).strip()[:200]
+            for field in ASSISTANT_FIELDS
+            if field in arguments
+            and isinstance(arguments[field], (str, int, float))
+            and str(arguments[field]).strip()
+        }
+        if not changes:
+            return {"error": "no_valid_fields", "allowed_fields": list(ASSISTANT_FIELDS)}
+        updated = profiles.update_assistant(changes)
+        audit("skill_assistant_profile_updated", fields=sorted(changes))
+        return {"updated_fields": sorted(changes), "assistant": asdict(updated)}
+
+    shelf.add(
+        AgentTool(
+            name="update_assistant_profile",
+            description=(
+                "Ajuste l'identité de l'assistante quand l'utilisateur demande un "
+                "changement durable de nom, de langue principale ou de style "
+                "d'interaction (ex. tutoiement, ton plus concis). Ne pas utiliser "
+                "pour une demande ponctuelle valable un seul message."
+            ),
+            risk=ActionRisk.LOCAL_WRITE,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Nom de l'assistante"},
+                    "primary_language": {
+                        "type": "string",
+                        "description": "Langue principale (ex. français)",
+                    },
+                    "interaction_style": {
+                        "type": "string",
+                        "description": "Style d'interaction durable souhaité",
+                    },
+                },
+                "additionalProperties": False,
+            },
+            handler=update_assistant,
+        )
+    )
+
     def reset_business(arguments: Mapping[str, Any]) -> dict[str, Any]:
         requested = arguments.get("fields")
         if isinstance(requested, list):

@@ -100,6 +100,10 @@ Voice (ElevenLabs session) and the backend text path still have **separate conve
 - **HUD wired to reality:** "16 sources synchronisées" → real skill count; "NOYAU COGNITIF 98.7%" → EN LIGNE / NON CONFIGURÉ from actual brain state; "LIAISON VOCALE" states ACTIVE / VEILLE / NON CONFIGURÉE; radar "16 NŒUDS" → real open-commitment count; "CHIFFREMENT ACTIF" only claimed on HTTPS (CONNEXION LOCALE otherwise). Status refreshes after each agent run and when the Tasks panel closes. Purely decorative ambiance (hex flux, radar sweep) kept — it decorates without asserting facts.
 - Tests: backend **59 passing** (status content incl. skill risks; unconfigured brain reported honestly), web **9 passing** (asserts fake numbers are gone); lint/build clean.
 
+## Completed — conversational assistant identity (2026-07-20)
+
+- **`update_assistant_profile` skill** (LOCAL_WRITE → RUN): durable adjustments to the assistant's name, primary language, or interaction style through conversation ("tutoie-moi", "sois plus concise"). Field allowlist, blank-value rejection, audit event. Changes flow into `system_context()` so the next turns immediately reflect the new style. Backend **60 passing**.
+
 ## In Progress
 
 Nothing mid-flight.

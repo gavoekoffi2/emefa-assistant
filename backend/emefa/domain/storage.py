@@ -151,6 +151,27 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         """,
         "CREATE INDEX idx_memories_user ON memories(user_id, created_at)",
     ),
+    # 7 — local sales pipeline (business development seed).
+    (
+        f"""
+        CREATE TABLE prospects (
+            prospect_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            name TEXT NOT NULL,
+            company TEXT NOT NULL DEFAULT '',
+            email TEXT NOT NULL DEFAULT '',
+            phone TEXT NOT NULL DEFAULT '',
+            stage TEXT NOT NULL DEFAULT 'nouveau',
+            notes TEXT NOT NULL DEFAULT '',
+            next_action TEXT NOT NULL DEFAULT '',
+            next_action_date TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE INDEX idx_prospects_stage ON prospects(user_id, stage, next_action_date)",
+    ),
 )
 
 

@@ -165,6 +165,16 @@ With this, the Phase 3 "text and voice share context" exit criterion is implemen
 - This satisfies the **Phase 5 exit-gate pattern**: a real external capability through Skill Registry → permission check → adapter → verification (SMTP acceptance) → audit, with no bypass. It is also the first slice of the **Phase 6 e-mail MVP** (send path; inbox/reply flows still open).
 - Tests: backend **82 passing** (adapter STARTTLS/login/message assembly via faked `smtplib.SMTP`, conditional registration + policy = ASK, input validation, approval E2E proving *nothing is sent before approval* and *rejection never sends*).
 
+## Completed — Phase 7 seed: local sales pipeline (2026-07-20)
+
+- **Migration 7:** `prospects` table (tenant/user-scoped; stages `nouveau → contacté → qualifié → proposition → gagné/perdu`; dated next action).
+- **`ProspectRepository`:** add/update with field allowlist and ISO-date validation, open-pipeline listing ordered by follow-up date, `due_follow_ups()` (open stages only).
+- **Three governed skills:** `add_prospect`, `list_pipeline` (PERSONAL_READ), `update_prospect` (stage enum enforced). "Ajoute Ama Mensah de Mensah Logistics, relance jeudi" persists a tracked prospect.
+- **Brief integration:** `get_daily_brief` now includes `due_follow_ups` — the flagship question surfaces overdue sales follow-ups, which pair naturally with the approval-gated `send_email` for relances.
+- **`GET /v1/prospects`** for the future pipeline UI.
+- Deliberately excluded (needs vetted providers + anti-spam guardrails): prospect discovery, enrichment, automated outreach. Tracking only — no uncontrolled prospecting (CLAUDE.md §29).
+- Tests: backend **86 passing** (repository incl. won-prospect exits pipeline, skills incl. stage validation, brief integration, conversation→API end-to-end).
+
 ## In Progress
 
 Nothing mid-flight.

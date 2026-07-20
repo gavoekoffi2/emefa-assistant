@@ -12,6 +12,7 @@ from emefa.api.devices import router as devices_router
 from emefa.api.profile import router as profile_router
 from emefa.api.realtime import router as realtime_router
 from emefa.api.memories import router as memories_router
+from emefa.api.prospects import router as prospects_router
 from emefa.api.system import router as system_router
 from emefa.api.tasks import router as tasks_router
 from emefa.api.voice_llm import router as voice_llm_router
@@ -23,6 +24,7 @@ from emefa.domain.conversations import VOICE_CONVERSATION_ID, ConversationStore
 from emefa.domain.devices import DeviceRepository
 from emefa.domain.profiles import ProfileRepository
 from emefa.domain.memories import MemoryRepository
+from emefa.domain.prospects import ProspectRepository
 from emefa.domain.ratelimit import FailureLimiter
 from emefa.domain.tasks import TaskRepository
 from emefa.infrastructure.deepseek import DeepSeekBrain
@@ -51,6 +53,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     profiles = ProfileRepository(active_settings.database_path)
     tasks = TaskRepository(active_settings.database_path)
     memories = MemoryRepository(active_settings.database_path)
+    prospects = ProspectRepository(active_settings.database_path)
     conversations = ConversationStore(active_settings.database_path)
 
     def compose_context() -> str:
@@ -169,12 +172,13 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
 
     application.state.tasks = tasks
     application.state.memories = memories
+    application.state.prospects = prospects
     application.state.compose_context = compose_context
     application.state.compose_text_context = compose_text_context
     application.state.conversations = conversations
     application.state.agent = AgentEngine(
         selected_brain,
-        build_tool_shelf(profiles, tasks, memories, email_sender),
+        build_tool_shelf(profiles, tasks, memories, email_sender, prospects),
         memory=conversations,
     )
     application.state.approvals = ApprovalRepository(active_settings.database_path)
@@ -240,6 +244,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     application.include_router(agent_router)
     application.include_router(profile_router)
     application.include_router(memories_router)
+    application.include_router(prospects_router)
     application.include_router(system_router)
     application.include_router(tasks_router)
     application.include_router(voice_llm_router)

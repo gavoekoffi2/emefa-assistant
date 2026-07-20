@@ -16,6 +16,7 @@ from emefa.domain.agent import AgentTool, ToolShelf
 from emefa.domain.memories import CATEGORIES, MemoryRepository
 from emefa.domain.policy import ActionRisk
 from emefa.domain.profiles import ASSISTANT_FIELDS, BUSINESS_FIELDS, ProfileRepository
+from emefa.domain.prospects import STAGES, ProspectRepository
 from emefa.domain.tasks import TaskRepository
 from emefa.infrastructure.email import SmtpEmailSender
 from emefa.observability import audit
@@ -39,6 +40,7 @@ def build_tool_shelf(
     tasks: TaskRepository | None = None,
     memories: MemoryRepository | None = None,
     email_sender: SmtpEmailSender | None = None,
+    prospects: ProspectRepository | None = None,
 ) -> ToolShelf:
     shelf = ToolShelf()
 
@@ -168,7 +170,9 @@ def build_tool_shelf(
         )
     )
     if tasks is not None:
-        _add_task_skills(shelf, tasks, profiles)
+        _add_task_skills(shelf, tasks, profiles, prospects)
+    if prospects is not None:
+        _add_prospect_skills(shelf, prospects)
     if memories is not None:
         _add_memory_skills(shelf, memories)
     if email_sender is not None and email_sender.configured:
@@ -217,6 +221,108 @@ def _add_email_skill(shelf: ToolShelf, sender: SmtpEmailSender) -> None:
                 "additionalProperties": False,
             },
             handler=send_email,
+        )
+    )
+
+
+def _add_prospect_skills(shelf: ToolShelf, prospects: ProspectRepository) -> None:
+    _prospect_properties = {
+        "name": {"type": "string", "description": "Nom du contact"},
+        "company": {"type": "string", "description": "Entreprise du prospect"},
+        "email": {"type": "string", "description": "Adresse e-mail"},
+        "phone": {"type": "string", "description": "Téléphone"},
+        "notes": {"type": "string", "description": "Notes de qualification"},
+        "next_action": {"type": "string", "description": "Prochaine action prévue"},
+        "next_action_date": {
+            "type": "string",
+            "description": "Date de la prochaine action, AAAA-MM-JJ",
+        },
+    }
+
+    def add_prospect(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        name = str(arguments.get("name", "")).strip()
+        if not name:
+            return {"error": "name_required"}
+        try:
+            prospect = prospects.add(name, **{k: v for k, v in arguments.items() if k != "name"})
+        except ValueError:
+            return {"error": "invalid_next_action_date", "expected_format": "AAAA-MM-JJ"}
+        audit("skill_prospect_added", prospect_id=prospect.prospect_id)
+        return {"prospect": asdict(prospect)}
+
+    def list_pipeline(_arguments: Mapping[str, Any]) -> dict[str, Any]:
+        entries = prospects.list_open()
+        return {
+            "count": len(entries),
+            "prospects": [
+                {**asdict(p), "follow_up_due": p.follow_up_due()} for p in entries
+            ],
+        }
+
+    def update_prospect(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        prospect_id = str(arguments.get("prospect_id", "")).strip()
+        stage = arguments.get("stage")
+        if stage is not None and stage not in STAGES:
+            return {"error": "invalid_stage", "allowed_stages": list(STAGES)}
+        try:
+            updated = prospects.update(
+                prospect_id, **{k: v for k, v in arguments.items() if k != "prospect_id"}
+            )
+        except ValueError:
+            return {"error": "invalid_next_action_date", "expected_format": "AAAA-MM-JJ"}
+        if updated is None:
+            return {"error": "prospect_not_found"}
+        audit("skill_prospect_updated", prospect_id=prospect_id)
+        return {"prospect": asdict(updated)}
+
+    shelf.add(
+        AgentTool(
+            name="add_prospect",
+            description=(
+                "Ajoute un prospect au pipeline commercial quand l'utilisateur "
+                "mentionne un client potentiel à suivre."
+            ),
+            risk=ActionRisk.LOCAL_WRITE,
+            parameters={
+                "type": "object",
+                "properties": _prospect_properties,
+                "required": ["name"],
+                "additionalProperties": False,
+            },
+            handler=add_prospect,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="list_pipeline",
+            description=(
+                "Liste le pipeline commercial : prospects ouverts, leur étape "
+                "(nouveau, contacté, qualifié, proposition) et les relances dues."
+            ),
+            risk=ActionRisk.PERSONAL_READ,
+            handler=list_pipeline,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="update_prospect",
+            description=(
+                "Met à jour un prospect (étape, notes, prochaine action datée) à "
+                "partir de son prospect_id. Étapes: "
+                "nouveau, contacté, qualifié, proposition, gagné, perdu."
+            ),
+            risk=ActionRisk.LOCAL_WRITE,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "prospect_id": {"type": "string", "description": "Identifiant du prospect"},
+                    "stage": {"type": "string", "enum": list(STAGES)},
+                    **_prospect_properties,
+                },
+                "required": ["prospect_id"],
+                "additionalProperties": False,
+            },
+            handler=update_prospect,
         )
     )
 
@@ -302,7 +408,10 @@ def _add_memory_skills(shelf: ToolShelf, memories: MemoryRepository) -> None:
 
 
 def _add_task_skills(
-    shelf: ToolShelf, tasks: TaskRepository, profiles: ProfileRepository
+    shelf: ToolShelf,
+    tasks: TaskRepository,
+    profiles: ProfileRepository,
+    prospects: ProspectRepository | None = None,
 ) -> None:
     def create_task(arguments: Mapping[str, Any]) -> dict[str, Any]:
         title = str(arguments.get("title", "")).strip()[:200]
@@ -346,13 +455,26 @@ def _add_task_skills(
                 {"task_id": task.task_id, "title": task.title, "due_date": task.due_date}
             )
         business = profiles.get_business()
-        return {
+        brief: dict[str, Any] = {
             "date": date.today().isoformat(),
             "open_task_count": sum(len(items) for items in buckets.values()),
             "tasks": buckets,
             "goals": business.goals,
             "company_name": business.company_name,
         }
+        if prospects is not None:
+            brief["due_follow_ups"] = [
+                {
+                    "prospect_id": p.prospect_id,
+                    "name": p.name,
+                    "company": p.company,
+                    "stage": p.stage,
+                    "next_action": p.next_action,
+                    "next_action_date": p.next_action_date,
+                }
+                for p in prospects.due_follow_ups()
+            ]
+        return brief
 
     shelf.add(
         AgentTool(

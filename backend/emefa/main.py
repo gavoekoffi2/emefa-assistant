@@ -13,6 +13,7 @@ from emefa.api.devices import router as devices_router
 from emefa.api.profile import router as profile_router
 from emefa.api.realtime import router as realtime_router
 from emefa.api.briefings import router as briefings_router
+from emefa.api.demo import router as demo_router
 from emefa.api.memories import router as memories_router
 from emefa.api.prospects import router as prospects_router
 from emefa.api.system import router as system_router
@@ -76,6 +77,19 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
         memory_block = memories.context_block()
         if memory_block:
             parts.append(memory_block)
+        # Anti-fake-completion guard (§25): the model must never claim to
+        # have performed an action its tools did not actually execute, and
+        # must be honest about capabilities that do not yet exist.
+        parts.append(
+            "Règle d'honnêteté : n'annonce jamais avoir effectué une action "
+            "que tes outils n'ont pas réellement exécutée. Tu ne disposes PAS "
+            "d'outil de découverte automatique de prospects ni de génération "
+            "de documents : si on te le demande, dis-le clairement et propose "
+            "ce que tu peux réellement faire (par ex. enregistrer un prospect "
+            "que l'utilisateur te donne, préparer un brouillon d'e-mail). "
+            "N'expose jamais ton raisonnement interne ; donne des réponses "
+            "utiles et concises."
+        )
         return "\n".join(part for part in parts if part)
 
     def compose_text_context() -> str:
@@ -289,6 +303,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     application.include_router(agent_router)
     application.include_router(profile_router)
     application.include_router(briefings_router)
+    application.include_router(demo_router)
     application.include_router(memories_router)
     application.include_router(prospects_router)
     application.include_router(system_router)

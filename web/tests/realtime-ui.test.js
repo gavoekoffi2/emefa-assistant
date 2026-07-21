@@ -124,3 +124,20 @@ test('proactive morning brief surfaces as a dismissible strip', () => {
   assert.match(source, /brief du jour est prêt/)
   assert.match(holographicCss, /brief-strip/)
 })
+
+test('integrated demo: guided scenarios and honest availability badges', () => {
+  assert.match(source, /\/v1\/demo\/scenarios/)
+  assert.match(source, /runScenario/)
+  assert.match(source, /scenarioStatusLabel/)
+  assert.match(source, /RÉEL/)
+  assert.match(source, /APERÇU/)
+  assert.match(holographicCss, /scenario-tray/)
+})
+
+test('visual states reflect backend outcomes including awaiting and success', () => {
+  assert.match(app, /awaiting: 'EN ATTENTE DE VOTRE APPROBATION'/)
+  assert.match(app, /success: 'TERMINÉ'/)
+  assert.match(source, /settleState/)
+  assert.match(source, /outcome: VoiceState = 'success'/)
+  assert.match(hologram, /awaiting: 0xff9d57/)
+})

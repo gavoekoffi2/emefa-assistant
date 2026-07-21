@@ -24,6 +24,13 @@ type AgentRun = {
   action_id?: string | null
 }
 type PendingApproval = { action_id: string; name: string; arguments: Record<string, unknown> }
+type DemoScenario = { id: string; title: string; prompt: string; status: 'live' | 'assisted' | 'preview'; note: string }
+
+const scenarioStatusLabel: Record<DemoScenario['status'], string> = {
+  live: 'RÉEL',
+  assisted: 'ASSISTÉ',
+  preview: 'APERÇU',
+}
 type SystemStatus = {
   brain_configured: boolean
   voice_configured: boolean
@@ -74,10 +81,15 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   const [deciding, setDeciding] = useState(false)
   const [system, setSystem] = useState<SystemStatus | null>(null)
   const [morningBrief, setMorningBrief] = useState<string | null>(null)
+  const [scenarios, setScenarios] = useState<DemoScenario[]>([])
+  const [scenariosOpen, setScenariosOpen] = useState(false)
 
   useEffect(() => {
     api<{ text: string }>('/v1/briefings/today')
       .then((briefing) => setMorningBrief(briefing.text))
+      .catch(() => undefined)
+    api<DemoScenario[]>('/v1/demo/scenarios')
+      .then(setScenarios)
       .catch(() => undefined)
   }, [])
 
@@ -109,21 +121,36 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   }, [])
 
 
+  const settleState = (next: VoiceState) => {
+    // Reflect the real backend outcome, then relax back to the resting
+    // state (listening if a live voice session is up, idle otherwise).
+    setState(next)
+    if (next === 'success') {
+      window.setTimeout(() => {
+        setState((current) => current === 'success'
+          ? (conversation.status === 'connected' ? 'listening' : 'idle')
+          : current)
+      }, 2200)
+    }
+  }
+
   const applyAgentRun = (run: AgentRun) => {
     let text: string
+    let outcome: VoiceState = 'success'
     if (run.status === 'completed' && run.answer) text = run.answer
     else if (run.status === 'rejected') text = run.answer || 'Action annulée. Rien n’a été exécuté.'
     else if (run.status === 'confirmation_required') {
       const label = skillLabels[run.pending_action?.name ?? ''] || run.pending_action?.name || 'cette action'
       text = `Avant de continuer, EMEFA attend votre approbation pour : ${label}.`
+      outcome = 'awaiting'
       if (run.action_id && run.pending_action) {
         setApproval({ action_id: run.action_id, name: run.pending_action.name, arguments: run.pending_action.arguments })
       }
-    } else if (run.status === 'blocked') text = 'Cette action est bloquée par la politique de sécurité d’EMEFA.'
-    else text = agentErrorCopy[run.error ?? ''] || 'La demande n’a pas abouti.'
+    } else if (run.status === 'blocked') { text = 'Cette action est bloquée par la politique de sécurité d’EMEFA.'; outcome = 'error' }
+    else { text = agentErrorCopy[run.error ?? ''] || 'La demande n’a pas abouti.'; outcome = 'error' }
     setAnswer(text)
     setHistory((current) => [...current.slice(-7), { id: crypto.randomUUID(), role: 'assistant', text }])
-    setState('idle')
+    settleState(outcome)
     refreshSystem()
   }
 
@@ -237,6 +264,11 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   }
 
   const askBrief = () => void sendMessage('Qu’est-ce qui mérite mon attention aujourd’hui ?')
+
+  const runScenario = (scenario: DemoScenario) => {
+    setScenariosOpen(false)
+    void sendMessage(scenario.prompt)
+  }
   const latestUser = useMemo(() => [...history].reverse().find((turn) => turn.role === 'user')?.text, [history])
 
   return (
@@ -277,7 +309,20 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
         <div className="voice-copy"><p className="heard">{state === 'listening' && transcript ? `« ${transcript} »` : latestUser ? `« ${latestUser} »` : live ? 'Parlez, je vous écoute…' : 'Touchez le noyau pour commencer à parler'}</p><p className="answer">{answer}</p></div>
         <div className="voice-controls"><button className={live ? 'danger' : ''} onClick={() => void toggleLive()}><span className="mic-symbol">⌁</span>{live ? 'Terminer la conversation' : 'Initialiser la liaison vocale'}</button><small>{live ? 'Conversation continue · interrompez EMEFA à tout moment' : 'Activation unique · échange vocal naturel'}</small></div>
       </main>
-      <section className="command-dock"><span className="dock-prompt">›</span><input value={typed} onChange={(event) => { setTyped(event.target.value); if (live) conversation.sendUserActivity() }} onKeyDown={(event) => { if (event.key === 'Enter') void submitTyped() }} placeholder="Écrire à EMEFA — avec ou sans la voix…" aria-label="Écrire une demande" /><button onClick={() => void submitTyped()} disabled={!typed.trim()}>TRANSMETTRE</button></section>
+      {scenariosOpen && scenarios.length > 0 && (
+        <div className="scenario-tray" role="menu" aria-label="Scénarios de démonstration">
+          <div className="scenario-tray-head"><span>PARCOURS GUIDÉS</span><small>Chaque carte indique ce qui est réel, assisté ou en aperçu.</small></div>
+          {scenarios.map((scenario) => (
+            <button key={scenario.id} className={`scenario-item s-${scenario.status}`} onClick={() => runScenario(scenario)} role="menuitem">
+              <span className="scenario-badge">{scenarioStatusLabel[scenario.status]}</span>
+              <strong>{scenario.title}</strong>
+              <em>« {scenario.prompt} »</em>
+              <small>{scenario.note}</small>
+            </button>
+          ))}
+        </div>
+      )}
+      <section className="command-dock"><button className={`dock-scenarios${scenariosOpen ? ' active' : ''}`} onClick={() => setScenariosOpen((open) => !open)} disabled={scenarios.length === 0} aria-label="Parcours guidés" title="Parcours guidés">✦</button><span className="dock-prompt">›</span><input value={typed} onChange={(event) => { setTyped(event.target.value); if (live) conversation.sendUserActivity() }} onKeyDown={(event) => { if (event.key === 'Enter') void submitTyped() }} placeholder="Écrire à EMEFA — avec ou sans la voix…" aria-label="Écrire une demande" /><button onClick={() => void submitTyped()} disabled={!typed.trim()}>TRANSMETTRE</button></section>
       <div className="model-pill"><span>PROTOCOLE</span><strong>VOICE·LIVE</strong><i>●</i></div>
       {notice && <div className="voice-notice" role="alert">{notice}</div>}
       {morningBrief && (

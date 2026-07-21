@@ -206,6 +206,26 @@ Tests: backend **85 passing**, web **12 passing**, lint/build clean.
 
 Acting on the security review's one defense-in-depth item: the voice channel now runs a **reduced tool shelf** (`build_tool_shelf(..., include_mailbox_read=False)`) via a dedicated `voice_agent` engine. `email_search`/`email_read` are withheld from the voice path, so the ElevenLabs-shared bearer secret can no longer cause live inbox contents to be returned in-band. Approval-gated `email_send` stays available on voice (the request creates a pending approval; the full-shelf engine executes it after HUD approval). Test proves the voice shelf omits the two mailbox-read tools while keeping `email_send`; the text shelf keeps all. Backend **92 passing**.
 
+## Completed — Phase 9: integrated demo experience (2026-07-20)
+
+Turns the Phases 0–8 capabilities into one coherent, honest, demonstrable flow — no new large feature, no rewrite of stable components.
+
+- **Truthful visual states:** added `awaiting` (amber, "EN ATTENTE DE VOTRE APPROBATION") and `success` (green, "TERMINÉ") to the state machine, wired to the *real* backend reply — `confirmation_required` → awaiting, `completed` → success (relaxes to listening/idle), `blocked`/`failed` → error. The holographic HUD colour reflects each. Now covers listening / understanding-working (thinking) / awaiting approval / success / error.
+- **Guided scenarios launcher** (`GET /v1/demo/scenarios` + HUD tray): the 5 requested prompts, each sent through the **real** governed engine (voice session if live, `/v1/agent/runs` otherwise), with an honest availability badge derived from actual system state: **RÉEL** (executive brief), **ASSISTÉ** (meeting prep, encadred autonomy), **APERÇU** (document creation, prospect discovery — capabilities that do not exist yet).
+- **Anti-fake-completion guard (§25):** `compose_context()` now instructs the brain to never claim an action its tools did not execute, to be explicit that prospect discovery and document generation are unavailable, and to not expose internal reasoning. Applies to text and voice.
+- **Result surfaces reused, not rebuilt:** brief → answer panel + strip; tasks/pipeline/memory → existing panels; consequential actions → existing approval card. Continuity voice↔text preserved (shared conversation + context).
+- **Verified end-to-end on the real server** (uvicorn + built frontend + local OpenAI-compatible mock): scenario 1 drives `get_daily_brief` for real (2 turns, real brief); scenarios 3 & 4 return honest "not available yet" answers with **zero fabricated prospects in the DB** — no simulation presented as real execution. Conversation continuity confirmed (history persists across turns; cleared cleanly between isolated checks).
+- Tests: backend **95 passing** (scenario catalog honesty, anti-fake guard in context, executive-brief end-to-end); web **15 passing** (scenario tray + badges, awaiting/success states); lint/build clean.
+
+### Phase 9 — honest scenario status
+| Scénario | Statut | Réalité |
+|---|---|---|
+| 1. Briefing exécutif | **RÉEL** | `get_daily_brief` compose tâches + relances + objectifs |
+| 2. Préparation de réunion | ASSISTÉ | assemble profil/pipeline/tâches (pas d'agenda dédié) |
+| 3. Création de document | APERÇU | non implémenté — proposé en texte/brouillon, jamais simulé |
+| 4. Découverte de 10 prospects | APERÇU | non implémenté (anti-spam) — suivi manuel réel du pipeline |
+| 5. Autonomie hebdo + approbation | ASSISTÉ | brief récurrent réel + envoi toujours sous approbation |
+
 ## In Progress
 
 Nothing mid-flight.

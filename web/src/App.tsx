@@ -6,7 +6,7 @@ import './App.css'
 import './Holographic.css'
 
 export type Session = { device_id: string; name: string }
-export type VoiceState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'error'
+export type VoiceState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'awaiting' | 'success' | 'error'
 type GraphNode = { id: number; label: string; group: string; x: number; y: number; z: number; size: number }
 type GraphLink = { source: number; target: number }
 
@@ -29,6 +29,8 @@ export const statusCopy: Record<VoiceState, string> = {
   listening: 'JE VOUS ÉCOUTE',
   thinking: 'JE RÉFLÉCHIS',
   speaking: 'JE VOUS RÉPONDS',
+  awaiting: 'EN ATTENTE DE VOTRE APPROBATION',
+  success: 'TERMINÉ',
   error: 'CONNEXION INTERROMPUE',
 }
 

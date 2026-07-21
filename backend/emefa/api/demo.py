@@ -34,11 +34,12 @@ def scenarios(
     skills = {tool["name"] for tool in request.app.state.agent.tools.describe()}
     has_email = "email_send" in skills
     has_pipeline = "list_pipeline" in skills
+    has_documents = "document_create" in skills
 
     email_note = (
         "Réel : EMEFA peut préparer un e-mail ; l'envoi passe par votre approbation."
         if has_email
-        else "Configurez le SMTP pour activer l'envoi d'e-mail réel."
+        else "Connectez la boîte mail pour activer l'envoi d'e-mail réel."
     )
     return [
         Scenario(
@@ -62,10 +63,12 @@ def scenarios(
             id="document",
             title="Création de document",
             prompt="Prépare la proposition.",
-            status="preview",
+            status="live" if has_documents else "preview",
             note=(
-                "Aperçu : la génération de document n'est pas encore disponible. "
-                "EMEFA peut rédiger le contenu en texte ou préparer un brouillon d'e-mail."
+                "Réel : EMEFA génère un document Word (DOCX) persistant et renvoie "
+                "son lien de téléchargement."
+                if has_documents
+                else "Aperçu : la génération de document n'est pas encore disponible."
             ),
         ),
         Scenario(

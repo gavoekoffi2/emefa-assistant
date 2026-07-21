@@ -40,6 +40,15 @@ test('typed input reaches the EMEFA runtime when the voice session is offline', 
   assert.match(source, /agentErrorCopy/)
 })
 
+test('live voice can execute governed EMEFA actions through the authenticated client tool', () => {
+  assert.match(source, /clientTools:\s*\{[\s\S]*emefa_execute:/)
+  assert.match(source, /emefa_execute:[\s\S]*\/v1\/agent\/runs/)
+  assert.match(source, /JSON\.stringify\(\{ message: request \}\)/)
+  assert.match(source, /credentials: 'include'/)
+  assert.match(source, /setApproval\(\{[\s\S]*action_id: run\.action_id/)
+  assert.match(source, /conversation\.sendContextualUpdate\(run\.answer\)/)
+})
+
 test('HUD telemetry reflects real system state instead of decorative numbers', () => {
   assert.match(source, /\/v1\/system\/status/)
   assert.match(source, /compétences actives/)
@@ -91,6 +100,18 @@ test('profile panel lets the user view and edit assistant and business context',
   assert.match(source, /ProfilePanel/)
   assert.match(source, /firstRun/)
   assert.match(holographicCss, /profile-panel/)
+})
+
+test('personalization is conversational or imported from one website URL', () => {
+  const panel = readFileSync(new URL('../src/ProfilePanel.tsx', import.meta.url), 'utf8')
+  assert.match(panel, /Parler avec EMEFA/)
+  assert.match(panel, /Importer votre site/)
+  assert.match(panel, /\/v1\/assistant\/business\/import/)
+  assert.match(panel, /onStartInterview/)
+  assert.match(panel, /profile-advanced/)
+  assert.match(source, /startProfileInterview/)
+  assert.match(source, /Pose une seule question courte à la fois/)
+  assert.match(source, /appelle emefa_execute/)
 })
 
 test('interface renders a state-reactive WebGL holographic HUD', () => {

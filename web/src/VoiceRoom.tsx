@@ -164,6 +164,11 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       })
       setApproval(null)
       applyAgentRun(run)
+
+      // If we have an active conversation and the action was approved, send the result as a contextual update
+      if (approve && conversation.status === 'connected' && run.status === 'completed' && run.answer) {
+        conversation.sendContextualUpdate(run.answer)
+      }
     } catch (cause) {
       setState('error')
       setNotice(cause instanceof Error ? cause.message : 'La décision n’a pas pu être transmise.')
@@ -229,17 +234,62 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
           rawAudioProcessor: '/worklets/raw-audio-processor.js',
           audioConcatProcessor: '/worklets/audio-concat-processor.js',
         },
+        clientTools: {
+          emefa_execute: async ({ request }: { request: string }) => {
+            try {
+              const run = await api<AgentRun>('/v1/agent/runs', {
+                method: 'POST',
+                body: JSON.stringify({ message: request }),
+                credentials: 'include',
+              })
+
+              if (run.status === 'completed' && run.answer) {
+                return run.answer
+              } else if (run.status === 'confirmation_required' && run.action_id && run.pending_action) {
+                setApproval({
+                  action_id: run.action_id,
+                  name: run.pending_action.name,
+                  arguments: run.pending_action.arguments,
+                })
+                return 'Une approbation est requise pour cette action.'
+              } else if (run.error) {
+                return `Erreur: ${agentErrorCopy[run.error] || run.error}`
+              }
+              return 'Action terminée sans résultat.'
+            } catch (error) {
+              return `Erreur réseau: ${error instanceof Error ? error.message : 'Impossible de contacter le serveur EMEFA.'}`
+            }
+          },
+        },
       })
+      return true
     } catch (cause) {
       setState('error')
       const denied = cause instanceof DOMException && ['NotAllowedError', 'PermissionDeniedError'].includes(cause.name)
       setNotice(denied ? 'Autorisez le microphone pour parler directement à EMEFA.' : cause instanceof Error ? cause.message : 'EMEFA ne peut pas ouvrir la conversation vocale.')
+      return false
     }
   }
 
   const toggleLive = async () => {
     if (live) { await conversation.endSession(); return }
     await startRealtime()
+  }
+
+  const startProfileInterview = async () => {
+    setProfileOpen(false)
+    setFirstRun(false)
+    if (conversation.status !== 'connected') {
+      const connected = await startRealtime()
+      if (!connected) return
+    }
+    conversation.sendContextualUpdate(
+      'L’utilisateur choisit un entretien de personnalisation. Pose une seule question courte à la fois. '
+      + 'Commence par son nom et son rôle, puis son activité, ses clients, ses objectifs et ses préférences de travail. '
+      + 'Après chaque réponse, appelle emefa_execute pour enregistrer uniquement les informations confirmées dans le profil professionnel. '
+      + 'Ne dis jamais qu’une information est enregistrée si le résultat de l’outil ne le confirme pas.',
+    )
+    conversation.sendUserMessage('Je souhaite que tu apprennes à me connaître pour mieux travailler avec moi.')
   }
 
   const sendMessage = async (value: string) => {
@@ -346,7 +396,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
           </div>
         </div>
       )}
-      <ProfilePanel open={profileOpen} firstRun={firstRun} onClose={() => { setProfileOpen(false); setFirstRun(false) }} />
+      <ProfilePanel open={profileOpen} firstRun={firstRun} onClose={() => { setProfileOpen(false); setFirstRun(false) }} onStartInterview={() => void startProfileInterview()} />
       <TasksPanel open={tasksOpen} onClose={() => setTasksOpen(false)} onAskBrief={askBrief} />
       <MemoryPanel open={memoryOpen} onClose={() => setMemoryOpen(false)} />
       <PipelinePanel open={pipelineOpen} onClose={() => setPipelineOpen(false)} />

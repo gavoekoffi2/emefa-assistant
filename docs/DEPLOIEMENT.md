@@ -35,27 +35,22 @@ Deux options — la clé ne doit jamais être commitée dans le dépôt ni expos
 2. Optionnel : choisir le modèle avec `EMEFA_OPENROUTER_MODEL` (défaut : `deepseek/deepseek-chat`, économique et compatible avec les appels d'outils). Vérifier le nom exact sur openrouter.ai/models si le modèle par défaut renvoie une erreur.
 3. Si les deux clés sont présentes, DeepSeek direct est prioritaire.
 
-## Activer l'envoi d'e-mails (SMTP)
+## Activer la boîte mail gouvernée (Himalaya)
 
-EMEFA peut envoyer des e-mails depuis votre adresse professionnelle. Chaque
-envoi demande votre approbation explicite dans l'interface avant de partir.
+EMEFA lit, recherche, prépare des brouillons et envoie des e-mails via le CLI
+`himalaya` connecté au compte configuré (par ex. graphistegpt). Chaque **envoi**
+demande votre approbation explicite avant de partir.
 
-1. Dans `.env`, renseigner :
-   - `EMEFA_SMTP_HOST` (ex. `smtp.gmail.com`)
-   - `EMEFA_SMTP_PORT` (587 par défaut)
-   - `EMEFA_SMTP_USERNAME` et `EMEFA_SMTP_PASSWORD` — pour Gmail, créer un
-     **mot de passe d'application** (compte Google → Sécurité → Validation en
-     deux étapes → Mots de passe des applications), jamais votre mot de passe
-     principal.
-   - `EMEFA_SMTP_FROM` (votre adresse d'expéditeur)
-2. Pour la recherche, la lecture et les brouillons (IMAP), ajouter aussi :
-   - `EMEFA_IMAP_HOST` (ex. `imap.gmail.com`)
-   - `EMEFA_IMAP_PORT` (993 par défaut)
-   - `EMEFA_IMAP_USERNAME` / `EMEFA_IMAP_PASSWORD` (repli automatique sur les
-     identifiants SMTP si absents — même compte, ex. graphistegpt).
+1. Installer et configurer `himalaya` pour le compte voulu sur le serveur.
+2. Dans `.env`, renseigner :
+   - `EMEFA_EMAIL_ACCOUNT` (nom du compte himalaya, ex. `graphistegpt`)
+   - `EMEFA_HIMALAYA_BINARY` (optionnel, défaut `himalaya`)
+   - `EMEFA_HIMALAYA_CONFIG` (optionnel, chemin du fichier de config himalaya)
 3. Redémarrer le service. Les compétences `email_send`, `email_search`,
    `email_read` et `email_create_draft` n'apparaissent dans
-   `/v1/system/status` que si la configuration correspondante est présente.
+   `/v1/system/status` que si `EMEFA_EMAIL_ACCOUNT` est présent. Sur le **canal
+   vocal**, seuls l'envoi et le brouillon sont disponibles (la lecture/recherche
+   de la boîte est réservée au canal texte authentifié — moindre privilège).
 4. Test : demandez par écrit ou à la voix « Envoie un e-mail de test à … » —
    la carte d'approbation doit apparaître avant tout envoi.
 
@@ -64,7 +59,7 @@ envoi demande votre approbation explicite dans l'interface avant de partir.
 1. Dans `.env`, définir `EMEFA_BRIEF_HOUR` (heure locale du serveur, ex. `7`).
    Sans cette variable, aucun travail proactif ne s'exécute.
 2. Optionnel : `EMEFA_BRIEF_EMAIL_TO=votre@adresse` pour recevoir le brief par
-   e-mail chaque matin (nécessite la configuration SMTP ci-dessus). **Cette
+   e-mail chaque matin (nécessite la boîte mail configurée ci-dessus). **Cette
    variable vaut approbation permanente et cadrée** pour ce seul envoi
    quotidien — aucune autre communication n'est couverte. Retirez-la pour
    révoquer.
@@ -104,6 +99,31 @@ curl -fsS https://emefa.76.13.129.252.sslip.io/health
 ```
 
 Sans clé, l’application reste accessible et activable, mais affiche que le moteur de langage n’est pas encore configuré.
+
+## Connecteur e-mail provisoire et MCP Google Workspace
+
+Pour les essais, EMEFA peut utiliser le compte Himalaya `graphistegpt` via quatre
+compétences gouvernées : recherche, lecture en aperçu, création de brouillon et
+envoi. L’envoi est classé `communicate` et ne s’exécute qu’après approbation
+explicite portant sur le destinataire, l’objet et le corps exacts.
+
+Configuration du conteneur :
+
+```dotenv
+EMEFA_EMAIL_ACCOUNT=graphistegpt
+EMEFA_HIMALAYA_BINARY=/usr/local/bin/himalaya
+EMEFA_HIMALAYA_CONFIG=/run/secrets/himalaya/config.toml
+```
+
+Le binaire et le dossier de configuration sont montés en lecture seule. Les
+identifiants ne doivent jamais être copiés dans le dépôt ni exposés à l’API.
+
+Pour l’intégration Google Workspace définitive, le candidat retenu est
+[`taylorwilsdon/google_workspace_mcp`](https://github.com/taylorwilsdon/google_workspace_mcp) :
+serveur MCP MIT actif couvrant Gmail, Calendar, Drive, Docs, Sheets, Slides,
+Forms, Tasks, Contacts et Chat, avec OAuth 2.1. Il remplacera l’adaptateur
+Himalaya derrière l’interface `EmailProvider`; il ne doit pas être ajouté au MCP
+global de Hermes comme substitut à l’intégration autonome d’EMEFA.
 
 ## Coût IA
 

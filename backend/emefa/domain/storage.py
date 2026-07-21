@@ -151,7 +151,12 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         """,
         "CREATE INDEX idx_memories_user ON memories(user_id, created_at)",
     ),
-    # 7 — local sales pipeline (business development seed).
+    # 7 — public website context used for automatic profile preconfiguration.
+    (
+        "ALTER TABLE business_profiles ADD COLUMN website_url TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE business_profiles ADD COLUMN website_summary TEXT NOT NULL DEFAULT ''",
+    ),
+    # 8 — local sales pipeline (business development seed).
     (
         f"""
         CREATE TABLE prospects (
@@ -172,7 +177,7 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         """,
         "CREATE INDEX idx_prospects_stage ON prospects(user_id, stage, next_action_date)",
     ),
-    # 8 — proactive daily briefings (recurring workflow seed).
+    # 9 — proactive daily briefings (recurring workflow seed).
     (
         f"""
         CREATE TABLE briefings (

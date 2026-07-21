@@ -14,10 +14,10 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from emefa.domain.briefings import BriefingRepository
+from emefa.domain.email import EmailProvider
 from emefa.domain.profiles import ProfileRepository
 from emefa.domain.prospects import ProspectRepository
 from emefa.domain.tasks import TaskRepository
-from emefa.infrastructure.email import SmtpEmailSender
 from emefa.observability import audit
 from emefa.skills import compose_daily_brief, format_brief_text
 
@@ -35,7 +35,7 @@ async def run_brief_job(
     tasks: TaskRepository,
     prospects: ProspectRepository,
     briefings: BriefingRepository,
-    email_sender: SmtpEmailSender | None = None,
+    email_provider: EmailProvider | None = None,
     email_to: str | None = None,
 ) -> dict[str, Any]:
     """Generate and store today's brief once; e-mail it only under the
@@ -49,9 +49,10 @@ async def run_brief_job(
     else:
         stored = existing
     emailed = stored.emailed
-    if email_to and email_sender is not None and email_sender.configured and not emailed:
+    if email_to and email_provider is not None and not emailed:
         try:
-            result = await email_sender.send(
+            result = await asyncio.to_thread(
+                email_provider.send,
                 email_to,
                 f"Votre brief EMEFA du {today}",
                 format_brief_text(stored.content),
@@ -59,7 +60,7 @@ async def run_brief_job(
         except Exception:
             audit("brief_email_failed", brief_date=today)
         else:
-            if result.get("accepted"):
+            if result.get("status") == "sent":
                 briefings.mark_emailed(today)
                 emailed = True
                 audit("brief_emailed", brief_date=today)
@@ -74,7 +75,7 @@ async def brief_scheduler_loop(
     tasks: TaskRepository,
     prospects: ProspectRepository,
     briefings: BriefingRepository,
-    email_sender: SmtpEmailSender | None,
+    email_provider: EmailProvider | None,
     email_to: str | None,
 ) -> None:
     while True:
@@ -82,7 +83,7 @@ async def brief_scheduler_loop(
         await asyncio.sleep(delay)
         try:
             await run_brief_job(
-                profiles, tasks, prospects, briefings, email_sender, email_to
+                profiles, tasks, prospects, briefings, email_provider, email_to
             )
         except Exception:  # one failed run must not kill the schedule
             audit("brief_job_failed")

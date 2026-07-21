@@ -1,4 +1,3 @@
-import smtplib
 from datetime import date, datetime, timedelta
 
 import httpx
@@ -10,41 +9,29 @@ from emefa.domain.briefings import BriefingRepository
 from emefa.domain.profiles import ProfileRepository
 from emefa.domain.prospects import ProspectRepository
 from emefa.domain.tasks import TaskRepository
-from emefa.infrastructure.email import SmtpEmailSender
 from emefa.main import create_app
 from emefa.scheduler import run_brief_job, seconds_until_hour
 from emefa.skills import format_brief_text
 
 
-class FakeSmtp:
-    instances: list["FakeSmtp"] = []
+class FakeEmailProvider:
+    """Stands in for the governed HimalayaEmailProvider (sync send)."""
 
-    def __init__(self, host, port, timeout=None):
-        self.sent = []
-        FakeSmtp.instances.append(self)
+    def __init__(self):
+        self.sent: list[dict] = []
 
-    def __enter__(self):
-        return self
+    def search(self, query, limit):
+        return []
 
-    def __exit__(self, *args):
-        return False
-
-    def starttls(self, context=None):
-        pass
-
-    def login(self, *args):
-        pass
-
-    def send_message(self, message):
-        self.sent.append(message)
+    def read(self, message_id):
         return {}
 
+    def create_draft(self, to, subject, body):
+        return {"status": "draft_created", "to": to, "subject": subject}
 
-@pytest.fixture(autouse=True)
-def fake_smtp(monkeypatch):
-    FakeSmtp.instances = []
-    monkeypatch.setattr(smtplib, "SMTP", FakeSmtp)
-    yield FakeSmtp
+    def send(self, to, subject, body):
+        self.sent.append({"to": to, "subject": subject, "body": body})
+        return {"status": "sent", "to": to, "subject": subject}
 
 
 def test_seconds_until_hour():
@@ -93,25 +80,24 @@ def make_repositories(tmp_path):
 @pytest.mark.asyncio
 async def test_job_generates_once_and_emails_only_with_standing_approval(tmp_path):
     profiles, tasks, prospects, briefings = make_repositories(tmp_path)
+    provider = FakeEmailProvider()
     # Without the standing approval: stored but never e-mailed.
-    result = await run_brief_job(profiles, tasks, prospects, briefings)
+    result = await run_brief_job(profiles, tasks, prospects, briefings, provider, None)
     assert result["emailed"] is False
     assert briefings.get(date.today().isoformat()) is not None
-    assert FakeSmtp.instances == []
+    assert provider.sent == []
     # With the approval: e-mailed exactly once, even across repeated runs.
-    sender = SmtpEmailSender(host="smtp.test", port=587, sender="emefa@horizon.tg")
     result = await run_brief_job(
-        profiles, tasks, prospects, briefings, sender, "gavoekoffi@gmail.com"
+        profiles, tasks, prospects, briefings, provider, "gavoekoffi@gmail.com"
     )
     assert result["emailed"] is True
     again = await run_brief_job(
-        profiles, tasks, prospects, briefings, sender, "gavoekoffi@gmail.com"
+        profiles, tasks, prospects, briefings, provider, "gavoekoffi@gmail.com"
     )
     assert again["emailed"] is True
-    all_sent = [m for smtp in FakeSmtp.instances for m in smtp.sent]
-    assert len(all_sent) == 1
-    assert all_sent[0]["To"] == "gavoekoffi@gmail.com"
-    assert "Brief EMEFA" in all_sent[0]["Subject"] or "brief" in all_sent[0]["Subject"].lower()
+    assert len(provider.sent) == 1
+    assert provider.sent[0]["to"] == "gavoekoffi@gmail.com"
+    assert "brief" in provider.sent[0]["subject"].lower()
 
 
 @pytest.mark.asyncio

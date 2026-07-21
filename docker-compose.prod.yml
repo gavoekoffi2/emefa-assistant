@@ -13,6 +13,8 @@ services:
       EMEFA_WEB_DIST_PATH: /app/web/dist
     volumes:
       - emefa_data:/app/data
+      - /root/.local/bin/himalaya:/usr/local/bin/himalaya:ro
+      - /opt/emefa-secrets/himalaya:/run/secrets/himalaya:ro
     networks:
       - web
     labels:

@@ -20,20 +20,13 @@ class Settings(BaseSettings):
     openrouter_model: str = "deepseek/deepseek-chat"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     voice_llm_token: SecretStr | None = None
-    smtp_host: str | None = None
-    smtp_port: int = 587
-    smtp_username: str | None = None
-    smtp_password: SecretStr | None = None
-    smtp_from: str | None = None
-    smtp_starttls: bool = True
-    imap_host: str | None = None
-    imap_port: int = 993
-    imap_username: str | None = None
-    imap_password: SecretStr | None = None
     brief_hour: int | None = None
     brief_email_to: str | None = None
     elevenlabs_api_key: SecretStr | None = None
     elevenlabs_agent_id: str | None = None
+    email_account: str | None = None
+    himalaya_binary: str = "himalaya"
+    himalaya_config: Path | None = None
     web_dist_path: Path | None = None
 
     model_config = SettingsConfigDict(

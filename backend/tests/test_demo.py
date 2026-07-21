@@ -41,12 +41,13 @@ async def test_scenarios_catalog_is_honest_about_availability(tmp_path):
         scenarios = (await web.get("/v1/demo/scenarios")).json()
     by_id = {s["id"]: s for s in scenarios}
     assert by_id["executive_brief"]["status"] == "live"
-    # Capabilities that do not exist must be labelled preview, never live.
-    assert by_id["document"]["status"] == "preview"
+    # Document generation IS available (governed Word documents on main).
+    assert by_id["document"]["status"] == "live"
+    # Prospect discovery does not exist and must never be labelled live.
     assert by_id["business_development"]["status"] == "preview"
     assert "n'est pas disponible" in by_id["business_development"]["note"]
-    # No SMTP configured -> the autonomy scenario points at configuring it.
-    assert "Configurez le SMTP" in by_id["recurring_autonomy"]["note"]
+    # No mailbox connected in tests -> the autonomy scenario says so.
+    assert "Connectez la boîte mail" in by_id["recurring_autonomy"]["note"]
 
 
 def test_context_carries_anti_fake_completion_guard(tmp_path):

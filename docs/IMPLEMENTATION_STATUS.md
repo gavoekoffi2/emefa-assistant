@@ -226,6 +226,17 @@ Turns the Phases 0–8 capabilities into one coherent, honest, demonstrable flow
 | 4. Découverte de 10 prospects | APERÇU | non implémenté (anti-spam) — suivi manuel réel du pipeline |
 | 5. Autonomie hebdo + approbation | ASSISTÉ | brief récurrent réel + envoi toujours sous approbation |
 
+## Completed — branch reconciliation with main before consolidated PR (2026-07-20)
+
+`origin/main` had diverged from this branch since `84e552a` with three commits by another author (graphistegpt Himalaya mailbox, governed Word documents, voice onboarding + website import). This branch's own work (pipeline, proactive brief, governed-voice rewrite, Phase 9 demo, security) was built in parallel. Merged main into the branch and resolved the six conflicts **preserving both bodies of work**:
+
+- **E-mail deduplicated:** dropped this branch's SMTP/IMAP implementation (`SmtpEmailSender`/`ImapEmailClient`, `test_email.py`) in favour of main's `EmailProvider` + `HimalayaEmailProvider`. The pipeline, scheduler, and voice bridge now use main's provider. Removed dead `EMEFA_SMTP_*`/`EMEFA_IMAP_*` settings.
+- **Documents preserved:** kept main's governed Word `document_create`/`document_edit`. Corrected the Phase 9 catalog — the document scenario is now **RÉEL/LIVE**, and the anti-fake-completion guard now lists document generation as available (only prospect discovery remains PREVIEW).
+- **Migrations renumbered:** main's website columns stay migration 7; pipeline → 8, briefings → 9; `schema_version` = 9.
+- **Governed voice kept:** this branch's `AgentEngine`-routed voice bridge (with the reduced, least-privilege voice shelf) replaced main's thin proxy; `include_mailbox_read=False` re-applied on top of main's `_add_email_skills` so the ElevenLabs-shared secret still cannot read the inbox in-band.
+- **Brief unified:** main's `get_daily_brief` now delegates to the shared `compose_daily_brief` (adds due sales follow-ups); scheduler e-mails via `EmailProvider.send`.
+- Tests re-reconciled: backend **95 passing**, web **17 passing** (main's website + this branch's scenario/state tests), lint and build clean. `python-docx` is a real dependency now (main's pyproject).
+
 ## In Progress
 
 Nothing mid-flight.

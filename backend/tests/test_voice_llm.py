@@ -1,5 +1,3 @@
-import smtplib
-
 import httpx
 import pytest
 from pydantic import SecretStr
@@ -21,48 +19,37 @@ class ScriptedBrain:
         return self.steps.pop(0)
 
 
-class FakeSmtp:
-    instances: list["FakeSmtp"] = []
+class FakeEmailProvider:
+    """Stands in for the governed HimalayaEmailProvider (sync send)."""
 
-    def __init__(self, host, port, timeout=None):
-        self.sent = []
-        FakeSmtp.instances.append(self)
+    def __init__(self):
+        self.sent: list[dict] = []
 
-    def __enter__(self):
-        return self
+    def search(self, query, limit):
+        return []
 
-    def __exit__(self, *args):
-        return False
-
-    def starttls(self, context=None):
-        pass
-
-    def login(self, *args):
-        pass
-
-    def send_message(self, message):
-        self.sent.append(message)
+    def read(self, message_id):
         return {}
 
+    def create_draft(self, to, subject, body):
+        return {"status": "draft_created", "to": to, "subject": subject}
 
-@pytest.fixture(autouse=True)
-def fake_smtp(monkeypatch):
-    FakeSmtp.instances = []
-    monkeypatch.setattr(smtplib, "SMTP", FakeSmtp)
-    yield FakeSmtp
+    def send(self, to, subject, body):
+        self.sent.append({"to": to, "subject": subject, "body": body})
+        return {"status": "sent", "to": to, "subject": subject}
 
 
-def voice_app(tmp_path, brain, token: str | None = "voice-secret"):
+def voice_app(tmp_path, brain, token: str | None = "voice-secret", email_provider=None):
     return create_app(
         Settings(
             enrollment_code="CODE-SECRET",
             database_path=tmp_path / "voice.db",
             cookie_secure=False,
             voice_llm_token=SecretStr(token) if token else None,
-            smtp_host="smtp.test",
-            smtp_from="graphistegpt@gmail.com",
+            email_account="graphistegpt@gmail.com",
         ),
         brain=brain,
+        email_provider=email_provider,
     )
 
 
@@ -149,7 +136,8 @@ async def test_voice_email_prepare_approve_send_and_announce(tmp_path):
             AgentStep(answer="Oui, l’e-mail pour Ama est parti il y a un instant."),
         ]
     )
-    app = voice_app(tmp_path, brain)
+    provider = FakeEmailProvider()
+    app = voice_app(tmp_path, brain, email_provider=provider)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as web:
         # 1. Spoken request prepares the e-mail but must not send it.
@@ -160,7 +148,7 @@ async def test_voice_email_prepare_approve_send_and_announce(tmp_path):
         )
         spoken = prepared.json()["choices"][0]["message"]["content"]
         assert "ama@mensah.tg" in spoken and "approbation" in spoken
-        assert FakeSmtp.instances == []
+        assert provider.sent == []
         # 2. The pending approval is visible from an authenticated device.
         await web.post(
             "/v1/web/session",
@@ -174,8 +162,8 @@ async def test_voice_email_prepare_approve_send_and_announce(tmp_path):
             json={"approve": True},
         )
         assert decision.json()["status"] == "completed"
-        assert len(FakeSmtp.instances) == 1
-        assert FakeSmtp.instances[0].sent[0]["To"] == "ama@mensah.tg"
+        assert len(provider.sent) == 1
+        assert provider.sent[0]["to"] == "ama@mensah.tg"
         # 4. The next voice turn knows the result and can announce it orally.
         followup = await web.post(
             "/v1/voice-llm/chat/completions",
@@ -200,7 +188,8 @@ async def test_voice_rejection_never_sends(tmp_path):
             ),
         ]
     )
-    app = voice_app(tmp_path, brain)
+    provider = FakeEmailProvider()
+    app = voice_app(tmp_path, brain, email_provider=provider)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as web:
         await web.post(
@@ -218,4 +207,4 @@ async def test_voice_rejection_never_sends(tmp_path):
             json={"approve": False},
         )
     assert decision.json()["status"] == "rejected"
-    assert FakeSmtp.instances == []
+    assert provider.sent == []

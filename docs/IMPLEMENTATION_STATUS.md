@@ -202,6 +202,10 @@ Tests: backend **85 passing**, web **12 passing**, lint/build clean.
 - **`CURRENT_STATE_ASSESSMENT.md` reconciled:** a prominent banner marks it as the point-in-time Phase 0 baseline and points to `IMPLEMENTATION_STATUS.md` as the living record, listing the major facts that changed since the audit (unified governed brain, 14 skills, memory/approvals/audit, migration 8). The audit body is preserved as a historical record rather than rewritten.
 - Tests: backend **91 passing**; web **13 passing**; lint/build clean.
 
+## Completed — voice channel least-privilege (Phase 10, 2026-07-20)
+
+Acting on the security review's one defense-in-depth item: the voice channel now runs a **reduced tool shelf** (`build_tool_shelf(..., include_mailbox_read=False)`) via a dedicated `voice_agent` engine. `email_search`/`email_read` are withheld from the voice path, so the ElevenLabs-shared bearer secret can no longer cause live inbox contents to be returned in-band. Approval-gated `email_send` stays available on voice (the request creates a pending approval; the full-shelf engine executes it after HUD approval). Test proves the voice shelf omits the two mailbox-read tools while keeping `email_send`; the text shelf keeps all. Backend **92 passing**.
+
 ## In Progress
 
 Nothing mid-flight.

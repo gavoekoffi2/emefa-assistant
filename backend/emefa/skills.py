@@ -119,7 +119,16 @@ def build_tool_shelf(
     email_sender: SmtpEmailSender | None = None,
     prospects: ProspectRepository | None = None,
     imap_client: ImapEmailClient | None = None,
+    include_mailbox_read: bool = True,
 ) -> ToolShelf:
+    """Assemble the governed tool shelf.
+
+    ``include_mailbox_read=False`` omits the live-mailbox read tools
+    (email_search/email_read). The voice channel uses this because its
+    bearer secret is shared with the third-party ElevenLabs bridge, and
+    those tools would otherwise return inbox contents in-band on a channel
+    whose credential is not the owner's per-device token (least privilege).
+    """
     shelf = ToolShelf()
 
     def get_profiles(_arguments: Mapping[str, Any]) -> dict[str, Any]:
@@ -255,7 +264,7 @@ def build_tool_shelf(
         _add_memory_skills(shelf, memories)
     if email_sender is not None and email_sender.configured:
         _add_email_send_skill(shelf, email_sender)
-    if imap_client is not None and imap_client.configured:
+    if imap_client is not None and imap_client.configured and include_mailbox_read:
         _add_email_mailbox_skills(shelf, imap_client)
     return shelf
 

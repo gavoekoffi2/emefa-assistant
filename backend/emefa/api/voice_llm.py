@@ -137,7 +137,7 @@ async def voice_chat_completions(request: Request):
     if not message or not message.strip():
         raise HTTPException(status_code=400, detail="user_message_required")
 
-    reply = await request.app.state.agent.run(
+    reply = await request.app.state.voice_agent.run(
         message.strip()[:20_000], conversation_id=VOICE_CONVERSATION_ID
     )
     audit(

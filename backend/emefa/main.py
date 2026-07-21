@@ -209,6 +209,24 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
         build_tool_shelf(profiles, tasks, memories, email_sender, prospects, imap_client),
         memory=conversations,
     )
+    # The voice channel's bearer secret is shared with the third-party
+    # ElevenLabs bridge, so it runs a reduced shelf without live-mailbox
+    # reads (email_search/email_read). Approval-gated actions like
+    # email_send remain available and are executed by the full-shelf engine
+    # after the user approves in the HUD.
+    application.state.voice_agent = AgentEngine(
+        selected_brain,
+        build_tool_shelf(
+            profiles,
+            tasks,
+            memories,
+            email_sender,
+            prospects,
+            imap_client,
+            include_mailbox_read=False,
+        ),
+        memory=conversations,
+    )
     application.state.approvals = ApprovalRepository(active_settings.database_path)
     application.state.brain_configured = brain_configured
     application.state.realtime = realtime_gateway

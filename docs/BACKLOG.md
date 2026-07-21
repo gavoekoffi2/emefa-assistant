@@ -21,7 +21,8 @@ Done in Phase 2 (2026-07-20): identity migration + seeds, ProfileRepository + en
 
 ## Security hardening (defense-in-depth, from Phase 10 review 2026-07-20)
 
-- Voice channel least-privilege: the `EMEFA_VOICE_LLM_TOKEN` is shared with the third-party ElevenLabs bridge, yet the voice channel currently runs the full tool shelf (mailbox reads/local writes auto-run under the risk policy). Not a vulnerability in the single-user model (the token grants exactly the owner's own access), but as defense-in-depth consider a reduced voice tool shelf (omit `email_read`/`email_search`) or requiring approval for mailbox reads on the voice channel, and scoping/rotating the shared secret. Confirmed by security review: no exploitable auth bypass; SQL parameterized; IMAP query + email headers correctly defended.
+- ~~Voice channel least-privilege~~ — **done 2026-07-20**: the voice channel now runs a reduced tool shelf (`include_mailbox_read=False`) that omits `email_search`/`email_read`, so the ElevenLabs-shared bearer secret can no longer pull live inbox contents in-band. Approval-gated `email_send` remains available (executed by the full-shelf engine after HUD approval). Security review confirmed no exploitable auth bypass; SQL parameterized; IMAP query + email headers correctly defended.
+- Remaining (lower priority): scope/rotate the `EMEFA_VOICE_LLM_TOKEN` rather than a single long-lived shared secret.
 
 ## LATER
 

@@ -282,3 +282,23 @@ def test_imap_query_sanitization_blocks_control_chars():
     clean = ImapEmailClient._sanitize_query('devis\r\nA001 DELETE INBOX  "urgent"')
     assert "\r" not in clean and "\n" not in clean and '"' not in clean
     assert clean == "devis A001 DELETE INBOX urgent"
+
+
+def test_voice_shelf_omits_mailbox_read_but_keeps_send(tmp_path):
+    from emefa.infrastructure.email import ImapEmailClient
+    profiles = ProfileRepository(tmp_path / "voice_shelf.db")
+    imap = ImapEmailClient(host="imap.test", username="u", password="p")
+    sender = SmtpEmailSender(host="smtp.test", port=587, sender="a@b.tld")
+
+    full = build_tool_shelf(profiles, email_sender=sender, imap_client=imap)
+    assert full.get("email_search") is not None
+    assert full.get("email_read") is not None
+
+    voice = build_tool_shelf(
+        profiles, email_sender=sender, imap_client=imap, include_mailbox_read=False
+    )
+    # Live-mailbox reads are withheld from the voice channel...
+    assert voice.get("email_search") is None
+    assert voice.get("email_read") is None
+    # ...but approval-gated sending remains available.
+    assert voice.get("email_send") is not None

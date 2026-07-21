@@ -19,6 +19,10 @@ Done in Phase 2 (2026-07-20): identity migration + seeds, ProfileRepository + en
 - Version the ElevenLabs agent persona/config in-repo; evaluate custom-LLM/webhook mode so voice reasoning runs through the EMEFA runtime (ADR)
 - Voice baseline benchmark (latency, interruption, cost per active minute) before any migration work
 
+## Security hardening (defense-in-depth, from Phase 10 review 2026-07-20)
+
+- Voice channel least-privilege: the `EMEFA_VOICE_LLM_TOKEN` is shared with the third-party ElevenLabs bridge, yet the voice channel currently runs the full tool shelf (mailbox reads/local writes auto-run under the risk policy). Not a vulnerability in the single-user model (the token grants exactly the owner's own access), but as defense-in-depth consider a reduced voice tool shelf (omit `email_read`/`email_search`) or requiring approval for mailbox reads on the voice channel, and scoping/rotating the shared secret. Confirmed by security review: no exploitable auth bypass; SQL parameterized; IMAP query + email headers correctly defended.
+
 ## LATER
 
 - Tasks UI panel (list/complete from the HUD) + daily brief slice combining tasks and commitments (done backend-side 2026-07-20: migration 5, TaskRepository, create/list/complete skills, GET /v1/tasks)

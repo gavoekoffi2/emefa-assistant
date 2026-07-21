@@ -1,5 +1,22 @@
 # EMEFA — CURRENT_STATE_ASSESSMENT.md
 
+> ⚠️ **POINT-IN-TIME BASELINE (Phase 0, commit `6fa6f62`).** This is the
+> historical audit record and is deliberately **not** rewritten as work
+> proceeds. Much of what it describes as missing has since been built. For
+> the **living state of the system, read `docs/IMPLEMENTATION_STATUS.md`**,
+> which is updated with every slice. Key facts that have changed since this
+> audit (as of 2026-07-20):
+> - The "two disconnected brains" gap is **closed**: both the text path
+>   (`/v1/agent/runs`) and the voice path (`/v1/voice-llm`, ElevenLabs
+>   Custom LLM) now run through the same governed `AgentEngine`.
+> - The `ToolShelf` holds **14 governed skills** (profiles, tasks, memory,
+>   pipeline, daily brief, and the full e-mail suite send/search/read/draft).
+> - **Memory**, **approval loop**, **audit events**, **conversation
+>   persistence**, **proactive scheduling**, and an **OpenRouter** brain
+>   option now exist. Database is at **migration 8**.
+> - Activation rate-limiting, session expiry, structured logging + request
+>   IDs, and CI were delivered in Phase 1.
+>
 > **Document type:** Completed brownfield repository audit (fills the mandatory template shipped with the spec pack)
 > **Repository:** `gavoekoffi2/emefa-assistant` · **Commit audited:** `6fa6f62` · **Date:** 2026-07-20 · **Executor:** Claude
 > **Detail documents:** `docs/audit/REPOSITORY_AUDIT.md` (findings & debt register), `docs/audit/CURRENT_ARCHITECTURE.md` (verified diagrams & flows), `docs/audit/GAP_ANALYSIS.md` (capability deltas & decisions).

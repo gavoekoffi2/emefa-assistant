@@ -275,3 +275,10 @@ def test_mailbox_skills_absent_without_imap(tmp_path):
     assert shelf.get("email_search") is None
     assert shelf.get("email_read") is None
     assert shelf.get("email_create_draft") is None
+
+
+def test_imap_query_sanitization_blocks_control_chars():
+    from emefa.infrastructure.email import ImapEmailClient
+    clean = ImapEmailClient._sanitize_query('devis\r\nA001 DELETE INBOX  "urgent"')
+    assert "\r" not in clean and "\n" not in clean and '"' not in clean
+    assert clean == "devis A001 DELETE INBOX urgent"

@@ -196,6 +196,12 @@ Tests: backend **85 passing**, web **12 passing**, lint/build clean.
 - **`GET /v1/briefings/today`** + HUD **"Votre brief du jour est prêt"** dismissible strip that displays the brief in the answer panel.
 - Tests: backend **90 passing** (schedule math, repository upsert/emailed, French rendering, job idempotence incl. *e-mailed exactly once* and *never without the standing approval*, endpoint auth/404/content); web **13 passing**; lint/build clean.
 
+## Completed — hardening & doc reconciliation (Phase 10 start, 2026-07-20)
+
+- **IMAP query injection fixed:** the `email_search` query (produced by the model — untrusted output) is now sanitised — quotes and all control characters, CR/LF included, are neutralised before building the `SEARCH TEXT "…"` command, so it cannot inject IMAP protocol commands. Regression test added.
+- **`CURRENT_STATE_ASSESSMENT.md` reconciled:** a prominent banner marks it as the point-in-time Phase 0 baseline and points to `IMPLEMENTATION_STATUS.md` as the living record, listing the major facts that changed since the audit (unified governed brain, 14 skills, memory/approvals/audit, migration 8). The audit body is preserved as a historical record rather than rewritten.
+- Tests: backend **91 passing**; web **13 passing**; lint/build clean.
+
 ## In Progress
 
 Nothing mid-flight.

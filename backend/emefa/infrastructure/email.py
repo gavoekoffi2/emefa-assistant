@@ -107,11 +107,18 @@ class ImapEmailClient:
         client.login(self.username or "", self.password or "")
         return client
 
+    @staticmethod
+    def _sanitize_query(query: str) -> str:
+        # Strip quotes and any control characters (CR/LF included) so a
+        # model- or user-supplied query cannot inject IMAP protocol commands.
+        neutralised = "".join(ch if ch >= " " and ch != '"' else " " for ch in query)
+        return " ".join(neutralised.split())[:200]
+
     def _search_sync(self, query: str, limit: int) -> list[dict[str, Any]]:
         client = self._connect()
         try:
             client.select("INBOX", readonly=True)
-            cleaned = query.replace('"', " ").strip()
+            cleaned = self._sanitize_query(query)
             if cleaned:
                 _, data = client.uid("search", None, "TEXT", f'"{cleaned}"')
             else:

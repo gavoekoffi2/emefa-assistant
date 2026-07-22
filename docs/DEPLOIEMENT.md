@@ -135,6 +135,56 @@ Tarifs officiels DeepSeek consultés lors du déploiement :
 
 La facturation dépend uniquement des tokens consommés. Source : https://api-docs.deepseek.com/quick_start/pricing
 
+## Validation de staging (smoke-test)
+
+Après chaque déploiement, exécuter le smoke-test automatisé contre l'instance
+cible. Il ne dépend d'aucune installation (Python 3 standard uniquement),
+n'envoie jamais de vrai e-mail et n'exécute aucune action destructive.
+
+```bash
+python3 scripts/staging_smoke_test.py \
+  --base-url https://emefa.76.13.129.252.sslip.io \
+  --enrollment-code "<code privé d'activation>"
+```
+
+Le code peut aussi provenir de `EMEFA_ENROLLMENT_CODE` ou d'une saisie masquée
+en terminal interactif ; il n'est jamais affiché. Ajouter `--no-writes` pour un
+passage strictement en lecture seule.
+
+Le script affiche `PASS` / `FAIL` / `SKIP` par étape et **renvoie un code de
+sortie ≠ 0 si une étape critique échoue**. Ce qu'il couvre automatiquement :
+
+1. démarrage et `/health` ;
+2. activation d'une session privée puis état système (`brain_configured`,
+   `voice_configured`, compétences, `schema_version`) ;
+3. lecture du profil assistante et du profil métier ;
+4. mémoire : lecture, export, et cycle create/read/forget sur une donnée témoin
+   (`ZZ-SMOKE…`) — **uniquement si le cerveau LLM est configuré**, sinon `SKIP` ;
+5. joignabilité de l'endpoint de brief du jour ;
+6. mécanisme d'approbation : liste, puis round-trip testé **par le REFUS** d'un
+   envoi d'e-mail (jamais d'approbation, donc aucun envoi réel) — `SKIP` sans
+   cerveau/boîte mail ;
+7. pipeline commercial : lecture, ajout d'un prospect témoin puis nettoyage —
+   `SKIP` sans cerveau.
+
+Les données de test utilisent le préfixe identifiable `ZZ-SMOKE` et sont
+nettoyées automatiquement quand c'est possible ; la session de test est
+révoquée en fin de course pour libérer sa place navigateur.
+
+### Reste OBLIGATOIREMENT manuel avant de valider le staging
+
+Le smoke-test ne peut pas se substituer à ces vérifications, qui restent à faire
+à la main :
+
+- **Document Word (DOCX)** : ouvrir et inspecter un document généré (structure,
+  mise en forme, rendu visuel).
+- **E-mail réel (Himalaya)** : envoi approuvé + réception effective sur une vraie
+  boîte (le smoke-test s'arrête volontairement au refus d'envoi).
+- **Chaîne vocale complète** : micro → ElevenLabs → Custom LLM → EMEFA, avec
+  réponse parlée cohérente et contexte métier.
+- **Interruption (barge-in) et latence** : couper EMEFA pendant sa réponse
+  vocale, et mesurer le temps jusqu'au premier son et la latence bout-en-bout.
+
 ## Exploitation
 
 ```bash

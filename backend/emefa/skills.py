@@ -18,6 +18,7 @@ from emefa.domain.memories import CATEGORIES, MemoryRepository
 from emefa.domain.policy import ActionRisk
 from emefa.domain.profiles import ASSISTANT_FIELDS, BUSINESS_FIELDS, ProfileRepository
 from emefa.domain.prospects import STAGES, ProspectRepository
+from emefa.domain.uploaded_files import UploadedFileNotFoundError, UploadedFileStore
 from emefa.domain.tasks import TaskRepository
 from emefa.observability import audit
 
@@ -119,6 +120,7 @@ def build_tool_shelf(
     email_provider: EmailProvider | None = None,
     documents: DocumentStore | None = None,
     prospects: ProspectRepository | None = None,
+    uploaded_files: UploadedFileStore | None = None,
     include_mailbox_read: bool = True,
 ) -> ToolShelf:
     """Assemble the governed tool shelf.
@@ -264,6 +266,8 @@ def build_tool_shelf(
         _add_email_skills(shelf, email_provider, include_mailbox_read)
     if documents is not None:
         _add_document_skills(shelf, documents)
+    if uploaded_files is not None:
+        _add_uploaded_file_skills(shelf, uploaded_files)
     if prospects is not None:
         _add_prospect_skills(shelf, prospects)
     return shelf
@@ -430,6 +434,57 @@ def _add_document_skills(shelf: ToolShelf, documents: DocumentStore) -> None:
             "additionalProperties": False,
         },
         handler=edit,
+    ))
+
+
+def _add_uploaded_file_skills(shelf: ToolShelf, uploaded_files: UploadedFileStore) -> None:
+    def list_files(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        limit = max(1, min(int(arguments.get("limit", 20)), 50))
+        entries = uploaded_files.list(limit=limit)
+        return {"count": len(entries), "files": [asdict(entry) for entry in entries]}
+
+    def read_file(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        file_id = str(arguments.get("file_id", "")).strip()
+        limit = max(1, min(int(arguments.get("limit", 20_000)), 120_000))
+        try:
+            return dict(uploaded_files.read_text(file_id, limit=limit))
+        except UploadedFileNotFoundError:
+            return {"error": "file_not_found"}
+
+    shelf.add(AgentTool(
+        name="file_list",
+        description=(
+            "Liste les fichiers que l'utilisateur a envoyés à EMEFA : PDF, Word, images, "
+            "textes ou autres pièces jointes. Utilise cet outil quand l'utilisateur parle "
+            "du fichier envoyé, de la pièce jointe, du PDF, de l'image ou du document sans "
+            "donner d'identifiant précis."
+        ),
+        risk=ActionRisk.PERSONAL_READ,
+        parameters={
+            "type": "object",
+            "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 50}},
+            "additionalProperties": False,
+        },
+        handler=list_files,
+    ))
+    shelf.add(AgentTool(
+        name="file_read",
+        description=(
+            "Lit le texte extrait d'un fichier envoyé à EMEFA à partir de son file_id. "
+            "Fonctionne pour PDF textuels, DOCX, TXT, CSV, JSON et Markdown. Pour les images "
+            "ou fichiers sans texte extrait, renvoie le statut afin de répondre honnêtement."
+        ),
+        risk=ActionRisk.PERSONAL_READ,
+        parameters={
+            "type": "object",
+            "properties": {
+                "file_id": {"type": "string", "description": "Identifiant UUID du fichier envoyé"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 120000},
+            },
+            "required": ["file_id"],
+            "additionalProperties": False,
+        },
+        handler=read_file,
     ))
 
 

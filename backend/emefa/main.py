@@ -16,6 +16,7 @@ from emefa.api.documents import router as documents_router
 from emefa.api.profile import router as profile_router
 from emefa.api.prospects import router as prospects_router
 from emefa.api.realtime import router as realtime_router
+from emefa.api.files import router as files_router
 from emefa.api.memories import router as memories_router
 from emefa.api.system import router as system_router
 from emefa.api.tasks import router as tasks_router
@@ -32,6 +33,7 @@ from emefa.domain.profiles import ProfileRepository
 from emefa.domain.email import EmailProvider
 from emefa.domain.memories import MemoryRepository
 from emefa.domain.prospects import ProspectRepository
+from emefa.domain.uploaded_files import UploadedFileStore
 from emefa.domain.ratelimit import FailureLimiter
 from emefa.domain.tasks import TaskRepository
 from emefa.infrastructure.deepseek import DeepSeekBrain
@@ -66,6 +68,7 @@ def create_app(
     tasks = TaskRepository(active_settings.database_path)
     memories = MemoryRepository(active_settings.database_path)
     prospects = ProspectRepository(active_settings.database_path)
+    uploaded_files = UploadedFileStore(active_settings.database_path)
     briefings = BriefingRepository(active_settings.database_path)
     conversations = ConversationStore(active_settings.database_path)
     active_email_provider = email_provider
@@ -92,6 +95,17 @@ def create_app(
         memory_block = memories.context_block()
         if memory_block:
             parts.append(memory_block)
+        files = uploaded_files.list(limit=8)
+        if files:
+            lines = [
+                "Fichiers envoyés par l'utilisateur et disponibles via les outils file_list/file_read :"
+            ]
+            for item in files:
+                preview = f" — aperçu: {item.text_preview[:180]}" if item.text_preview else ""
+                lines.append(
+                    f"- {item.filename} ({item.file_id}, {item.content_type}, {item.extraction_status}){preview}"
+                )
+            parts.append("\n".join(lines))
         # Anti-fake-completion guard (§25): never claim an action the tools
         # did not execute; be honest about capabilities that do not exist.
         parts.append(
@@ -203,6 +217,7 @@ def create_app(
     application.state.briefings = briefings
     application.state.conversations = conversations
     application.state.documents = DocumentStore(active_settings.database_path)
+    application.state.uploaded_files = uploaded_files
     application.state.website_importer = WebsiteProfileImporter()
     application.state.compose_context = compose_context
     application.state.compose_text_context = compose_text_context
@@ -215,6 +230,7 @@ def create_app(
             active_email_provider,
             application.state.documents,
             prospects,
+            uploaded_files=uploaded_files,
         ),
         memory=conversations,
     )
@@ -232,6 +248,7 @@ def create_app(
             active_email_provider,
             application.state.documents,
             prospects,
+            uploaded_files=uploaded_files,
             include_mailbox_read=False,
         ),
         memory=conversations,
@@ -295,6 +312,7 @@ def create_app(
 
     application.include_router(devices_router)
     application.include_router(documents_router)
+    application.include_router(files_router)
     application.include_router(web_session_router)
     application.include_router(agent_router)
     application.include_router(profile_router)

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useConversation } from '@elevenlabs/react'
 import { api, BrandMark, graphNodes, palette, statusCopy, VoiceOrb } from './App'
 import { isBusinessEmpty, ProfilePanel } from './ProfilePanel'
@@ -24,6 +24,15 @@ type AgentRun = {
   action_id?: string | null
 }
 type PendingApproval = { action_id: string; name: string; arguments: Record<string, unknown> }
+type UploadedFileRecord = {
+  file_id: string
+  filename: string
+  content_type: string
+  size_bytes: number
+  extraction_status: string
+  text_preview: string
+  download_url: string
+}
 type DemoScenario = { id: string; title: string; prompt: string; status: 'live' | 'assisted' | 'preview'; note: string }
 
 const scenarioStatusLabel: Record<DemoScenario['status'], string> = {
@@ -83,6 +92,9 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   const [morningBrief, setMorningBrief] = useState<string | null>(null)
   const [scenarios, setScenarios] = useState<DemoScenario[]>([])
   const [scenariosOpen, setScenariosOpen] = useState(false)
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedFileRecord[]>([])
+  const [uploading, setUploading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     api<{ text: string }>('/v1/briefings/today')
@@ -90,6 +102,9 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       .catch(() => undefined)
     api<DemoScenario[]>('/v1/demo/scenarios')
       .then(setScenarios)
+      .catch(() => undefined)
+    api<UploadedFileRecord[]>('/v1/files')
+      .then(setUploadedFiles)
       .catch(() => undefined)
   }, [])
 
@@ -313,6 +328,44 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
     void sendMessage(value)
   }
 
+  const uploadFiles = async (files: FileList | null) => {
+    const selected = Array.from(files ?? [])
+    if (selected.length === 0 || uploading) return
+    setUploading(true); setNotice('')
+    try {
+      const uploaded: UploadedFileRecord[] = []
+      for (const file of selected) {
+        const form = new FormData()
+        form.append('file', file)
+        const response = await fetch('/v1/files', { method: 'POST', body: form, credentials: 'include' })
+        if (!response.ok) {
+          const body = await response.json().catch(() => null) as { detail?: string } | null
+          throw new Error(body?.detail || `Upload refusé (${response.status}).`)
+        }
+        uploaded.push(await response.json() as UploadedFileRecord)
+      }
+      setUploadedFiles((current) => [...uploaded, ...current])
+      const names = uploaded.map((file) => file.filename).join(', ')
+      const text = uploaded.length === 1
+        ? `Fichier reçu : ${names}. Vous pouvez maintenant me demander de travailler dessus.`
+        : `Fichiers reçus : ${names}. Vous pouvez maintenant me demander de travailler dessus.`
+      setAnswer(text)
+      setHistory((current) => [...current.slice(-7), { id: crypto.randomUUID(), role: 'assistant', text }])
+      settleState('success')
+      if (conversation.status === 'connected') {
+        conversation.sendContextualUpdate(
+          `L'utilisateur vient d'envoyer ces fichiers à EMEFA : ${uploaded.map((file) => `${file.filename} (${file.file_id}, ${file.extraction_status})`).join('; ')}. Quand il demande de travailler dessus, utilise file_list puis file_read si du texte est disponible.`,
+        )
+      }
+    } catch (cause) {
+      setState('error')
+      setNotice(cause instanceof Error ? cause.message : "Le fichier n'a pas pu être envoyé.")
+    } finally {
+      setUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
   const askBrief = () => void sendMessage('Qu’est-ce qui mérite mon attention aujourd’hui ?')
 
   const runScenario = (scenario: DemoScenario) => {
@@ -372,7 +425,16 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
           ))}
         </div>
       )}
-      <section className="command-dock"><button className={`dock-scenarios${scenariosOpen ? ' active' : ''}`} onClick={() => setScenariosOpen((open) => !open)} disabled={scenarios.length === 0} aria-label="Parcours guidés" title="Parcours guidés">✦</button><span className="dock-prompt">›</span><input value={typed} onChange={(event) => { setTyped(event.target.value); if (live) conversation.sendUserActivity() }} onKeyDown={(event) => { if (event.key === 'Enter') void submitTyped() }} placeholder="Écrire à EMEFA — avec ou sans la voix…" aria-label="Écrire une demande" /><button onClick={() => void submitTyped()} disabled={!typed.trim()}>TRANSMETTRE</button></section>
+      {uploadedFiles.length > 0 && (
+        <div className="file-strip" role="status" aria-label="Fichiers envoyés à EMEFA">
+          <span>FICHIERS</span>
+          {uploadedFiles.slice(0, 3).map((file) => (
+            <a key={file.file_id} href={file.download_url} title={file.extraction_status}>{file.filename}</a>
+          ))}
+          <small>{uploadedFiles.length} disponible{uploadedFiles.length > 1 ? 's' : ''}</small>
+        </div>
+      )}
+      <section className="command-dock"><button className={`dock-scenarios${scenariosOpen ? ' active' : ''}`} onClick={() => setScenariosOpen((open) => !open)} disabled={scenarios.length === 0} aria-label="Parcours guidés" title="Parcours guidés">✦</button><input ref={fileInputRef} className="sr-only" type="file" multiple onChange={(event) => void uploadFiles(event.currentTarget.files)} aria-label="Envoyer des fichiers à EMEFA" /><button className="dock-upload" onClick={() => fileInputRef.current?.click()} disabled={uploading} aria-label="Envoyer des fichiers à EMEFA" title="Envoyer PDF, Word, images ou autres fichiers">{uploading ? '…' : '📎'}</button><span className="dock-prompt">›</span><input value={typed} onChange={(event) => { setTyped(event.target.value); if (live) conversation.sendUserActivity() }} onKeyDown={(event) => { if (event.key === 'Enter') void submitTyped() }} placeholder="Écrire à EMEFA — avec ou sans la voix…" aria-label="Écrire une demande" /><button onClick={() => void submitTyped()} disabled={!typed.trim()}>TRANSMETTRE</button></section>
       <div className="model-pill"><span>PROTOCOLE</span><strong>VOICE·LIVE</strong><i>●</i></div>
       {notice && <div className="voice-notice" role="alert">{notice}</div>}
       {morningBrief && (

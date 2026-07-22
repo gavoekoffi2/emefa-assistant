@@ -147,6 +147,96 @@ Beyond the 74 backend / 10 web automated tests, the actual product was booted (u
 
 The only step never exercised against the real OpenRouter service is the network call itself — to be confirmed at first production start (see Blocked list).
 
+## Completed — voice↔text conversation convergence (2026-07-20)
+
+- **Voice exchanges are now persisted** by the Custom-LLM bridge into the shared `ConversationStore` under `voice:default` (single-user channel; the bridge has no device binding — revisit at multi-tenant time). Non-streaming answers are captured directly; streamed answers are **reassembled from SSE deltas** in a passthrough relay that never delays the audio path.
+- **Cross-channel context:** the text brain's context now appends a bounded recap (last 6 turns, 200 chars each) of recent voice exchanges — a conversation started by voice can continue in writing. The recap is deliberately absent from the voice bridge's own context (the provider already receives the full voice history in each request), avoiding duplication.
+- **"Effacer la conversation" wipes both channels** (device text history + voice channel).
+- The app now uses a single shared `ConversationStore` instance (engine + bridge + context composition).
+- Tests: backend **77 passing** (persistence + text-context recap + no-duplication guarantee, SSE reassembly incl. UTF-8 split, both-channel wipe); web unchanged (10 passing).
+
+With this, the Phase 3 "text and voice share context" exit criterion is implemented in both directions (voice gets profile+memory; text gets voice recap). Live validation still requires the owner's ElevenLabs dashboard switch.
+
+## Completed — first external capability: governed SMTP e-mail (2026-07-20)
+
+- **`SmtpEmailSender`** (`infrastructure/email.py`): stdlib `smtplib` via `asyncio.to_thread` (no new dependency), STARTTLS + login, provider-neutral (Gmail app password, Outlook, any host). Settings `EMEFA_SMTP_HOST/PORT/USERNAME/PASSWORD/FROM/STARTTLS`; credentials server-side only.
+- **`send_email` skill** (COMMUNICATE → **ASK**): every send goes through the approval card; recipient validated, subject/body capped, single recipient per send; server refusals surfaced as errors, not fake success; audit logs recipient **domain only**.
+- **Honest capability listing:** the skill is registered only when SMTP is configured, so `/v1/system/status` and the HUD never advertise an e-mail ability that doesn't exist.
+- This satisfies the **Phase 5 exit-gate pattern**: a real external capability through Skill Registry → permission check → adapter → verification (SMTP acceptance) → audit, with no bypass. It is also the first slice of the **Phase 6 e-mail MVP** (send path; inbox/reply flows still open).
+- Tests: backend **82 passing** (adapter STARTTLS/login/message assembly via faked `smtplib.SMTP`, conditional registration + policy = ASK, input validation, approval E2E proving *nothing is sent before approval* and *rejection never sends*).
+
+## Completed — Phase 7 seed: local sales pipeline (2026-07-20)
+
+- **Migration 7:** `prospects` table (tenant/user-scoped; stages `nouveau → contacté → qualifié → proposition → gagné/perdu`; dated next action).
+- **`ProspectRepository`:** add/update with field allowlist and ISO-date validation, open-pipeline listing ordered by follow-up date, `due_follow_ups()` (open stages only).
+- **Three governed skills:** `add_prospect`, `list_pipeline` (PERSONAL_READ), `update_prospect` (stage enum enforced). "Ajoute Ama Mensah de Mensah Logistics, relance jeudi" persists a tracked prospect.
+- **Brief integration:** `get_daily_brief` now includes `due_follow_ups` — the flagship question surfaces overdue sales follow-ups, which pair naturally with the approval-gated `send_email` for relances.
+- **`GET /v1/prospects`** for the future pipeline UI.
+- Deliberately excluded (needs vetted providers + anti-spam guardrails): prospect discovery, enrichment, automated outreach. Tracking only — no uncontrolled prospecting (CLAUDE.md §29).
+- Tests: backend **86 passing** (repository incl. won-prospect exits pipeline, skills incl. stage validation, brief integration, conversation→API end-to-end).
+
+## Completed — reconciled e-mail suite + voice actions (2026-07-20)
+
+**Audit first:** the requested `email_search/read/create_draft/send` skills and the "graphistegpt" account did **not** exist anywhere in the repo (all branches searched); `main` had simply been fast-forwarded to commit 84e552a. Rather than a second integration, the existing SMTP skill was **reconciled**: `send_email` → **`email_send`** (same COMMUNICATE→approval path), plus a new stdlib-`imaplib` client providing **`email_search`**, **`email_read`** (both PERSONAL_READ, results framed as external data — never instructions), and **`email_create_draft`** (LOCAL_WRITE, saved to the mailbox Drafts folder, no send). Settings `EMEFA_IMAP_*` with fallback to the SMTP credentials (single graphistegpt account). Skills register only when configured.
+
+**Voice bridge now routes through the governed engine:** each Custom-LLM turn runs `AgentEngine.run()` on the shared voice conversation — voice has the same skills, policy, approvals, and history as text. `confirmation_required` becomes a **pending approval + oral announcement** ("l'envoi attend votre approbation, la carte vient d'apparaître"); the reply is served as synthesized OpenAI SSE. Voice-channel approvals are listed/decidable from any authenticated device (single-user mode, documented), and the HUD polls approvals every 4 s during a live session so the card surfaces mid-conversation. The now-redundant streaming proxy (`infrastructure/voice_llm.py`) was removed.
+
+**Pipeline panel (Phase 7)** in the HUD: prospects grouped by stage, due follow-ups highlighted with a RELANCE badge and a call-to-action pairing with `email_send`.
+
+**Verified end-to-end on the real server** (uvicorn + built frontend + local OpenAI-compatible mock + a **real local SMTP server** on loopback): spoken request → SSE announcement with recipient/subject → pending approval visible in `/v1/agent/approvals` → approval → **message actually delivered over SMTP** (`From: graphistegpt@gmail.com`, `To: ama@exemple.com`, `Subject: Test EMEFA` observed on the wire) → next voice turn answers "l'e-mail est parti". **Honest limit:** the audio/microphone leg (ElevenLabs ↔ browser) cannot run from this sandbox — validate at the deployment after switching the agent to the Custom LLM URL.
+
+Tests: backend **85 passing**, web **12 passing**, lint/build clean.
+
+## Completed — Phase 8 seed: proactive morning brief (2026-07-20)
+
+- **Migration 8:** `briefings` table (one per date, upsert, `emailed` flag).
+- **`compose_daily_brief` / `format_brief_text`** extracted from the skill so the scheduler and the API share the same deterministic composition (tasks by bucket, due sales follow-ups, goals) and French plain-text rendering.
+- **Bounded scheduler** (`emefa/scheduler.py`): sleeps until `EMEFA_BRIEF_HOUR` (off by default — no proactive work without explicit configuration), runs one idempotent job per day (per-iteration error handling, ≥60 s guard, clean cancellation in the app lifespan). Per §34: explicit stop conditions, no unbounded autonomy.
+- **Standing scoped approval (§24 level 5):** `EMEFA_BRIEF_EMAIL_TO` authorizes exactly one e-mail per day (the brief) — sent at most once (flag-guarded), revocable by removing the variable. Without it, the brief is stored but never sent.
+- **`GET /v1/briefings/today`** + HUD **"Votre brief du jour est prêt"** dismissible strip that displays the brief in the answer panel.
+- Tests: backend **90 passing** (schedule math, repository upsert/emailed, French rendering, job idempotence incl. *e-mailed exactly once* and *never without the standing approval*, endpoint auth/404/content); web **13 passing**; lint/build clean.
+
+## Completed — hardening & doc reconciliation (Phase 10 start, 2026-07-20)
+
+- **IMAP query injection fixed:** the `email_search` query (produced by the model — untrusted output) is now sanitised — quotes and all control characters, CR/LF included, are neutralised before building the `SEARCH TEXT "…"` command, so it cannot inject IMAP protocol commands. Regression test added.
+- **`CURRENT_STATE_ASSESSMENT.md` reconciled:** a prominent banner marks it as the point-in-time Phase 0 baseline and points to `IMPLEMENTATION_STATUS.md` as the living record, listing the major facts that changed since the audit (unified governed brain, 14 skills, memory/approvals/audit, migration 8). The audit body is preserved as a historical record rather than rewritten.
+- Tests: backend **91 passing**; web **13 passing**; lint/build clean.
+
+## Completed — voice channel least-privilege (Phase 10, 2026-07-20)
+
+Acting on the security review's one defense-in-depth item: the voice channel now runs a **reduced tool shelf** (`build_tool_shelf(..., include_mailbox_read=False)`) via a dedicated `voice_agent` engine. `email_search`/`email_read` are withheld from the voice path, so the ElevenLabs-shared bearer secret can no longer cause live inbox contents to be returned in-band. Approval-gated `email_send` stays available on voice (the request creates a pending approval; the full-shelf engine executes it after HUD approval). Test proves the voice shelf omits the two mailbox-read tools while keeping `email_send`; the text shelf keeps all. Backend **92 passing**.
+
+## Completed — Phase 9: integrated demo experience (2026-07-20)
+
+Turns the Phases 0–8 capabilities into one coherent, honest, demonstrable flow — no new large feature, no rewrite of stable components.
+
+- **Truthful visual states:** added `awaiting` (amber, "EN ATTENTE DE VOTRE APPROBATION") and `success` (green, "TERMINÉ") to the state machine, wired to the *real* backend reply — `confirmation_required` → awaiting, `completed` → success (relaxes to listening/idle), `blocked`/`failed` → error. The holographic HUD colour reflects each. Now covers listening / understanding-working (thinking) / awaiting approval / success / error.
+- **Guided scenarios launcher** (`GET /v1/demo/scenarios` + HUD tray): the 5 requested prompts, each sent through the **real** governed engine (voice session if live, `/v1/agent/runs` otherwise), with an honest availability badge derived from actual system state: **RÉEL** (executive brief), **ASSISTÉ** (meeting prep, encadred autonomy), **APERÇU** (document creation, prospect discovery — capabilities that do not exist yet).
+- **Anti-fake-completion guard (§25):** `compose_context()` now instructs the brain to never claim an action its tools did not execute, to be explicit that prospect discovery and document generation are unavailable, and to not expose internal reasoning. Applies to text and voice.
+- **Result surfaces reused, not rebuilt:** brief → answer panel + strip; tasks/pipeline/memory → existing panels; consequential actions → existing approval card. Continuity voice↔text preserved (shared conversation + context).
+- **Verified end-to-end on the real server** (uvicorn + built frontend + local OpenAI-compatible mock): scenario 1 drives `get_daily_brief` for real (2 turns, real brief); scenarios 3 & 4 return honest "not available yet" answers with **zero fabricated prospects in the DB** — no simulation presented as real execution. Conversation continuity confirmed (history persists across turns; cleared cleanly between isolated checks).
+- Tests: backend **95 passing** (scenario catalog honesty, anti-fake guard in context, executive-brief end-to-end); web **15 passing** (scenario tray + badges, awaiting/success states); lint/build clean.
+
+### Phase 9 — honest scenario status
+| Scénario | Statut | Réalité |
+|---|---|---|
+| 1. Briefing exécutif | **RÉEL** | `get_daily_brief` compose tâches + relances + objectifs |
+| 2. Préparation de réunion | ASSISTÉ | assemble profil/pipeline/tâches (pas d'agenda dédié) |
+| 3. Création de document | APERÇU | non implémenté — proposé en texte/brouillon, jamais simulé |
+| 4. Découverte de 10 prospects | APERÇU | non implémenté (anti-spam) — suivi manuel réel du pipeline |
+| 5. Autonomie hebdo + approbation | ASSISTÉ | brief récurrent réel + envoi toujours sous approbation |
+
+## Completed — branch reconciliation with main before consolidated PR (2026-07-20)
+
+`origin/main` had diverged from this branch since `84e552a` with three commits by another author (graphistegpt Himalaya mailbox, governed Word documents, voice onboarding + website import). This branch's own work (pipeline, proactive brief, governed-voice rewrite, Phase 9 demo, security) was built in parallel. Merged main into the branch and resolved the six conflicts **preserving both bodies of work**:
+
+- **E-mail deduplicated:** dropped this branch's SMTP/IMAP implementation (`SmtpEmailSender`/`ImapEmailClient`, `test_email.py`) in favour of main's `EmailProvider` + `HimalayaEmailProvider`. The pipeline, scheduler, and voice bridge now use main's provider. Removed dead `EMEFA_SMTP_*`/`EMEFA_IMAP_*` settings.
+- **Documents preserved:** kept main's governed Word `document_create`/`document_edit`. Corrected the Phase 9 catalog — the document scenario is now **RÉEL/LIVE**, and the anti-fake-completion guard now lists document generation as available (only prospect discovery remains PREVIEW).
+- **Migrations renumbered:** main's website columns stay migration 7; pipeline → 8, briefings → 9; `schema_version` = 9.
+- **Governed voice kept:** this branch's `AgentEngine`-routed voice bridge (with the reduced, least-privilege voice shelf) replaced main's thin proxy; `include_mailbox_read=False` re-applied on top of main's `_add_email_skills` so the ElevenLabs-shared secret still cannot read the inbox in-band.
+- **Brief unified:** main's `get_daily_brief` now delegates to the shared `compose_daily_brief` (adds due sales follow-ups); scheduler e-mails via `EmailProvider.send`.
+- Tests re-reconciled: backend **95 passing**, web **17 passing** (main's website + this branch's scenario/state tests), lint and build clean. `python-docx` is a real dependency now (main's pyproject).
+
 ## In Progress
 
 Nothing mid-flight.

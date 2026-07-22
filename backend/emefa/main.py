@@ -1,16 +1,20 @@
 """Application factory for the greenfield EMEFA backend."""
 
+import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 
 from emefa import __version__
 from emefa.api.agent import router as agent_router
+from emefa.api.briefings import router as briefings_router
+from emefa.api.demo import router as demo_router
 from emefa.api.devices import router as devices_router
 from emefa.api.documents import router as documents_router
 from emefa.api.profile import router as profile_router
+from emefa.api.prospects import router as prospects_router
 from emefa.api.realtime import router as realtime_router
 from emefa.api.memories import router as memories_router
 from emefa.api.system import router as system_router
@@ -20,18 +24,19 @@ from emefa.api.web_session import router as web_session_router
 from emefa.config import Settings
 from emefa.domain.agent import AgentEngine, AgentStep, Brain
 from emefa.domain.approvals import ApprovalRepository
-from emefa.domain.conversations import ConversationStore
+from emefa.domain.briefings import BriefingRepository
+from emefa.domain.conversations import VOICE_CONVERSATION_ID, ConversationStore
 from emefa.domain.devices import DeviceRepository
 from emefa.domain.documents import DocumentStore
 from emefa.domain.profiles import ProfileRepository
 from emefa.domain.email import EmailProvider
 from emefa.domain.memories import MemoryRepository
+from emefa.domain.prospects import ProspectRepository
 from emefa.domain.ratelimit import FailureLimiter
 from emefa.domain.tasks import TaskRepository
 from emefa.infrastructure.deepseek import DeepSeekBrain
 from emefa.infrastructure.email import HimalayaEmailProvider
 from emefa.infrastructure.realtime import RealtimeGateway
-from emefa.infrastructure.voice_llm import VoiceLLMProxy
 from emefa.infrastructure.website_profile import WebsiteProfileImporter
 from emefa.observability import (
     configure_logging,
@@ -39,6 +44,7 @@ from emefa.observability import (
     new_request_id,
     request_id_var,
 )
+from emefa.scheduler import brief_scheduler_loop
 from emefa.skills import build_tool_shelf
 
 request_logger = logging.getLogger("emefa.request")
@@ -59,6 +65,9 @@ def create_app(
     profiles = ProfileRepository(active_settings.database_path)
     tasks = TaskRepository(active_settings.database_path)
     memories = MemoryRepository(active_settings.database_path)
+    prospects = ProspectRepository(active_settings.database_path)
+    briefings = BriefingRepository(active_settings.database_path)
+    conversations = ConversationStore(active_settings.database_path)
     active_email_provider = email_provider
     if active_email_provider is None and active_settings.email_account:
         active_email_provider = HimalayaEmailProvider(
@@ -83,7 +92,35 @@ def create_app(
         memory_block = memories.context_block()
         if memory_block:
             parts.append(memory_block)
+        # Anti-fake-completion guard (§25): never claim an action the tools
+        # did not execute; be honest about capabilities that do not exist.
+        parts.append(
+            "Règle d'honnêteté : n'annonce jamais avoir effectué une action "
+            "que tes outils n'ont pas réellement exécutée. Tu ne disposes PAS "
+            "d'outil de découverte automatique de prospects : si on te le "
+            "demande, dis-le clairement et propose ce que tu peux réellement "
+            "faire (enregistrer un prospect fourni, préparer un brouillon "
+            "d'e-mail, générer un document). N'expose jamais ton raisonnement "
+            "interne ; donne des réponses utiles et concises."
+        )
         return "\n".join(part for part in parts if part)
+
+    def compose_text_context() -> str:
+        """Text-brain context: shared context plus a bounded recap of the
+        latest voice exchanges, so a spoken conversation can continue in
+        writing. The voice bridge receives the voice history from the
+        provider, so the recap is deliberately absent from compose_context().
+        """
+        parts = [compose_context()]
+        voice_turns = conversations.recent(VOICE_CONVERSATION_ID, limit=6)
+        if voice_turns:
+            lines = ["Derniers échanges vocaux avec l'utilisateur (même assistante) :"]
+            for turn in voice_turns:
+                speaker = "Utilisateur" if turn.get("role") == "user" else "EMEFA"
+                lines.append(f"- {speaker} : {str(turn.get('content', ''))[:200]}")
+            parts.append("\n".join(lines))
+        return "\n".join(parts)
+
     # Resolve the OpenAI-compatible LLM provider once; the text brain and the
     # voice Custom-LLM bridge share it. DeepSeek direct wins over OpenRouter.
     llm_api_key: str | None = None
@@ -110,18 +147,11 @@ def create_app(
             api_key=llm_api_key,
             model=llm_model,
             base_url=llm_base_url,
-            context_provider=compose_context,
+            context_provider=compose_text_context,
         )
     else:
         selected_brain = NotConfiguredBrain()
     brain_configured = not isinstance(selected_brain, NotConfiguredBrain)
-
-    voice_llm_proxy = VoiceLLMProxy(
-        api_key=llm_api_key,
-        model=llm_model,
-        base_url=llm_base_url,
-        context_provider=compose_context,
-    )
 
     realtime_key = (
         active_settings.elevenlabs_api_key.get_secret_value().strip()
@@ -135,7 +165,24 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_application: FastAPI):
+        scheduler_task = None
+        if active_settings.brief_hour is not None:
+            scheduler_task = asyncio.create_task(
+                brief_scheduler_loop(
+                    active_settings.brief_hour,
+                    profiles,
+                    tasks,
+                    prospects,
+                    briefings,
+                    active_email_provider,
+                    active_settings.brief_email_to,
+                )
+            )
         yield
+        if scheduler_task is not None:
+            scheduler_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await scheduler_task
         close = getattr(selected_brain, "close", None)
         if close is not None:
             await close()
@@ -152,9 +199,13 @@ def create_app(
     application.state.profiles = profiles
     application.state.tasks = tasks
     application.state.memories = memories
+    application.state.prospects = prospects
+    application.state.briefings = briefings
+    application.state.conversations = conversations
     application.state.documents = DocumentStore(active_settings.database_path)
     application.state.website_importer = WebsiteProfileImporter()
     application.state.compose_context = compose_context
+    application.state.compose_text_context = compose_text_context
     application.state.agent = AgentEngine(
         selected_brain,
         build_tool_shelf(
@@ -163,12 +214,30 @@ def create_app(
             memories,
             active_email_provider,
             application.state.documents,
+            prospects,
         ),
-        memory=ConversationStore(active_settings.database_path),
+        memory=conversations,
+    )
+    # The voice channel's bearer secret is shared with the third-party
+    # ElevenLabs bridge, so it runs a reduced shelf without live-mailbox
+    # reads (email_search/email_read). Approval-gated actions (email_send,
+    # document edits) remain available and execute via the full-shelf engine
+    # after the user approves in the HUD.
+    application.state.voice_agent = AgentEngine(
+        selected_brain,
+        build_tool_shelf(
+            profiles,
+            tasks,
+            memories,
+            active_email_provider,
+            application.state.documents,
+            prospects,
+            include_mailbox_read=False,
+        ),
+        memory=conversations,
     )
     application.state.approvals = ApprovalRepository(active_settings.database_path)
     application.state.brain_configured = brain_configured
-    application.state.voice_llm = voice_llm_proxy
     application.state.realtime = realtime_gateway
     application.state.activation_limiter = FailureLimiter(
         max_failures=active_settings.activation_max_failures,
@@ -229,7 +298,10 @@ def create_app(
     application.include_router(web_session_router)
     application.include_router(agent_router)
     application.include_router(profile_router)
+    application.include_router(briefings_router)
+    application.include_router(demo_router)
     application.include_router(memories_router)
+    application.include_router(prospects_router)
     application.include_router(system_router)
     application.include_router(tasks_router)
     application.include_router(voice_llm_router)

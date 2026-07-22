@@ -17,8 +17,86 @@ from emefa.domain.email import EmailProvider
 from emefa.domain.memories import CATEGORIES, MemoryRepository
 from emefa.domain.policy import ActionRisk
 from emefa.domain.profiles import ASSISTANT_FIELDS, BUSINESS_FIELDS, ProfileRepository
+from emefa.domain.prospects import STAGES, ProspectRepository
 from emefa.domain.tasks import TaskRepository
 from emefa.observability import audit
+
+
+def compose_daily_brief(
+    profiles: ProfileRepository,
+    tasks: TaskRepository,
+    prospects: ProspectRepository | None = None,
+) -> dict[str, Any]:
+    """Deterministic daily brief: open tasks by bucket, goals, due follow-ups."""
+    buckets: dict[str, list[dict[str, Any]]] = {
+        "en_retard": [],
+        "aujourdhui": [],
+        "a_venir": [],
+        "sans_echeance": [],
+    }
+    for task in tasks.list_open():
+        buckets[task.bucket()].append(
+            {"task_id": task.task_id, "title": task.title, "due_date": task.due_date}
+        )
+    business = profiles.get_business()
+    brief: dict[str, Any] = {
+        "date": date.today().isoformat(),
+        "open_task_count": sum(len(items) for items in buckets.values()),
+        "tasks": buckets,
+        "goals": business.goals,
+        "company_name": business.company_name,
+    }
+    if prospects is not None:
+        brief["due_follow_ups"] = [
+            {
+                "prospect_id": p.prospect_id,
+                "name": p.name,
+                "company": p.company,
+                "stage": p.stage,
+                "next_action": p.next_action,
+                "next_action_date": p.next_action_date,
+            }
+            for p in prospects.due_follow_ups()
+        ]
+    return brief
+
+
+_BUCKET_TITLES = (
+    ("en_retard", "En retard"),
+    ("aujourdhui", "Aujourd'hui"),
+    ("a_venir", "À venir"),
+    ("sans_echeance", "Sans échéance"),
+)
+
+
+def format_brief_text(brief: Mapping[str, Any]) -> str:
+    """French plain-text rendering of a brief, for e-mail and display."""
+    lines = [f"Brief EMEFA du {brief.get('date', '')}"]
+    if brief.get("company_name"):
+        lines[0] += f" — {brief['company_name']}"
+    task_buckets = brief.get("tasks", {})
+    if brief.get("open_task_count"):
+        lines.append("")
+        lines.append(f"Tâches ouvertes : {brief['open_task_count']}")
+        for key, title in _BUCKET_TITLES:
+            for task in task_buckets.get(key, []):
+                due = f" (échéance {task['due_date']})" if task.get("due_date") else ""
+                lines.append(f"- [{title}] {task['title']}{due}")
+    else:
+        lines.append("")
+        lines.append("Aucune tâche ouverte.")
+    follow_ups = brief.get("due_follow_ups", [])
+    if follow_ups:
+        lines.append("")
+        lines.append("Relances commerciales dues :")
+        for p in follow_ups:
+            company = f" ({p['company']})" if p.get("company") else ""
+            action = f" — {p['next_action']}" if p.get("next_action") else ""
+            lines.append(f"- {p['name']}{company}{action}")
+    if brief.get("goals"):
+        lines.append("")
+        lines.append(f"Objectifs : {brief['goals']}")
+    return "\n".join(lines)
 
 _BUSINESS_FIELD_DESCRIPTIONS = {
     "owner_name": "Nom de l'utilisateur",
@@ -40,7 +118,17 @@ def build_tool_shelf(
     memories: MemoryRepository | None = None,
     email_provider: EmailProvider | None = None,
     documents: DocumentStore | None = None,
+    prospects: ProspectRepository | None = None,
+    include_mailbox_read: bool = True,
 ) -> ToolShelf:
+    """Assemble the governed tool shelf.
+
+    ``include_mailbox_read=False`` omits the live-mailbox read tools
+    (email_search/email_read). The voice channel uses this because its
+    bearer secret is shared with the third-party ElevenLabs bridge; those
+    tools would otherwise return inbox contents in-band on a channel whose
+    credential is not the owner's per-device token (least privilege).
+    """
     shelf = ToolShelf()
 
     def get_profiles(_arguments: Mapping[str, Any]) -> dict[str, Any]:
@@ -169,14 +257,118 @@ def build_tool_shelf(
         )
     )
     if tasks is not None:
-        _add_task_skills(shelf, tasks, profiles)
+        _add_task_skills(shelf, tasks, profiles, prospects)
     if memories is not None:
         _add_memory_skills(shelf, memories)
     if email_provider is not None:
-        _add_email_skills(shelf, email_provider)
+        _add_email_skills(shelf, email_provider, include_mailbox_read)
     if documents is not None:
         _add_document_skills(shelf, documents)
+    if prospects is not None:
+        _add_prospect_skills(shelf, prospects)
     return shelf
+
+
+def _add_prospect_skills(shelf: ToolShelf, prospects: ProspectRepository) -> None:
+    _prospect_properties = {
+        "name": {"type": "string", "description": "Nom du contact"},
+        "company": {"type": "string", "description": "Entreprise du prospect"},
+        "email": {"type": "string", "description": "Adresse e-mail"},
+        "phone": {"type": "string", "description": "Téléphone"},
+        "notes": {"type": "string", "description": "Notes de qualification"},
+        "next_action": {"type": "string", "description": "Prochaine action prévue"},
+        "next_action_date": {
+            "type": "string",
+            "description": "Date de la prochaine action, AAAA-MM-JJ",
+        },
+    }
+
+    def add_prospect(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        name = str(arguments.get("name", "")).strip()
+        if not name:
+            return {"error": "name_required"}
+        try:
+            prospect = prospects.add(name, **{k: v for k, v in arguments.items() if k != "name"})
+        except ValueError:
+            return {"error": "invalid_next_action_date", "expected_format": "AAAA-MM-JJ"}
+        audit("skill_prospect_added", prospect_id=prospect.prospect_id)
+        return {"prospect": asdict(prospect)}
+
+    def list_pipeline(_arguments: Mapping[str, Any]) -> dict[str, Any]:
+        entries = prospects.list_open()
+        return {
+            "count": len(entries),
+            "prospects": [
+                {**asdict(p), "follow_up_due": p.follow_up_due()} for p in entries
+            ],
+        }
+
+    def update_prospect(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        prospect_id = str(arguments.get("prospect_id", "")).strip()
+        stage = arguments.get("stage")
+        if stage is not None and stage not in STAGES:
+            return {"error": "invalid_stage", "allowed_stages": list(STAGES)}
+        try:
+            updated = prospects.update(
+                prospect_id, **{k: v for k, v in arguments.items() if k != "prospect_id"}
+            )
+        except ValueError:
+            return {"error": "invalid_next_action_date", "expected_format": "AAAA-MM-JJ"}
+        if updated is None:
+            return {"error": "prospect_not_found"}
+        audit("skill_prospect_updated", prospect_id=prospect_id)
+        return {"prospect": asdict(updated)}
+
+    shelf.add(
+        AgentTool(
+            name="add_prospect",
+            description=(
+                "Ajoute un prospect au pipeline commercial quand l'utilisateur "
+                "mentionne un client potentiel à suivre."
+            ),
+            risk=ActionRisk.LOCAL_WRITE,
+            parameters={
+                "type": "object",
+                "properties": _prospect_properties,
+                "required": ["name"],
+                "additionalProperties": False,
+            },
+            handler=add_prospect,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="list_pipeline",
+            description=(
+                "Liste le pipeline commercial : prospects ouverts, leur étape "
+                "(nouveau, contacté, qualifié, proposition) et les relances dues."
+            ),
+            risk=ActionRisk.PERSONAL_READ,
+            handler=list_pipeline,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="update_prospect",
+            description=(
+                "Met à jour un prospect (étape, notes, prochaine action datée) à "
+                "partir de son prospect_id. Étapes: "
+                "nouveau, contacté, qualifié, proposition, gagné, perdu."
+            ),
+            risk=ActionRisk.LOCAL_WRITE,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "prospect_id": {"type": "string", "description": "Identifiant du prospect"},
+                    "stage": {"type": "string", "enum": list(STAGES)},
+                    **_prospect_properties,
+                },
+                "required": ["prospect_id"],
+                "additionalProperties": False,
+            },
+            handler=update_prospect,
+        )
+    )
 
 
 def _add_document_skills(shelf: ToolShelf, documents: DocumentStore) -> None:
@@ -241,7 +433,9 @@ def _add_document_skills(shelf: ToolShelf, documents: DocumentStore) -> None:
     ))
 
 
-def _add_email_skills(shelf: ToolShelf, provider: EmailProvider) -> None:
+def _add_email_skills(
+    shelf: ToolShelf, provider: EmailProvider, include_mailbox_read: bool = True
+) -> None:
     def search(arguments: Mapping[str, Any]) -> dict[str, Any]:
         query = str(arguments.get("query", "")).strip()[:300]
         limit = max(1, min(int(arguments.get("limit", 10)), 20))
@@ -275,32 +469,33 @@ def _add_email_skills(shelf: ToolShelf, provider: EmailProvider) -> None:
         "required": ["to", "subject", "body"],
         "additionalProperties": False,
     }
-    shelf.add(AgentTool(
-        name="email_search",
-        description="Recherche des e-mails dans la boîte connectée sans les modifier.",
-        risk=ActionRisk.PERSONAL_READ,
-        parameters={
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Mots à rechercher dans l'objet ou le corps"},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+    if include_mailbox_read:
+        shelf.add(AgentTool(
+            name="email_search",
+            description="Recherche des e-mails dans la boîte connectée sans les modifier.",
+            risk=ActionRisk.PERSONAL_READ,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Mots à rechercher dans l'objet ou le corps"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                },
+                "additionalProperties": False,
             },
-            "additionalProperties": False,
-        },
-        handler=search,
-    ))
-    shelf.add(AgentTool(
-        name="email_read",
-        description="Lit un e-mail précis sans le marquer comme lu.",
-        risk=ActionRisk.PERSONAL_READ,
-        parameters={
-            "type": "object",
-            "properties": {"message_id": {"type": "string"}},
-            "required": ["message_id"],
-            "additionalProperties": False,
-        },
-        handler=read,
-    ))
+            handler=search,
+        ))
+        shelf.add(AgentTool(
+            name="email_read",
+            description="Lit un e-mail précis sans le marquer comme lu.",
+            risk=ActionRisk.PERSONAL_READ,
+            parameters={
+                "type": "object",
+                "properties": {"message_id": {"type": "string"}},
+                "required": ["message_id"],
+                "additionalProperties": False,
+            },
+            handler=read,
+        ))
     shelf.add(AgentTool(
         name="email_create_draft",
         description="Crée un brouillon d'e-mail sans l'envoyer.",
@@ -398,7 +593,10 @@ def _add_memory_skills(shelf: ToolShelf, memories: MemoryRepository) -> None:
 
 
 def _add_task_skills(
-    shelf: ToolShelf, tasks: TaskRepository, profiles: ProfileRepository
+    shelf: ToolShelf,
+    tasks: TaskRepository,
+    profiles: ProfileRepository,
+    prospects: ProspectRepository | None = None,
 ) -> None:
     def create_task(arguments: Mapping[str, Any]) -> dict[str, Any]:
         title = str(arguments.get("title", "")).strip()[:200]
@@ -431,32 +629,16 @@ def _add_task_skills(
         return {"task": asdict(task)}
 
     def daily_brief(_arguments: Mapping[str, Any]) -> dict[str, Any]:
-        buckets: dict[str, list[dict[str, Any]]] = {
-            "en_retard": [],
-            "aujourdhui": [],
-            "a_venir": [],
-            "sans_echeance": [],
-        }
-        for task in tasks.list_open():
-            buckets[task.bucket()].append(
-                {"task_id": task.task_id, "title": task.title, "due_date": task.due_date}
-            )
-        business = profiles.get_business()
-        return {
-            "date": date.today().isoformat(),
-            "open_task_count": sum(len(items) for items in buckets.values()),
-            "tasks": buckets,
-            "goals": business.goals,
-            "company_name": business.company_name,
-        }
+        return compose_daily_brief(profiles, tasks, prospects)
 
     shelf.add(
         AgentTool(
             name="get_daily_brief",
             description=(
                 "Compose le brief du jour : tâches ouvertes classées (en retard, "
-                "aujourd'hui, à venir, sans échéance) et objectifs professionnels. "
-                "À utiliser quand l'utilisateur demande ce qui mérite son attention."
+                "aujourd'hui, à venir, sans échéance), relances commerciales dues "
+                "et objectifs professionnels. À utiliser quand l'utilisateur "
+                "demande ce qui mérite son attention."
             ),
             risk=ActionRisk.PERSONAL_READ,
             handler=daily_brief,

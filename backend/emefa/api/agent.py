@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from emefa.api.devices import current_device
 from emefa.domain.agent import AgentReply, RequestedAction
+from emefa.domain.conversations import VOICE_CONVERSATION_ID
 from emefa.domain.devices import Device
 from emefa.observability import audit
 
@@ -108,6 +109,7 @@ def clear_conversation(
     forget = getattr(memory, "forget", None)
     if callable(forget):
         forget(device.device_id)
+        forget(VOICE_CONVERSATION_ID)
     audit("conversation_cleared", device_id=device.device_id)
 
 
@@ -116,6 +118,13 @@ def list_approvals(
     request: Request,
     device: Annotated[Device, Depends(current_device)],
 ) -> list[ApprovalSummary]:
+    # Single-user mode: the voice channel has no device binding, so its
+    # pending approvals are shown to any authenticated device.
+    approvals = request.app.state.approvals
+    pending = [
+        *approvals.pending_for(device.device_id),
+        *approvals.pending_for(VOICE_CONVERSATION_ID),
+    ]
     return [
         ApprovalSummary(
             action_id=item.action_id,
@@ -123,7 +132,7 @@ def list_approvals(
             arguments=item.arguments,
             created_at=item.created_at,
         )
-        for item in request.app.state.approvals.pending_for(device.device_id)
+        for item in pending
     ]
 
 
@@ -138,7 +147,7 @@ async def decide_approval(
     pending = approvals.get(action_id)
     if (
         pending is None
-        or pending.conversation_id != device.device_id
+        or pending.conversation_id not in {device.device_id, VOICE_CONVERSATION_ID}
         or pending.status != "pending"
     ):
         raise HTTPException(status_code=404, detail="approval_not_found")
@@ -159,7 +168,7 @@ async def decide_approval(
 
     reply = await request.app.state.agent.execute_approved(
         pending.to_requested_action(),
-        conversation_id=device.device_id,
+        conversation_id=pending.conversation_id,
     )
     approvals.resolve(
         action_id, "executed" if reply.status == "completed" else reply.status

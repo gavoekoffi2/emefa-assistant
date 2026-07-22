@@ -156,6 +156,40 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         "ALTER TABLE business_profiles ADD COLUMN website_url TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE business_profiles ADD COLUMN website_summary TEXT NOT NULL DEFAULT ''",
     ),
+    # 8 — local sales pipeline (business development seed).
+    (
+        f"""
+        CREATE TABLE prospects (
+            prospect_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            name TEXT NOT NULL,
+            company TEXT NOT NULL DEFAULT '',
+            email TEXT NOT NULL DEFAULT '',
+            phone TEXT NOT NULL DEFAULT '',
+            stage TEXT NOT NULL DEFAULT 'nouveau',
+            notes TEXT NOT NULL DEFAULT '',
+            next_action TEXT NOT NULL DEFAULT '',
+            next_action_date TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE INDEX idx_prospects_stage ON prospects(user_id, stage, next_action_date)",
+    ),
+    # 9 — proactive daily briefings (recurring workflow seed).
+    (
+        f"""
+        CREATE TABLE briefings (
+            brief_date TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            content TEXT NOT NULL,
+            emailed INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+    ),
 )
 
 

@@ -20,6 +20,8 @@ const STATE_COLORS: Record<VoiceState, number> = {
   listening: 0x55f6d0,
   thinking: 0xb18cff,
   speaking: 0x7af4ff,
+  awaiting: 0xff9d57,
+  success: 0x67e4b2,
   error: 0xff607c,
 }
 

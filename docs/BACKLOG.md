@@ -19,6 +19,11 @@ Done in Phase 2 (2026-07-20): identity migration + seeds, ProfileRepository + en
 - Version the ElevenLabs agent persona/config in-repo; evaluate custom-LLM/webhook mode so voice reasoning runs through the EMEFA runtime (ADR)
 - Voice baseline benchmark (latency, interruption, cost per active minute) before any migration work
 
+## Security hardening (defense-in-depth, from Phase 10 review 2026-07-20)
+
+- ~~Voice channel least-privilege~~ — **done 2026-07-20**: the voice channel now runs a reduced tool shelf (`include_mailbox_read=False`) that omits `email_search`/`email_read`, so the ElevenLabs-shared bearer secret can no longer pull live inbox contents in-band. Approval-gated `email_send` remains available (executed by the full-shelf engine after HUD approval). Security review confirmed no exploitable auth bypass; SQL parameterized; IMAP query + email headers correctly defended.
+- Remaining (lower priority): scope/rotate the `EMEFA_VOICE_LLM_TOKEN` rather than a single long-lived shared secret.
+
 ## LATER
 
 - Tasks UI panel (list/complete from the HUD) + daily brief slice combining tasks and commitments (done backend-side 2026-07-20: migration 5, TaskRepository, create/list/complete skills, GET /v1/tasks)

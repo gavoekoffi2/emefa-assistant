@@ -35,6 +35,37 @@ Deux options — la clé ne doit jamais être commitée dans le dépôt ni expos
 2. Optionnel : choisir le modèle avec `EMEFA_OPENROUTER_MODEL` (défaut : `deepseek/deepseek-chat`, économique et compatible avec les appels d'outils). Vérifier le nom exact sur openrouter.ai/models si le modèle par défaut renvoie une erreur.
 3. Si les deux clés sont présentes, DeepSeek direct est prioritaire.
 
+## Activer la boîte mail gouvernée (Himalaya)
+
+EMEFA lit, recherche, prépare des brouillons et envoie des e-mails via le CLI
+`himalaya` connecté au compte configuré (par ex. graphistegpt). Chaque **envoi**
+demande votre approbation explicite avant de partir.
+
+1. Installer et configurer `himalaya` pour le compte voulu sur le serveur.
+2. Dans `.env`, renseigner :
+   - `EMEFA_EMAIL_ACCOUNT` (nom du compte himalaya, ex. `graphistegpt`)
+   - `EMEFA_HIMALAYA_BINARY` (optionnel, défaut `himalaya`)
+   - `EMEFA_HIMALAYA_CONFIG` (optionnel, chemin du fichier de config himalaya)
+3. Redémarrer le service. Les compétences `email_send`, `email_search`,
+   `email_read` et `email_create_draft` n'apparaissent dans
+   `/v1/system/status` que si `EMEFA_EMAIL_ACCOUNT` est présent. Sur le **canal
+   vocal**, seuls l'envoi et le brouillon sont disponibles (la lecture/recherche
+   de la boîte est réservée au canal texte authentifié — moindre privilège).
+4. Test : demandez par écrit ou à la voix « Envoie un e-mail de test à … » —
+   la carte d'approbation doit apparaître avant tout envoi.
+
+## Activer le brief matinal proactif (optionnel)
+
+1. Dans `.env`, définir `EMEFA_BRIEF_HOUR` (heure locale du serveur, ex. `7`).
+   Sans cette variable, aucun travail proactif ne s'exécute.
+2. Optionnel : `EMEFA_BRIEF_EMAIL_TO=votre@adresse` pour recevoir le brief par
+   e-mail chaque matin (nécessite la boîte mail configurée ci-dessus). **Cette
+   variable vaut approbation permanente et cadrée** pour ce seul envoi
+   quotidien — aucune autre communication n'est couverte. Retirez-la pour
+   révoquer.
+3. Le brief du jour apparaît aussi dans l'interface (bandeau « Votre brief du
+   jour est prêt ») et via `GET /v1/briefings/today`.
+
 ## Brancher la voix sur le cerveau EMEFA (Custom LLM)
 
 Une fois le moteur agent activé ci-dessus, la voix peut utiliser le même cerveau
@@ -45,9 +76,12 @@ et le même contexte métier que le texte :
 2. Dans le dashboard ElevenLabs → votre agent → **LLM** : choisir **Custom LLM**,
    renseigner l'URL `https://<votre-domaine>/v1/voice-llm/chat/completions`
    et, comme clé API, la valeur exacte de `EMEFA_VOICE_LLM_TOKEN`.
-3. Garder la persona ElevenLabs courte : EMEFA injecte automatiquement le
-   contexte métier (profil assistante + profil professionnel) en tête de chaque
-   requête.
+3. Garder la persona ElevenLabs courte : chaque tour vocal passe désormais par
+   le moteur gouverné d'EMEFA — profil, mémoire, tâches, pipeline et e-mail y
+   sont accessibles à la voix. Les actions à conséquence (envoi d'e-mail,
+   effacements) ne s'exécutent jamais depuis la voix seule : EMEFA annonce
+   oralement qu'une approbation attend à l'écran, et reprend une fois votre
+   décision prise.
 4. Rollback immédiat possible : re-sélectionner le LLM ElevenLabs d'origine dans
    le dashboard, sans redéploiement.
 

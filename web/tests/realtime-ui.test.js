@@ -125,3 +125,40 @@ test('interface renders a state-reactive WebGL holographic HUD', () => {
   assert.match(holographicCss, /prefers-reduced-motion/)
   assert.match(holographicCss, /@media\(max-width:800px\)/)
 })
+
+test('pipeline panel shows the sales funnel with due follow-ups', () => {
+  const pipelinePanel = readFileSync(new URL('../src/PipelinePanel.tsx', import.meta.url), 'utf8')
+  assert.match(pipelinePanel, /\/v1\/prospects/)
+  assert.match(pipelinePanel, /Relance due/)
+  assert.match(pipelinePanel, /Qualifié/)
+  assert.match(source, /PipelinePanel/)
+  assert.match(source, /Pipeline/)
+})
+
+test('pending approvals are polled during a live voice session', () => {
+  assert.match(source, /setInterval/)
+  assert.match(source, /email_send: 'Envoyer un e-mail'/)
+})
+
+test('proactive morning brief surfaces as a dismissible strip', () => {
+  assert.match(source, /\/v1\/briefings\/today/)
+  assert.match(source, /brief du jour est prêt/)
+  assert.match(holographicCss, /brief-strip/)
+})
+
+test('integrated demo: guided scenarios and honest availability badges', () => {
+  assert.match(source, /\/v1\/demo\/scenarios/)
+  assert.match(source, /runScenario/)
+  assert.match(source, /scenarioStatusLabel/)
+  assert.match(source, /RÉEL/)
+  assert.match(source, /APERÇU/)
+  assert.match(holographicCss, /scenario-tray/)
+})
+
+test('visual states reflect backend outcomes including awaiting and success', () => {
+  assert.match(app, /awaiting: 'EN ATTENTE DE VOTRE APPROBATION'/)
+  assert.match(app, /success: 'TERMINÉ'/)
+  assert.match(source, /settleState/)
+  assert.match(source, /outcome: VoiceState = 'success'/)
+  assert.match(hologram, /awaiting: 0xff9d57/)
+})

@@ -120,3 +120,31 @@
 .memory-row div{max-width:calc(100% - 90px)}
 .memory-category{align-self:flex-start;padding:2px 8px;border-radius:999px;border:1px solid rgba(var(--hud-rgb,110 234 255),.35);font-size:.62rem;letter-spacing:.12em;text-transform:uppercase;color:var(--hud,#6eeaff)}
 .memory-row strong{font-weight:500;line-height:1.4}
+
+/* Pipeline panel */
+.prospect-row strong em{font-style:normal;font-weight:400;color:rgba(200,228,242,.65)}
+.prospect-row.due{border-color:rgba(255,157,87,.55);box-shadow:inset 0 0 20px rgba(255,157,87,.05)}
+.due-badge{flex:none;padding:3px 9px;border-radius:999px;border:1px solid rgba(255,157,87,.6);color:var(--accent,#ff9d57);font-size:.6rem;font-weight:700;letter-spacing:.2em}
+
+/* Proactive morning brief strip */
+.brief-strip{position:fixed;top:72px;left:50%;transform:translateX(-50%);z-index:52;display:flex;align-items:center;gap:12px;padding:9px 16px;border:1px solid rgba(var(--hud-rgb,110 234 255),.4);border-radius:999px;background:rgba(5,16,28,.92);color:#dff4ff;font-size:.82rem;box-shadow:0 10px 40px rgba(0,0,0,.4)}
+.brief-strip button{padding:5px 12px;border:1px solid rgba(var(--hud-rgb,110 234 255),.5);border-radius:999px;background:rgba(var(--hud-rgb,110 234 255),.12);color:var(--hud,#6eeaff);font-size:.76rem;cursor:pointer}
+.brief-strip .brief-dismiss{border:none;background:transparent;color:rgba(220,240,250,.55);padding:2px 4px}
+
+/* Guided scenarios tray (Phase 9 integrated demo) */
+.dock-scenarios{flex:none;width:34px;height:34px;border-radius:10px;border:1px solid rgba(var(--hud-rgb,110 234 255),.35);background:transparent;color:var(--hud,#6eeaff);font-size:1rem;cursor:pointer}
+.dock-scenarios.active,.dock-scenarios:hover{background:rgba(var(--hud-rgb,110 234 255),.14)}
+.dock-scenarios:disabled{opacity:.3;cursor:default}
+.scenario-tray{position:fixed;left:50%;bottom:84px;transform:translateX(-50%);z-index:54;display:flex;flex-direction:column;gap:8px;width:min(460px,calc(100vw - 32px));max-height:60vh;overflow-y:auto;padding:14px;border:1px solid rgba(var(--hud-rgb,110 234 255),.35);border-radius:16px;background:linear-gradient(160deg,rgba(6,16,28,.97),rgba(3,9,17,.98));box-shadow:0 20px 60px rgba(0,0,0,.55)}
+.scenario-tray-head{display:flex;flex-direction:column;gap:2px;padding:0 4px 4px}
+.scenario-tray-head span{font-size:.66rem;letter-spacing:.28em;color:var(--hud,#6eeaff)}
+.scenario-tray-head small{font-size:.72rem;color:rgba(200,228,242,.6)}
+.scenario-item{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;text-align:left;padding:10px 12px;border:1px solid rgba(255,255,255,.1);border-radius:11px;background:rgba(255,255,255,.02);cursor:pointer}
+.scenario-item:hover{background:rgba(var(--hud-rgb,110 234 255),.08)}
+.scenario-item strong{grid-column:2;font-size:.9rem;color:#eafaff}
+.scenario-item em{grid-column:2;font-style:normal;font-size:.78rem;color:rgba(200,228,242,.75)}
+.scenario-item small{grid-column:2;font-size:.7rem;color:rgba(180,210,226,.55);line-height:1.4}
+.scenario-badge{grid-row:1;align-self:start;padding:2px 8px;border-radius:999px;font-size:.58rem;font-weight:700;letter-spacing:.14em}
+.s-live .scenario-badge{border:1px solid rgba(103,228,178,.6);color:#67e4b2}
+.s-assisted .scenario-badge{border:1px solid rgba(110,234,255,.6);color:#6eeaff}
+.s-preview .scenario-badge{border:1px solid rgba(255,157,87,.55);color:#ff9d57}

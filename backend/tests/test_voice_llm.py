@@ -1,138 +1,210 @@
-import json
-
 import httpx
 import pytest
 from pydantic import SecretStr
 
 from emefa.config import Settings
-from emefa.domain.profiles import ProfileRepository
-from emefa.infrastructure.voice_llm import VoiceLLMProxy
+from emefa.domain.agent import AgentStep, RequestedAction
 from emefa.main import create_app
 
+VOICE_HEADERS = {"Authorization": "Bearer voice-secret"}
 
-def make_app(tmp_path, token: str | None = "voice-secret", upstream_handler=None):
-    app = create_app(
+
+class ScriptedBrain:
+    def __init__(self, steps):
+        self.steps = list(steps)
+        self.histories = []
+
+    async def think(self, history, tools):
+        self.histories.append([dict(item) for item in history])
+        return self.steps.pop(0)
+
+
+class FakeEmailProvider:
+    """Stands in for the governed HimalayaEmailProvider (sync send)."""
+
+    def __init__(self):
+        self.sent: list[dict] = []
+
+    def search(self, query, limit):
+        return []
+
+    def read(self, message_id):
+        return {}
+
+    def create_draft(self, to, subject, body):
+        return {"status": "draft_created", "to": to, "subject": subject}
+
+    def send(self, to, subject, body):
+        self.sent.append({"to": to, "subject": subject, "body": body})
+        return {"status": "sent", "to": to, "subject": subject}
+
+
+def voice_app(tmp_path, brain, token: str | None = "voice-secret", email_provider=None):
+    return create_app(
         Settings(
             enrollment_code="CODE-SECRET",
             database_path=tmp_path / "voice.db",
             cookie_secure=False,
-            openrouter_api_key=SecretStr("sk-or-test"),
             voice_llm_token=SecretStr(token) if token else None,
-        )
+            email_account="graphistegpt@gmail.com",
+        ),
+        brain=brain,
+        email_provider=email_provider,
     )
-    if upstream_handler is not None:
-        app.state.voice_llm = VoiceLLMProxy(
-            api_key="sk-or-test",
-            model="deepseek/deepseek-chat",
-            base_url="https://upstream.test/v1",
-            context_provider=ProfileRepository(tmp_path / "voice.db").system_context,
-            transport=httpx.MockTransport(upstream_handler),
-        )
-    return app
 
 
 @pytest.mark.asyncio
-async def test_requires_token_and_rejects_bad_token(tmp_path):
-    app = make_app(tmp_path)
+async def test_auth_missing_wrong_and_unconfigured(tmp_path):
+    app = voice_app(tmp_path, ScriptedBrain([]))
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as web:
-        missing = await web.post("/v1/voice-llm/chat/completions", json={"messages": []})
-        assert missing.status_code == 401
+        payload = {"messages": [{"role": "user", "content": "Bonjour"}]}
+        assert (await web.post("/v1/voice-llm/chat/completions", json=payload)).status_code == 401
         wrong = await web.post(
-            "/v1/voice-llm/chat/completions",
-            json={"messages": []},
-            headers={"Authorization": "Bearer mauvais"},
+            "/v1/voice-llm/chat/completions", json=payload,
+            headers={"Authorization": "Bearer faux"},
         )
         assert wrong.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_unconfigured_token_returns_503(tmp_path):
-    app = make_app(tmp_path, token=None)
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as web:
-        response = await web.post("/v1/voice-llm/chat/completions", json={"messages": []})
-    assert response.status_code == 503
-
-
-@pytest.mark.asyncio
-async def test_injects_profile_context_and_forwards(tmp_path):
-    seen: list[dict] = []
-
-    def upstream(request: httpx.Request) -> httpx.Response:
-        seen.append(json.loads(request.content))
-        return httpx.Response(
-            200, json={"choices": [{"message": {"content": "Bonjour."}}]}
-        )
-
-    app = make_app(tmp_path, upstream_handler=upstream)
-    ProfileRepository(tmp_path / "voice.db").update_business({"company_name": "Horizon SARL"})
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as web:
-        response = await web.post(
-            "/v1/voice-llm/chat/completions",
-            json={
-                "model": "ignored-model",
-                "messages": [
-                    {"role": "system", "content": "Persona ElevenLabs"},
-                    {"role": "user", "content": "Bonjour"},
-                ],
-            },
-            headers={"Authorization": "Bearer voice-secret"},
-        )
-    assert response.status_code == 200
-    assert response.json()["choices"][0]["message"]["content"] == "Bonjour."
-    body = seen[0]
-    assert body["model"] == "deepseek/deepseek-chat"
-    assert body["messages"][0]["role"] == "system"
-    assert "Horizon SARL" in body["messages"][0]["content"]
-    assert body["messages"][1]["content"] == "Persona ElevenLabs"
-    assert body["messages"][2]["content"] == "Bonjour"
-
-
-@pytest.mark.asyncio
-async def test_streaming_is_passed_through_as_sse(tmp_path):
-    chunks = (
-        b'data: {"choices":[{"delta":{"content":"Bon"}}]}\n\n'
-        b'data: {"choices":[{"delta":{"content":"jour"}}]}\n\n'
-        b"data: [DONE]\n\n"
-    )
-
-    async def chunk_stream():
-        yield chunks
-
-    def upstream(request: httpx.Request) -> httpx.Response:
-        assert json.loads(request.content)["stream"] is True
-        return httpx.Response(
-            200,
-            content=chunk_stream(),
-            headers={"content-type": "text/event-stream"},
-        )
-
-    app = make_app(tmp_path, upstream_handler=upstream)
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as web:
-        response = await web.post(
-            "/v1/voice-llm/chat/completions",
-            json={"stream": True, "messages": [{"role": "user", "content": "Bonjour"}]},
-            headers={"Authorization": "Bearer voice-secret"},
-        )
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/event-stream")
-    assert response.content == chunks
-
-
-@pytest.mark.asyncio
-async def test_upstream_error_maps_to_502(tmp_path):
-    def upstream(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(429, json={"error": "rate_limited"})
-
-    app = make_app(tmp_path, upstream_handler=upstream)
-    transport = httpx.ASGITransport(app=app)
+    unconfigured = voice_app(tmp_path, ScriptedBrain([]), token=None)
+    transport = httpx.ASGITransport(app=unconfigured)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as web:
         response = await web.post(
             "/v1/voice-llm/chat/completions",
             json={"messages": [{"role": "user", "content": "Bonjour"}]},
-            headers={"Authorization": "Bearer voice-secret"},
         )
-    assert response.status_code == 502
+    assert response.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_voice_turn_runs_engine_and_persists(tmp_path):
+    brain = ScriptedBrain([AgentStep(answer="Bonjour, je vous écoute.")])
+    app = voice_app(tmp_path, brain)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as web:
+        missing = await web.post(
+            "/v1/voice-llm/chat/completions", json={"messages": []}, headers=VOICE_HEADERS
+        )
+        assert missing.status_code == 400
+        response = await web.post(
+            "/v1/voice-llm/chat/completions",
+            json={"messages": [{"role": "user", "content": "Bonjour EMEFA"}]},
+            headers=VOICE_HEADERS,
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["choices"][0]["message"]["content"] == "Bonjour, je vous écoute."
+    assert [item["content"] for item in brain.histories[0]] == ["Bonjour EMEFA"]
+    assert "Derniers échanges vocaux" not in str(brain.histories[0])
+    text_context = app.state.compose_text_context()
+    assert "Bonjour EMEFA" in text_context and "je vous écoute" in text_context
+
+
+@pytest.mark.asyncio
+async def test_streamed_voice_answer_is_openai_sse(tmp_path):
+    brain = ScriptedBrain([AgentStep(answer="Voici le brief du jour, rien d’urgent.")])
+    app = voice_app(tmp_path, brain)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as web:
+        response = await web.post(
+            "/v1/voice-llm/chat/completions",
+            json={"stream": True, "messages": [{"role": "user", "content": "Mon brief ?"}]},
+            headers=VOICE_HEADERS,
+        )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    raw = response.content.decode()
+    assert '"delta"' in raw and "[DONE]" in raw
+    assert "brief du jour" in raw
+
+
+@pytest.mark.asyncio
+async def test_voice_email_prepare_approve_send_and_announce(tmp_path):
+    brain = ScriptedBrain(
+        [
+            AgentStep(
+                action=RequestedAction(
+                    name="email_send",
+                    arguments={
+                        "to": "ama@mensah.tg",
+                        "subject": "Relance devis",
+                        "body": "Bonjour Ama, avez-vous pu consulter le devis ?",
+                    },
+                    call_id="call_voice_mail",
+                )
+            ),
+            AgentStep(answer="C’est envoyé : Ama a bien reçu la relance."),
+            AgentStep(answer="Oui, l’e-mail pour Ama est parti il y a un instant."),
+        ]
+    )
+    provider = FakeEmailProvider()
+    app = voice_app(tmp_path, brain, email_provider=provider)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as web:
+        # 1. Spoken request prepares the e-mail but must not send it.
+        prepared = await web.post(
+            "/v1/voice-llm/chat/completions",
+            json={"messages": [{"role": "user", "content": "Envoie la relance à Ama"}]},
+            headers=VOICE_HEADERS,
+        )
+        spoken = prepared.json()["choices"][0]["message"]["content"]
+        assert "ama@mensah.tg" in spoken and "approbation" in spoken
+        assert provider.sent == []
+        # 2. The pending approval is visible from an authenticated device.
+        await web.post(
+            "/v1/web/session",
+            json={"name": "Navigateur", "enrollment_code": "CODE-SECRET"},
+        )
+        pending = (await web.get("/v1/agent/approvals")).json()
+        assert len(pending) == 1 and pending[0]["name"] == "email_send"
+        # 3. Approval executes the send and concludes with the brain.
+        decision = await web.post(
+            f"/v1/agent/approvals/{pending[0]['action_id']}/decision",
+            json={"approve": True},
+        )
+        assert decision.json()["status"] == "completed"
+        assert len(provider.sent) == 1
+        assert provider.sent[0]["to"] == "ama@mensah.tg"
+        # 4. The next voice turn knows the result and can announce it orally.
+        followup = await web.post(
+            "/v1/voice-llm/chat/completions",
+            json={"messages": [{"role": "user", "content": "C’est parti ?"}]},
+            headers=VOICE_HEADERS,
+        )
+    assert "est parti" in followup.json()["choices"][0]["message"]["content"]
+    last_history = brain.histories[-1]
+    tool_entries = [item for item in last_history if item.get("role") == "tool"]
+    assert tool_entries and tool_entries[0]["name"] == "email_send"
+
+
+@pytest.mark.asyncio
+async def test_voice_rejection_never_sends(tmp_path):
+    brain = ScriptedBrain(
+        [
+            AgentStep(
+                action=RequestedAction(
+                    name="email_send",
+                    arguments={"to": "ama@mensah.tg", "subject": "S", "body": "B"},
+                )
+            ),
+        ]
+    )
+    provider = FakeEmailProvider()
+    app = voice_app(tmp_path, brain, email_provider=provider)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as web:
+        await web.post(
+            "/v1/voice-llm/chat/completions",
+            json={"messages": [{"role": "user", "content": "Envoie le mail"}]},
+            headers=VOICE_HEADERS,
+        )
+        await web.post(
+            "/v1/web/session",
+            json={"name": "Navigateur", "enrollment_code": "CODE-SECRET"},
+        )
+        pending = (await web.get("/v1/agent/approvals")).json()
+        decision = await web.post(
+            f"/v1/agent/approvals/{pending[0]['action_id']}/decision",
+            json={"approve": False},
+        )
+    assert decision.json()["status"] == "rejected"
+    assert provider.sent == []

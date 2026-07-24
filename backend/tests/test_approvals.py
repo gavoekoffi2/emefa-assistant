@@ -1,9 +1,12 @@
+import asyncio
+
 import httpx
 import pytest
 import pytest_asyncio
 
 from emefa.config import Settings
-from emefa.domain.agent import AgentEngine, AgentStep, RequestedAction, ToolShelf
+from emefa.domain.agent import AgentEngine, AgentStep, AgentTool, RequestedAction, ToolShelf
+from emefa.domain.policy import ActionRisk
 from emefa.domain.profiles import ProfileRepository
 from emefa.main import create_app
 
@@ -124,6 +127,48 @@ async def test_execute_approved_rejects_unknown_tool():
     reply = await engine.execute_approved(RequestedAction(name="absent"))
     assert reply.status == "failed"
     assert reply.error == "unknown_tool"
+
+
+@pytest.mark.asyncio
+async def test_approval_is_claimed_before_execution_and_cannot_run_twice(tmp_path):
+    calls = 0
+
+    async def destructive(_arguments):
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.05)
+        return {"ok": True}
+
+    brain = ScriptedBrain([
+        AgentStep(action=RequestedAction(name="reset_business_profile", arguments={})),
+        AgentStep(answer="Action exécutée."),
+    ])
+    app = create_app(
+        Settings(
+            enrollment_code="CODE-SECRET",
+            database_path=tmp_path / "concurrent-approvals.db",
+            cookie_secure=False,
+        ),
+        brain=brain,
+    )
+    app.state.agent.tools._tools["reset_business_profile"] = AgentTool(
+        "reset_business_profile", "Test", ActionRisk.DESTRUCTIVE, destructive
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as web:
+        await web.post(
+            "/v1/web/session",
+            json={"name": "Navigateur", "enrollment_code": "CODE-SECRET"},
+        )
+        run = await web.post("/v1/agent/runs", json={"message": "Exécute"})
+        action_id = run.json()["action_id"]
+        first, second = await asyncio.gather(
+            web.post(f"/v1/agent/approvals/{action_id}/decision", json={"approve": True}),
+            web.post(f"/v1/agent/approvals/{action_id}/decision", json={"approve": True}),
+        )
+
+    assert sorted([first.status_code, second.status_code]) == [200, 404]
+    assert calls == 1
 
 
 async def factory_run(activated, brain):

@@ -152,6 +152,9 @@ async def decide_approval(
     ):
         raise HTTPException(status_code=404, detail="approval_not_found")
 
+    if not approvals.claim(action_id):
+        raise HTTPException(status_code=404, detail="approval_not_found")
+
     if not payload.approve:
         approvals.resolve(action_id, "rejected")
         audit(

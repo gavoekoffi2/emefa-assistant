@@ -25,6 +25,8 @@ router = APIRouter(prefix="/v1/voice-llm", tags=["voice-llm"])
 _ERROR_SPOKEN = {
     "brain_unavailable": "Le moteur de langage est indisponible pour le moment. Réessayons dans un instant.",
     "unknown_tool": "J’ai tenté une action que je ne connais pas. Reformulez votre demande.",
+    "tool_invalid_arguments": "Les informations nécessaires à cette action sont incomplètes ou invalides. Vérifions-les puis réessayons.",
+    "tool_execution_failed": "L’outil n’a pas pu terminer l’action. Rien n’a été confirmé comme exécuté. Réessayons dans un instant.",
     "turn_budget_exhausted": "Cette demande est trop complexe pour un seul échange. Découpons-la.",
     "invalid_brain_step": "Le moteur a renvoyé une réponse invalide. Réessayez.",
 }

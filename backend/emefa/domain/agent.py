@@ -132,9 +132,38 @@ class AgentEngine:
         if decide(tool.risk) is Decision.BLOCK:
             return AgentReply(status="blocked", error="risk_blocked", turns=0)
         previous = self.memory.recent(conversation_id) if conversation_id else []
-        entry = await self._execute_tool(tool, action)
+        try:
+            entry = await self._execute_tool(tool, action)
+        except ValueError:
+            return AgentReply(status="failed", error="tool_invalid_arguments", turns=0)
+        except Exception:
+            return AgentReply(status="failed", error="tool_execution_failed", turns=0)
         history: list[dict[str, Any]] = [*previous, entry]
-        return await self._advance(history, len(previous), conversation_id)
+        reply = await self._advance(history, len(previous), conversation_id)
+        if reply.status == "failed" and reply.error in {
+            "brain_unavailable",
+            "invalid_brain_step",
+            "turn_budget_exhausted",
+        }:
+            return AgentReply(
+                status="completed",
+                answer=self._execution_receipt(action),
+                turns=reply.turns,
+            )
+        return reply
+
+    @staticmethod
+    def _execution_receipt(action: RequestedAction) -> str:
+        if action.name == "email_send":
+            recipient = str(action.arguments.get("to", "")).strip()
+            subject = str(action.arguments.get("subject", "")).strip()
+            return f"L’e-mail « {subject} » a bien été envoyé à {recipient}."
+        labels = {
+            "reset_business_profile": "Le profil professionnel a bien été effacé.",
+            "forget_memory": "Le souvenir a bien été supprimé.",
+            "document_edit": "Le document a bien été modifié.",
+        }
+        return labels.get(action.name, "L’action approuvée a bien été exécutée.")
 
     async def _execute_tool(self, tool: AgentTool, action: RequestedAction) -> dict[str, Any]:
         output = tool.handler(action.arguments)
@@ -191,6 +220,11 @@ class AgentEngine:
                     turns=turn,
                 )
 
-            history.append(await self._execute_tool(tool, action))
+            try:
+                history.append(await self._execute_tool(tool, action))
+            except ValueError:
+                return AgentReply(status="failed", error="tool_invalid_arguments", turns=turn)
+            except Exception:
+                return AgentReply(status="failed", error="tool_execution_failed", turns=turn)
 
         return AgentReply(status="failed", error="turn_budget_exhausted", turns=self.max_turns)

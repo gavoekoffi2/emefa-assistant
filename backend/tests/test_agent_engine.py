@@ -27,6 +27,10 @@ class FailingBrain:
         raise RuntimeError("provider unavailable")
 
 
+def failing_tool(_arguments):
+    raise RuntimeError("provider secret must never escape")
+
+
 class RememberingBrain:
     def __init__(self):
         self.histories = []
@@ -41,6 +45,52 @@ async def test_provider_failure_returns_controlled_error():
     result = await AgentEngine(FailingBrain(), ToolShelf()).run("Bonjour")
 
     assert result == AgentReply(status="failed", error="brain_unavailable", turns=1)
+
+
+@pytest.mark.asyncio
+async def test_tool_failure_returns_controlled_error_instead_of_raising():
+    shelf = ToolShelf()
+    shelf.add(AgentTool("unstable", "Échoue", ActionRisk.OBSERVE, failing_tool))
+    brain = ScriptedBrain(AgentStep(action=RequestedAction(name="unstable")))
+
+    result = await AgentEngine(brain, shelf).run("Exécute")
+
+    assert result.status == "failed"
+    assert result.error == "tool_execution_failed"
+
+
+@pytest.mark.asyncio
+async def test_approved_tool_failure_returns_controlled_error_instead_of_raising():
+    shelf = ToolShelf()
+    shelf.add(AgentTool("unstable", "Échoue", ActionRisk.COMMUNICATE, failing_tool))
+    engine = AgentEngine(ScriptedBrain(), shelf)
+
+    result = await engine.execute_approved(RequestedAction(name="unstable"))
+
+    assert result.status == "failed"
+    assert result.error == "tool_execution_failed"
+
+
+@pytest.mark.asyncio
+async def test_approved_side_effect_stays_completed_when_final_wording_provider_fails():
+    shelf = ToolShelf()
+    shelf.add(AgentTool(
+        "email_send",
+        "Envoie",
+        ActionRisk.COMMUNICATE,
+        lambda arguments: {"status": "sent", "to": arguments["to"], "subject": arguments["subject"]},
+    ))
+    engine = AgentEngine(FailingBrain(), shelf)
+
+    result = await engine.execute_approved(RequestedAction(
+        name="email_send",
+        arguments={"to": "client@example.com", "subject": "Devis", "body": "Bonjour"},
+    ))
+
+    assert result.status == "completed"
+    assert result.error is None
+    assert "client@example.com" in (result.answer or "")
+    assert "Devis" in (result.answer or "")
 
 
 @pytest.mark.asyncio

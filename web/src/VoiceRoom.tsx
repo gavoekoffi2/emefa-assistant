@@ -60,6 +60,8 @@ const skillLabels: Record<string, string> = {
 const agentErrorCopy: Record<string, string> = {
   brain_unavailable: 'Le moteur de langage est momentanément indisponible. Réessayez dans un instant.',
   unknown_tool: 'EMEFA a tenté une action qu’elle ne connaît pas. Reformulez votre demande.',
+  tool_invalid_arguments: 'Les informations nécessaires à cette action sont incomplètes ou invalides. Vérifiez-les puis réessayez.',
+  tool_execution_failed: 'L’outil n’a pas pu terminer l’action. Rien n’a été confirmé comme exécuté. Réessayez dans un instant.',
   turn_budget_exhausted: 'Cette demande est trop complexe pour un seul échange. Découpez-la ou reformulez.',
   invalid_brain_step: 'Le moteur a renvoyé une réponse invalide. Réessayez.',
 }

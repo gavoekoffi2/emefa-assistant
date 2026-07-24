@@ -71,6 +71,16 @@ class ApprovalRepository:
             ).fetchall()
         return [action for row in rows if (action := self._from_row(row)) is not None]
 
+    def claim(self, action_id: str) -> bool:
+        """Atomically reserve a pending action before executing its side effect."""
+        with storage.connect(self.database_path) as connection:
+            cursor = connection.execute(
+                "UPDATE pending_actions SET status = 'executing' "
+                "WHERE action_id = ? AND status = 'pending'",
+                (action_id,),
+            )
+            return cursor.rowcount == 1
+
     def resolve(self, action_id: str, status: str) -> None:
         with storage.connect(self.database_path) as connection:
             connection.execute(

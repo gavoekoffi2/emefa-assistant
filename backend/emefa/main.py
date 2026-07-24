@@ -39,6 +39,7 @@ from emefa.domain.tasks import TaskRepository
 from emefa.infrastructure.deepseek import DeepSeekBrain
 from emefa.infrastructure.email import HimalayaEmailProvider
 from emefa.infrastructure.realtime import RealtimeGateway
+from emefa.infrastructure.voice_llm import VoiceLLMProxy
 from emefa.infrastructure.website_profile import WebsiteProfileImporter
 from emefa.observability import (
     configure_logging,
@@ -166,6 +167,12 @@ def create_app(
     else:
         selected_brain = NotConfiguredBrain()
     brain_configured = not isinstance(selected_brain, NotConfiguredBrain)
+    voice_llm_proxy = VoiceLLMProxy(
+        api_key=llm_api_key,
+        model=llm_model,
+        base_url=llm_base_url,
+        context_provider=compose_context,
+    )
 
     realtime_key = (
         active_settings.elevenlabs_api_key.get_secret_value().strip()
@@ -200,6 +207,7 @@ def create_app(
         close = getattr(selected_brain, "close", None)
         if close is not None:
             await close()
+        await voice_llm_proxy.close()
         await realtime_gateway.close()
 
     application = FastAPI(
@@ -221,6 +229,7 @@ def create_app(
     application.state.website_importer = WebsiteProfileImporter()
     application.state.compose_context = compose_context
     application.state.compose_text_context = compose_text_context
+    application.state.voice_llm = voice_llm_proxy
     application.state.agent = AgentEngine(
         selected_brain,
         build_tool_shelf(

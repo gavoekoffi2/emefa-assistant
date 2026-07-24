@@ -1,17 +1,20 @@
-"""ElevenLabs Custom-LLM endpoint, routed through the governed EMEFA engine.
+"""ElevenLabs Custom-LLM endpoint for EMEFA.
 
-Each voice turn runs AgentEngine.run() on the shared voice conversation:
-the voice gets the same skills, risk policy, and approval loop as text.
-Consequential actions are never executed from the voice channel directly —
-they become pending approvals announced orally and decided in the HUD.
+Production voice uses a true streaming proxy: provider SSE bytes are relayed as
+they arrive, including client-tool calls for ``emefa_execute``. The governed
+engine remains the fallback for tests or deployments without a provider proxy.
 """
+
+from __future__ import annotations
 
 import hmac
 import json
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.background import BackgroundTask
 
 from emefa.domain.agent import AgentReply, RequestedAction
 from emefa.domain.conversations import VOICE_CONVERSATION_ID
@@ -43,6 +46,58 @@ def _authorize(request: Request) -> None:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="invalid_voice_llm_token",
         )
+
+
+def _last_user_message(payload: dict[str, Any]) -> str | None:
+    return next(
+        (
+            item.get("content")
+            for item in reversed(payload.get("messages") or [])
+            if isinstance(item, dict)
+            and item.get("role") == "user"
+            and isinstance(item.get("content"), str)
+        ),
+        None,
+    )
+
+
+def _persist_voice_exchange(request: Request, payload: dict[str, Any], answer: str) -> None:
+    answer = answer.strip()
+    if not answer:
+        return
+    memory = request.app.state.conversations
+    entries: list[dict[str, Any]] = []
+    last_user = _last_user_message(payload)
+    if last_user and last_user.strip():
+        entries.append(
+            {
+                "role": "user",
+                "content": last_user.strip()[:2_000],
+                "channel": "voice",
+            }
+        )
+    entries.append(
+        {"role": "assistant", "content": answer[:2_000], "channel": "voice"}
+    )
+    memory.extend(VOICE_CONVERSATION_ID, entries)
+
+
+def _collect_sse_answer(raw: bytes) -> str:
+    parts: list[str] = []
+    for line in raw.decode("utf-8", errors="ignore").splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if not data or data == "[DONE]":
+            continue
+        try:
+            delta = json.loads(data)["choices"][0].get("delta", {}).get("content")
+        except (ValueError, KeyError, IndexError, TypeError):
+            continue
+        if isinstance(delta, str):
+            parts.append(delta)
+    return "".join(parts)
 
 
 def _spoken_confirmation(action: RequestedAction) -> str:
@@ -81,7 +136,9 @@ def _spoken_reply(request: Request, reply: AgentReply) -> str:
         return _spoken_confirmation(reply.pending_action)
     if reply.status == "blocked":
         return "Cette action est bloquée par la politique de sécurité d’EMEFA."
-    return _ERROR_SPOKEN.get(reply.error or "", "La demande n’a pas abouti. Réessayez.")
+    return _ERROR_SPOKEN.get(
+        reply.error or "", "La demande n’a pas abouti. Réessayez."
+    )
 
 
 def _completion_json(text: str) -> dict[str, Any]:
@@ -107,7 +164,15 @@ def _sse_stream(text: str):
             if start + step < len(words):
                 piece += " "
             data = json.dumps(
-                {"choices": [{"index": 0, "delta": {"content": piece}, "finish_reason": None}]},
+                {
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": piece},
+                            "finish_reason": None,
+                        }
+                    ]
+                },
                 ensure_ascii=False,
             )
             yield f"data: {data}\n\n".encode()
@@ -115,6 +180,69 @@ def _sse_stream(text: str):
         yield b"data: [DONE]\n\n"
 
     return generate()
+
+
+async def _proxy_completion(request: Request, payload: dict[str, Any]):
+    proxy = request.app.state.voice_llm
+    upstream_payload = proxy.build_payload(payload)
+    audit(
+        "voice_llm_request",
+        mode="streaming_proxy",
+        stream=bool(payload.get("stream")),
+        message_count=len(upstream_payload.get("messages") or []),
+    )
+
+    if payload.get("stream"):
+        upstream_request = proxy.client.build_request(
+            "POST", "/chat/completions", json=upstream_payload
+        )
+        try:
+            upstream = await proxy.client.send(upstream_request, stream=True)
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=502, detail="voice_llm_upstream_unavailable"
+            ) from exc
+        if upstream.status_code != 200:
+            await upstream.aread()
+            await upstream.aclose()
+            audit("voice_llm_upstream_error", status_code=upstream.status_code)
+            raise HTTPException(status_code=502, detail="voice_llm_upstream_error")
+
+        async def relay():
+            raw = bytearray()
+            try:
+                async for chunk in upstream.aiter_raw():
+                    raw.extend(chunk)
+                    yield chunk
+            finally:
+                _persist_voice_exchange(
+                    request, payload, _collect_sse_answer(bytes(raw))
+                )
+
+        return StreamingResponse(
+            relay(),
+            media_type="text/event-stream",
+            background=BackgroundTask(upstream.aclose),
+        )
+
+    try:
+        response = await proxy.client.post(
+            "/chat/completions", json=upstream_payload
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502, detail="voice_llm_upstream_unavailable"
+        ) from exc
+    if response.status_code != 200:
+        audit("voice_llm_upstream_error", status_code=response.status_code)
+        raise HTTPException(status_code=502, detail="voice_llm_upstream_error")
+    body = response.json()
+    try:
+        answer = body["choices"][0]["message"].get("content") or ""
+    except (KeyError, IndexError, TypeError):
+        answer = ""
+    _persist_voice_exchange(request, payload, answer)
+    return JSONResponse(body)
 
 
 @router.post("/chat/completions")
@@ -126,22 +254,22 @@ async def voice_chat_completions(request: Request):
         raise HTTPException(status_code=400, detail="invalid_json") from exc
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="invalid_json")
-    message = next(
-        (
-            item.get("content")
-            for item in reversed(payload.get("messages") or [])
-            if item.get("role") == "user" and isinstance(item.get("content"), str)
-        ),
-        None,
-    )
+
+    message = _last_user_message(payload)
     if not message or not message.strip():
         raise HTTPException(status_code=400, detail="user_message_required")
 
+    proxy = request.app.state.voice_llm
+    if proxy.configured:
+        return await _proxy_completion(request, payload)
+
+    # Safe fallback retained for tests and provider-less installations.
     reply = await request.app.state.voice_agent.run(
         message.strip()[:20_000], conversation_id=VOICE_CONVERSATION_ID
     )
     audit(
         "voice_llm_run",
+        mode="governed_fallback",
         status=reply.status,
         turns=reply.turns,
         error=reply.error,

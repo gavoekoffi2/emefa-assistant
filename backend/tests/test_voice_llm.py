@@ -1,9 +1,12 @@
+import json
+
 import httpx
 import pytest
 from pydantic import SecretStr
 
 from emefa.config import Settings
 from emefa.domain.agent import AgentStep, RequestedAction
+from emefa.infrastructure.voice_llm import VoiceLLMProxy
 from emefa.main import create_app
 
 VOICE_HEADERS = {"Authorization": "Bearer voice-secret"}
@@ -115,6 +118,69 @@ async def test_streamed_voice_answer_is_openai_sse(tmp_path):
     raw = response.content.decode()
     assert '"delta"' in raw and "[DONE]" in raw
     assert "brief du jour" in raw
+
+
+@pytest.mark.asyncio
+async def test_streamed_voice_answer_relays_provider_sse_and_client_tools(tmp_path):
+    seen_payload = None
+
+    class ProviderStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'data: {"choices":[{"index":0,"delta":{"role":"assistant","content":"Liaison "},"finish_reason":null}]}\n\n'
+            yield b'data: {"choices":[{"index":0,"delta":{"content":"temps r\xc3\xa9el."},"finish_reason":null}]}\n\n'
+            yield b'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n'
+            yield b"data: [DONE]\n\n"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal seen_payload
+        seen_payload = json.loads(request.content)
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=ProviderStream(),
+        )
+
+    brain = ScriptedBrain([])
+    app = voice_app(tmp_path, brain)
+    app.state.voice_llm = VoiceLLMProxy(
+        api_key="provider-secret",
+        model="deepseek-chat",
+        base_url="https://provider.test",
+        context_provider=lambda: "Contexte EMEFA partagé",
+        transport=httpx.MockTransport(handler),
+    )
+    transport = httpx.ASGITransport(app=app)
+    tools = [{"type": "function", "function": {"name": "emefa_execute"}}]
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as web:
+        response = await web.post(
+            "/v1/voice-llm/chat/completions",
+            json={
+                "model": "emefa",
+                "stream": True,
+                "messages": [{"role": "user", "content": "Teste la liaison"}],
+                "tools": tools,
+            },
+            headers=VOICE_HEADERS,
+        )
+
+    assert response.status_code == 200
+    raw = response.content.decode()
+    assert '"role":"assistant"' in raw
+    assert "Liaison " in raw and "temps réel." in raw and "[DONE]" in raw
+    assert seen_payload is not None
+    assert seen_payload["model"] == "deepseek-chat"
+    assert seen_payload["stream"] is True
+    assert seen_payload["tools"] == tools
+    assert seen_payload["messages"][0] == {
+        "role": "system",
+        "content": "Contexte EMEFA partagé",
+    }
+    assert seen_payload["messages"][-1]["content"] == "Teste la liaison"
+    assert brain.histories == []
+    context = app.state.compose_text_context()
+    assert "Teste la liaison" in context
+    assert "Liaison temps réel." in context
+    await app.state.voice_llm.close()
 
 
 @pytest.mark.asyncio

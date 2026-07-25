@@ -7,6 +7,7 @@ type EMEFAFaceProps = {
   state: VoiceState
   onClick: () => void
   getOutputVolume: () => number
+  getOutputFrequencyData: () => Uint8Array
 }
 
 const STATE_COLORS: Record<VoiceState, number> = {
@@ -49,14 +50,16 @@ function ellipsePoints(cx: number, cy: number, rx: number, ry: number, z: number
 }
 
 /** A real-time, locally rendered 3D holographic facial mesh. */
-export function EMEFAFace({ state, onClick, getOutputVolume }: EMEFAFaceProps) {
+export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyData }: EMEFAFaceProps) {
   const buttonRef = useRef<HTMLButtonElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const stateRef = useRef(state)
   const outputRef = useRef(getOutputVolume)
+  const frequencyRef = useRef(getOutputFrequencyData)
 
   useEffect(() => { stateRef.current = state }, [state])
   useEffect(() => { outputRef.current = getOutputVolume }, [getOutputVolume])
+  useEffect(() => { frequencyRef.current = getOutputFrequencyData }, [getOutputFrequencyData])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -118,13 +121,17 @@ export function EMEFAFace({ state, onClick, getOutputVolume }: EMEFAFaceProps) {
     const rightEye = curve(ellipsePoints(.35, .29, .24, .085, .685), brightMaterial, true)
     const leftIris = curve(ellipsePoints(-.35, .29, .055, .072, .705), accentMaterial, true)
     const rightIris = curve(ellipsePoints(.35, .29, .055, .072, .705), accentMaterial, true)
+    const irises = new THREE.Group()
+    irises.add(leftIris, rightIris)
     const eyes = new THREE.Group()
-    eyes.add(leftEye, rightEye, leftIris, rightIris)
+    eyes.add(leftEye, rightEye, irises)
     features.add(eyes)
-    features.add(
+    const brows = new THREE.Group()
+    brows.add(
       curve(ellipsePoints(-.35, .46, .27, .1, .67, .16, Math.PI - .16), accentMaterial),
       curve(ellipsePoints(.35, .46, .27, .1, .67, .16, Math.PI - .16), accentMaterial),
     )
+    features.add(brows)
 
     // A protruding nose bridge makes the profile unmistakably three-dimensional.
     features.add(curve([
@@ -134,7 +141,8 @@ export function EMEFAFace({ state, onClick, getOutputVolume }: EMEFAFaceProps) {
     ], brightMaterial))
     features.add(curve(ellipsePoints(0, -.27, .15, .045, .79, 0, Math.PI), accentMaterial))
 
-    const upperLip = curve(ellipsePoints(0, -.57, .3, .085, .73, Math.PI, Math.PI * 2), brightMaterial)
+    const upperLipPoints = ellipsePoints(0, -.57, .3, .085, .73, Math.PI, Math.PI * 2)
+    const upperLip = curve(upperLipPoints, brightMaterial)
     const lowerLipPoints = ellipsePoints(0, -.57, .3, .1, .73, 0, Math.PI)
     const lowerLip = curve(lowerLipPoints, brightMaterial)
     const mouthCore = curve([new THREE.Vector3(-.29, -.57, .725), new THREE.Vector3(0, -.535, .755), new THREE.Vector3(.29, -.57, .725)], accentMaterial)
@@ -206,12 +214,37 @@ export function EMEFAFace({ state, onClick, getOutputVolume }: EMEFAFaceProps) {
     const clock = new THREE.Clock()
     const color = new THREE.Color()
     let smoothVoice = 0
+    let smoothOpen = 0
+    let smoothRound = 0
+    let smoothWide = 0
     let frame = 0
     const animate = () => {
       const elapsed = clock.getElapsedTime()
       const currentState = stateRef.current
       const rawVoice = currentState === 'speaking' ? Math.min(1, Math.max(0, outputRef.current())) : 0
       smoothVoice += (rawVoice - smoothVoice) * (rawVoice > smoothVoice ? .48 : .18)
+
+      // The SDK's output analyser drives a compact facial rig. Spectral centroid
+      // separates rounded vowels from spread vowels and high-frequency
+      // consonants, producing real articulation rather than volume-only flapping.
+      const spectrum = currentState === 'speaking' ? frequencyRef.current() : new Uint8Array()
+      let energy = 0
+      let weighted = 0
+      let highEnergy = 0
+      for (let index = 1; index < spectrum.length; index += 1) {
+        const value = spectrum[index] / 255
+        energy += value
+        weighted += value * index
+        if (index > spectrum.length * .46) highEnergy += value
+      }
+      const centroid = energy > .01 ? weighted / energy / Math.max(1, spectrum.length - 1) : .2
+      const highRatio = energy > .01 ? highEnergy / energy : 0
+      const targetOpen = Math.min(1, rawVoice * 1.15 + Math.max(0, .28 - centroid) * 1.1)
+      const targetRound = Math.min(1, Math.max(0, (.24 - centroid) * 5.5) * rawVoice)
+      const targetWide = Math.min(1, Math.max(0, (centroid - .2) * 4.2 + highRatio * .8) * rawVoice)
+      smoothOpen += (targetOpen - smoothOpen) * .42
+      smoothRound += (targetRound - smoothRound) * .3
+      smoothWide += (targetWide - smoothWide) * .3
       buttonRef.current?.style.setProperty('--voice-level', smoothVoice.toFixed(3))
 
       const automaticYaw = Math.sin(elapsed * .42) * .19
@@ -219,15 +252,30 @@ export function EMEFAFace({ state, onClick, getOutputVolume }: EMEFAFaceProps) {
       bust.rotation.x += (Math.sin(elapsed * .3) * .025 - pointerTarget.y * .18 - bust.rotation.x) * .035
       bust.position.y = .12 + Math.sin(elapsed * .85) * .025
 
-      const blinkPhase = elapsed % 5.2
-      const blink = blinkPhase > 4.85 && blinkPhase < 5.05 ? .08 : 1
+      const blinkCycle = 4.65 + Math.sin(elapsed * .17) * .7
+      const blinkPhase = elapsed % blinkCycle
+      const blink = blinkPhase > blinkCycle - .18 ? .07 : 1
       eyes.scale.y += (blink - eyes.scale.y) * .55
 
+      // Tiny deterministic saccades and state-aware brows avoid a dead stare.
+      const gazeStep = Math.floor(elapsed * .72)
+      const gazeX = Math.sin(gazeStep * 12.9898) * .025
+      const gazeY = Math.sin(gazeStep * 7.233) * .012 + (currentState === 'thinking' ? .018 : 0)
+      irises.position.x += (gazeX - irises.position.x) * .12
+      irises.position.y += (gazeY - irises.position.y) * .12
+      const browLift = currentState === 'listening' ? .035 : currentState === 'thinking' ? .055 : smoothOpen * .018
+      brows.position.y += (browLift - brows.position.y) * .08
+
+      const mouthWidth = 1 + smoothWide * .22 - smoothRound * .38
+      const upperPosition = upperLip.geometry.getAttribute('position') as THREE.BufferAttribute
       const lowerPosition = lowerLip.geometry.getAttribute('position') as THREE.BufferAttribute
-      lowerLipPoints.forEach((point, index) => lowerPosition.setXYZ(index, point.x, point.y - smoothVoice * .22 * Math.sin(index / 33 * Math.PI), point.z))
+      upperLipPoints.forEach((point, index) => upperPosition.setXYZ(index, point.x * mouthWidth, point.y + smoothOpen * .055 * Math.sin(index / 33 * Math.PI), point.z))
+      lowerLipPoints.forEach((point, index) => lowerPosition.setXYZ(index, point.x * mouthWidth, point.y - smoothOpen * .26 * Math.sin(index / 33 * Math.PI), point.z))
+      upperPosition.needsUpdate = true
       lowerPosition.needsUpdate = true
-      mouthCore.scale.y = 1 + smoothVoice * 2.6
-      mouthCore.position.y = -smoothVoice * .05
+      mouthCore.scale.x = mouthWidth
+      mouthCore.scale.y = .12 + smoothOpen * 3.4
+      mouthCore.position.y = -smoothOpen * .075
 
       color.setHex(STATE_COLORS[currentState])
       dimMaterial.color.lerp(color, .05)

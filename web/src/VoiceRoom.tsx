@@ -440,7 +440,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
           <div className="core-readout left"><span>CORE</span><strong>EMF-01</strong></div>
           <div className="core-reticle" aria-hidden="true"><i /><i /><i /><i /></div>
           {visualMode === 'face'
-            ? <EMEFAFace state={state} onClick={() => void toggleLive()} getOutputVolume={conversation.getOutputVolume} />
+            ? <EMEFAFace state={state} onClick={() => void toggleLive()} getOutputVolume={conversation.getOutputVolume} getOutputFrequencyData={conversation.getOutputByteFrequencyData} />
             : <VoiceOrb state={state} onClick={() => void toggleLive()} />}
           <button
             className="face-mode-toggle"

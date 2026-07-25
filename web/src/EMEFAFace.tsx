@@ -44,8 +44,8 @@ const HEAD_CROWN = 1.95
 const VISIBLE_CROWN = 1.82
 // Claude requested a clearly broader face while preserving the approved height.
 // Separate multipliers keep cranial width and facial features proportional.
-const HEAD_WIDTH_SCALE = 1.3
-const FEATURE_WIDTH_SCALE = 1.25
+const HEAD_WIDTH_SCALE = 1.55
+const FEATURE_WIDTH_SCALE = 1.45
 const HEAD_WIDTH_PROFILE: readonly ProfilePoint[] = [
   [-1.6, .3], [-1.46, .44], [-1.2, .62], [-.82, .74],
   [-.38, .84], [.02, .9], [.38, .88], [.72, .88],

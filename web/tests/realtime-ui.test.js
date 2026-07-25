@@ -8,6 +8,8 @@ const hologram = readFileSync(new URL('../src/HolographicUniverse.tsx', import.m
 const holographicCss = readFileSync(new URL('../src/Holographic.css', import.meta.url), 'utf8')
 const appCss = readFileSync(new URL('../src/App.css', import.meta.url), 'utf8')
 const deliverablesPanel = readFileSync(new URL('../src/DeliverablesPanel.tsx', import.meta.url), 'utf8')
+const face = readFileSync(new URL('../src/EMEFAFace.tsx', import.meta.url), 'utf8')
+const faceCss = readFileSync(new URL('../src/EMEFAFace.css', import.meta.url), 'utf8')
 
 test('voice room uses ElevenLabs continuous live conversation SDK', () => {
   assert.match(source, /useConversation/)
@@ -26,6 +28,18 @@ test('voice room uses provider VAD and true barge-in instead of browser speech A
   assert.doesNotMatch(source, /MediaRecorder/)
   assert.match(source, /onModeChange/)
   assert.match(source, /conversation\.isSpeaking/)
+})
+
+test('free local face prototype follows real assistant output audio', () => {
+  assert.match(source, /EMEFAFace/)
+  assert.match(source, /getOutputVolume=\{conversation\.getOutputVolume\}/)
+  assert.match(source, /visualMode/)
+  assert.match(face, /getOutputVolume\(\)/)
+  assert.match(face, /requestAnimationFrame/)
+  assert.match(face, /--voice-level/)
+  assert.match(face, /Visage d’EMEFA/)
+  assert.match(faceCss, /var\(--voice-level\)/)
+  assert.match(faceCss, /emefaBlink/)
 })
 
 test('voice room supports a continuous session, typed turns, and clean shutdown', () => {

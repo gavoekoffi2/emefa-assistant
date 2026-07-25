@@ -1,0 +1,93 @@
+.emefa-face{
+  --voice-level:0;
+  position:relative;
+  z-index:6;
+  width:230px;
+  height:250px;
+  display:grid;
+  place-items:center;
+  padding:0;
+  border:0;
+  background:transparent;
+  color:var(--hud,#6eeaff);
+  cursor:pointer;
+  pointer-events:auto;
+  filter:drop-shadow(0 18px 28px rgba(0,0,0,.48));
+  -webkit-tap-highlight-color:transparent;
+}
+.emefa-face:focus-visible{outline:1px solid var(--hud);outline-offset:8px;border-radius:46%}
+.emefa-face-halo{position:absolute;left:50%;top:47%;border:1px solid rgba(var(--hud-rgb),.22);border-radius:50%;pointer-events:none}
+.emefa-face-halo.halo-a{width:224px;height:224px;transform:translate(-50%,-50%);border-style:dashed;animation:emefaHaloSpin 19s linear infinite}
+.emefa-face-halo.halo-b{width:196px;height:236px;transform:translate(-50%,-50%);box-shadow:inset 0 0 36px rgba(var(--hud-rgb),.06),0 0 30px rgba(var(--hud-rgb),.08)}
+.emefa-face-portrait{position:relative;width:192px;height:221px;overflow:visible;filter:saturate(1.04)}
+.emefa-face .emefa-skin{transition:filter .35s ease}
+.emefa-face:hover .emefa-skin{filter:brightness(1.06)}
+.emefa-interface-light{color:var(--hud);opacity:.62}
+.emefa-face-name{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);font:700 8px/1 Manrope,sans-serif;letter-spacing:.38em;color:#e9fbff;text-shadow:0 0 12px rgba(var(--hud-rgb),.8)}
+.emefa-face-signal{position:absolute;left:50%;bottom:1px;transform:translateX(-50%);white-space:nowrap;font:600 5.5px/1 Manrope,sans-serif;letter-spacing:.2em;color:rgba(var(--hud-rgb),.55)}
+
+/* Natural idle life without processing video or using a GPU. */
+.emefa-face-portrait{animation:emefaBreath 4.8s ease-in-out infinite}
+.emefa-eye .emefa-eyelid{transform-box:fill-box;transform-origin:center;animation:emefaBlink 6.2s infinite}
+.emefa-face.state-listening .emefa-eye{transform-box:fill-box;transform-origin:center;animation:emefaAttention 2.8s ease-in-out infinite}
+.emefa-face.state-thinking .emefa-eye{transform-box:fill-box;transform-origin:center;animation:emefaThink 1.8s ease-in-out infinite}
+.emefa-face.state-thinking .emefa-brows{transform:translateY(-1px)}
+
+/* Lip opening follows --voice-level, written every frame from real output audio. */
+.emefa-mouth-cavity,.emefa-teeth,.emefa-lower-lip{
+  transform-box:fill-box;
+  transform-origin:center top;
+  transform:scaleY(calc(.18 + var(--voice-level) * 4.8));
+}
+.emefa-upper-lip{transform-box:fill-box;transform-origin:center bottom;transform:translateY(calc(var(--voice-level) * -1.5px))}
+.emefa-mouth{filter:drop-shadow(0 1px 1px rgba(0,0,0,.25))}
+.emefa-face.state-speaking .emefa-mouth{filter:drop-shadow(0 0 5px rgba(var(--hud-rgb),.16))}
+.emefa-face.state-speaking .emefa-face-halo.halo-b{box-shadow:inset 0 0 44px rgba(var(--hud-rgb),.11),0 0 calc(30px + var(--voice-level) * 28px) rgba(var(--hud-rgb),.2)}
+.emefa-face.state-listening .emefa-face-signal{color:#60f4d0}
+.emefa-face.state-thinking .emefa-face-signal{color:#ad8cff}
+.emefa-face.state-speaking .emefa-face-signal{color:#78f4ff}
+.emefa-face.state-error{filter:grayscale(.2) drop-shadow(0 18px 28px rgba(0,0,0,.48))}
+
+.face-mode-toggle{
+  position:absolute;
+  z-index:12;
+  right:26px;
+  bottom:12px;
+  min-width:58px;
+  height:24px;
+  padding:0 8px;
+  border:1px solid rgba(var(--hud-rgb),.25);
+  border-radius:999px;
+  background:rgba(2,13,25,.74);
+  color:rgba(var(--hud-rgb),.68);
+  font:600 6px/1 Manrope,sans-serif;
+  letter-spacing:.15em;
+  pointer-events:auto;
+  cursor:pointer;
+}
+.face-mode-toggle:hover{background:rgba(var(--hud-rgb),.12);color:var(--hud)}
+
+@keyframes emefaHaloSpin{to{transform:translate(-50%,-50%) rotate(360deg)}}
+@keyframes emefaBreath{0%,100%{transform:translateY(1px) scale(1)}50%{transform:translateY(-2px) scale(1.006)}}
+@keyframes emefaBlink{0%,45%,48%,100%{transform:scaleY(0)}46%,47%{transform:scaleY(1)}}
+@keyframes emefaAttention{0%,100%{transform:translateX(-.7px)}50%{transform:translateX(.7px)}}
+@keyframes emefaThink{0%,100%{transform:translate(-1px,-1px)}50%{transform:translate(1px,-1px)}}
+
+@media(max-width:800px){
+  .emefa-face{width:205px;height:225px}
+  .emefa-face-portrait{width:171px;height:197px}
+  .emefa-face-halo.halo-a{width:198px;height:198px}
+  .emefa-face-halo.halo-b{width:172px;height:207px}
+  .emefa-face-name{bottom:11px}.emefa-face-signal{bottom:-1px}
+  .face-mode-toggle{right:calc(50% - 137px);bottom:5px}
+}
+@media(max-width:430px){
+  .emefa-face{width:180px;height:202px}
+  .emefa-face-portrait{width:153px;height:176px}
+  .emefa-face-halo.halo-a{width:175px;height:175px}
+  .emefa-face-halo.halo-b{width:154px;height:184px}
+  .face-mode-toggle{right:calc(50% - 124px);bottom:2px}
+}
+@media(prefers-reduced-motion:reduce){
+  .emefa-face-portrait,.emefa-face-halo,.emefa-eye,.emefa-eyelid{animation:none!important}
+}

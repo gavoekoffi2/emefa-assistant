@@ -7,6 +7,7 @@ import { MemoryPanel } from './MemoryPanel'
 import { PipelinePanel } from './PipelinePanel'
 import { DeliverablesPanel } from './DeliverablesPanel'
 import type { DeliverableRecord, SourceFileRecord } from './DeliverablesPanel'
+import { EMEFAFace } from './EMEFAFace'
 
 // three.js is heavy; load the hologram as its own chunk so the shell stays light.
 const HolographicUniverse = lazy(() =>
@@ -93,6 +94,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   const [fileStripOpen, setFileStripOpen] = useState(false)
   const [deliverableCount, setDeliverableCount] = useState(0)
   const [deliverablesRefresh, setDeliverablesRefresh] = useState(0)
+  const [visualMode, setVisualMode] = useState<'face' | 'core'>('face')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -437,10 +439,18 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
         <div className="core-zone">
           <div className="core-readout left"><span>CORE</span><strong>EMF-01</strong></div>
           <div className="core-reticle" aria-hidden="true"><i /><i /><i /><i /></div>
-          <VoiceOrb state={state} onClick={() => void toggleLive()} />
+          {visualMode === 'face'
+            ? <EMEFAFace state={state} onClick={() => void toggleLive()} getOutputVolume={conversation.getOutputVolume} />
+            : <VoiceOrb state={state} onClick={() => void toggleLive()} />}
+          <button
+            className="face-mode-toggle"
+            onClick={() => setVisualMode((mode) => mode === 'face' ? 'core' : 'face')}
+            aria-label={visualMode === 'face' ? 'Afficher le noyau EMEFA' : 'Afficher le visage EMEFA'}
+            title={visualMode === 'face' ? 'Revenir au noyau' : 'Afficher le visage'}
+          >{visualMode === 'face' ? 'NOYAU' : 'VISAGE'}</button>
           <div className="core-readout right"><span>LATENCE</span><strong>TEMPS RÉEL</strong></div>
         </div>
-        <div className="voice-copy"><p className="heard">{state === 'listening' && transcript ? `« ${transcript} »` : latestUser ? `« ${latestUser} »` : live ? 'Parlez, je vous écoute…' : 'Touchez le noyau pour commencer à parler'}</p><p className="answer">{answer}</p></div>
+        <div className="voice-copy"><p className="heard">{state === 'listening' && transcript ? `« ${transcript} »` : latestUser ? `« ${latestUser} »` : live ? 'Parlez, je vous écoute…' : visualMode === 'face' ? 'Touchez le visage pour commencer à parler' : 'Touchez le noyau pour commencer à parler'}</p><p className="answer">{answer}</p></div>
         <div className="voice-controls"><button className={live ? 'danger' : ''} onClick={() => void toggleLive()}><span className="mic-symbol">⌁</span>{live ? 'Terminer la conversation' : 'Initialiser la liaison vocale'}</button><small>{live ? 'Conversation continue · interrompez EMEFA à tout moment' : 'Activation unique · échange vocal naturel'}</small></div>
       </main>
       {scenariosOpen && scenarios.length > 0 && (

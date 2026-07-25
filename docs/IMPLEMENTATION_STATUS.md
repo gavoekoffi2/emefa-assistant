@@ -507,6 +507,38 @@ braid detail and photographic facial structure are not reproducible by
 real-time procedural geometry — this is the closest achievable direction
 (braided updo, dense mesh, framing braids), not a copy.
 
+## Completed — Fidelity pass against the supplied reference (2026-07-25, sixth pass)
+
+Product owner rated the render 3/10 against a supplied concept image. Working
+from that image, the largest measurable gaps were brightness, mesh density and
+palette — not geometry.
+
+- **Glow.** The reference reads as a lit projection; this was rendering as a
+  faint diagram. Rather than add a post-processing bloom pass (which fights the
+  canvas' alpha compositing), the glow is stacked `drop-shadow` layers on the
+  canvas — the compositor blurs it for free, and four layers at falling opacity
+  give the same halo.
+- **Palette** moved from washed teal to electric blue.
+- **Density**: 84 horizontal slices and 92 meridians (was 56/62), and the vertex
+  scatter now covers the whole subdivided surface rather than the 468 anatomical
+  anchors — the reference reads as a *sampled volume* and the sparkle of nodes
+  over the skin is much of why.
+- **Framing**: head enlarged to fill the frame as the reference does.
+
+One thing had to be re-learned in a new coat: raising the scatter to full
+density and opacity whitewashed the skin and the features vanished into it —
+the same failure as letting the grid outshine the face. Scatter is a sparkle;
+the accent contours (lash line, nose base, nostrils, vermilion) were pushed
+well above the mesh so the face reads first.
+
+50 web tests, 107 backend, lint and build clean.
+
+**Still not replicated, and not reachable this way:** the reference is an
+AI-generated raster illustration. Per-strand braid detail and photographic
+facial structure need a sculpted 3D asset (glTF) with real materials, not
+procedural line geometry. That is a different piece of work and should be
+scoped separately if the exact look is required.
+
 ## In Progress
 
 Nothing mid-flight.

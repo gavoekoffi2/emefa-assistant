@@ -65,7 +65,7 @@ export function feminizeFace(source: Float32Array): Float32Array {
 
     // 1. Mandible — narrower and less flared than a male jaw.
     const jaw = smoothstep(-0.5, -7, y)
-    x *= lerp(1, 0.925, jaw)
+    x *= lerp(1, 0.9, jaw)
 
     // 2. Gonial angle — the square rear corner of the jaw is the single
     //    strongest masculine cue, so it is pulled in and up into a soft curve.
@@ -77,7 +77,7 @@ export function feminizeFace(source: Float32Array): Float32Array {
     //    Under-doing the vertical shortening is what leaves the face looking
     //    long and elvish however narrow the jaw gets.
     const chin = smoothstep(-5, -9.4, y)
-    y += 1.45 * chin
+    y += 1.35 * chin
     z -= 0.3 * chin
     x *= lerp(1, 0.93, chin)
 
@@ -105,7 +105,7 @@ export function feminizeFace(source: Float32Array): Float32Array {
 
     // 8. Malar volume — higher and fuller cheekbones.
     const malar = smoothstep(2, 4.8, absX) * smoothstep(7.2, 4.6, absX) * smoothstep(-3.6, -0.6, y) * smoothstep(3.8, 1.2, y)
-    z += 0.66 * malar
+    z += 0.78 * malar
     y += 0.38 * malar
 
     positions[index * 3] = x
@@ -126,8 +126,8 @@ export function feminizeFace(source: Float32Array): Float32Array {
       // squint; a female eye opening is nearer 9–10 mm. The opening is made
       // upwards, not symmetrically — dropping the lower lid by the same amount
       // exposes sclera under the iris and the eye reads as startled.
-      const stretch = dy > 0 ? 1.55 : 1.1
-      positions[index * 3] = cx + dx * lerp(1, 1.42, near)
+      const stretch = dy > 0 ? 1.9 : 1.3
+      positions[index * 3] = cx + dx * lerp(1, 1.34, near)
       positions[index * 3 + 1] = cy + dy * lerp(1, stretch, near)
       positions[index * 3 + 2] = cz + dz
       // Outer canthus sits a little above the inner one.
@@ -163,8 +163,17 @@ export type HeadBuild = {
   /** Index range of the oral cavity, drawn with a darker material. */
   cavityIndexStart: number
   cavityIndexCount: number
-  /** Eye socket centres and outward normals, for placing the eyeballs. */
-  eyes: Array<{ centre: [number, number, number]; forward: [number, number, number]; radius: number }>
+  /**
+   * Eye sockets: centre, gaze direction, and the half-extents of the palpebral
+   * aperture. The globe is built from the aperture rather than as a sphere —
+   * see the note in `buildFemaleHead`.
+   */
+  eyes: Array<{
+    centre: [number, number, number]
+    forward: [number, number, number]
+    halfWidth: number
+    halfHeight: number
+  }>
   /** Uniform scale that maps model units into the scene's working units. */
   scale: number
 }
@@ -281,14 +290,14 @@ export function buildFemaleHead(face: CanonicalFace, facePositions: Float32Array
   // always hidden behind the jaw and never needs to follow it.
   const neckSegments = 30
   const neckRings: number[][] = []
-  const neckLevels = [-5, -8.4, -11.6, -14.2, -16.2, -18, -19.7, -22]
+  const neckLevels = [-5, -7.2, -9.4, -11.2, -12.8, -14.4, -16.2, -18.6]
   // Set back behind the chin: a column drawn under the face rather than behind
   // it is what made the previous open-mouth pose show a ledge across the jaw.
   const NECK_AXIS_Z = -2.3
   neckLevels.forEach((level, step) => {
     const t = step / (neckLevels.length - 1)
-    const spread = smoothstep(0.42, 1, t)
-    const halfWidth = lerp(3.55, 4.25, smoothstep(0, 0.5, t)) + spread * 7.6
+    const spread = smoothstep(0.28, 1, t)
+    const halfWidth = lerp(3.9, 4.6, smoothstep(0, 0.5, t)) + spread * 7.4
     const depth = lerp(3, 3.6, smoothstep(0, 0.5, t)) + spread * 2.4
     const ring: number[] = []
     for (let i = 0; i < neckSegments; i += 1) {
@@ -353,6 +362,12 @@ export function buildFemaleHead(face: CanonicalFace, facePositions: Float32Array
 
   const eyes = [RIGHT_EYE_RING, LEFT_EYE_RING].map((ring) => {
     const centre = landmarkCentroid(facePositions, ring)
+    let halfWidth = 0.001
+    let halfHeight = 0.001
+    for (const vertex of ring) {
+      halfWidth = Math.max(halfWidth, Math.abs(facePositions[vertex * 3] - centre[0]))
+      halfHeight = Math.max(halfHeight, Math.abs(facePositions[vertex * 3 + 1] - centre[1]))
+    }
 
     // Outward normal of the orbit, biased forward: the globe sits behind the
     // aperture and its equator is what shows through the eyelids.
@@ -364,10 +379,14 @@ export function buildFemaleHead(face: CanonicalFace, facePositions: Float32Array
     // A 12 mm globe seated so its cornea is level with the palpebral aperture.
     // Seating it too far forward is what made the previous eyes read as beads
     // stuck onto the face.
-    // A 12 mm globe seated so its cornea clears the lid margins without
-    // bulging through the skin around the orbit.
-    const radius = 1.32
-    const seat = 0.98
+    // A *sphere* cannot work here. The canonical eyelid contour is a flat
+    // almond, and no seating depth exists at which a 12 mm ball both reaches
+    // the aperture and stays behind the skin around the orbit — so it bulges
+    // through, and what the viewer sees is a round ball rather than an
+    // eye-shaped opening. The globe is therefore an ellipsoid built *from the
+    // aperture*: its silhouette is the almond itself, and it is flattened along
+    // the view axis so it can never break the surface.
+    const seat = halfHeight * 1.15
     return {
       centre: [
         centre[0] - forward[0] * seat,
@@ -375,7 +394,8 @@ export function buildFemaleHead(face: CanonicalFace, facePositions: Float32Array
         centre[2] - forward[2] * seat,
       ] as [number, number, number],
       forward,
-      radius,
+      halfWidth,
+      halfHeight,
     }
   })
 

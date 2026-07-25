@@ -406,6 +406,36 @@ in every unit test and still be wrong on screen.
 
 48 web tests, 107 backend, lint and build clean.
 
+## Completed — Eyes, neck and head shape (2026-07-25, fourth pass)
+
+Three specific notes from the product owner: the eyes bulge out and are round,
+the neck is too long, the head shape needs to read as a woman's.
+
+**A sphere cannot be an eye here.** This was the root cause of both eye
+complaints, and it took three passes to see it. The canonical eyelid contour is
+a *flat almond*, and there is no seating depth at which a 12 mm ball both
+reaches the aperture and stays behind the skin around the orbit — so it always
+bulged through, and what the viewer saw was a protruding round bead rather than
+an eye-shaped opening. Every previous attempt was tuning the seating depth of a
+shape that could not work.
+
+The globe is now an **ellipsoid built from the aperture itself**: its x and y
+radii come from the eyelid contour, so its silhouette *is* the almond, and it is
+flattened along the view axis so it can never break the surface. The iris is
+sized to the aperture height, the way a real iris is — tall enough that the lids
+just graze it. (One regression on the way: the iris was placed at 1.2× the half
+-height while the flattened globe extends to 1.55×, so it sat *inside* the globe
+and was culled by the globe's own depth pass. It renders in front now.)
+
+**Neck:** the shoulders start ~2 units higher and flare earlier, so far less
+column shows between jaw and bust.
+
+**Head shape:** softer mandible, shorter lower third, fuller malar volume, and
+the hair now parts off-centre — splitting the sweep at dead centre-front gave
+two symmetrical curtains, which reads as a helmet rather than as a hairstyle.
+
+48 web tests, 107 backend, lint and build clean.
+
 ## In Progress
 
 Nothing mid-flight.

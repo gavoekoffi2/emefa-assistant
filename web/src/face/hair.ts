@@ -18,6 +18,8 @@ import { SKULL_CENTRE, SKULL_RADII, hash01, lerp, smoothstep } from './femaleHea
 const STRAND_SEGMENTS = 20
 /** Fraction of a strand that hugs the scalp before it falls free. */
 const SCALP_FRACTION = 0.52
+/** Where the hair parts, in azimuth. Off-centre, the way hair is worn. */
+const PART_AZIMUTH = 0.45
 
 /**
  * Polar angle of the hairline for a given azimuth (0 = facing forward). Fitted
@@ -85,11 +87,12 @@ export function buildHairStrands(strandCount = 620): HairBuild {
     // Azimuths are spread with a golden-ratio walk so no seam or stripe forms,
     // then nudged away from dead-centre-front to open a natural parting.
     const spread = (strand * 0.6180339887) % 1
-    // Offset so the parting falls off-centre, the way hair is actually worn.
-    const rootAzimuth = ((spread * 2 - 1) * Math.PI) + 0.34
+    const rootAzimuth = (spread * 2 - 1) * Math.PI
     const wrapped = Math.atan2(Math.sin(rootAzimuth), Math.cos(rootAzimuth))
     const frontness = Math.max(0, Math.cos(wrapped))
-    const side = wrapped < 0 ? -1 : 1
+    // Strands sweep away from a parting set off-centre. Splitting at dead
+    // centre-front gives two symmetrical curtains, which reads as a helmet.
+    const side = wrapped < PART_AZIMUTH ? -1 : 1
 
     const hairline = hairlineAngle(wrapped)
     // Capped short of the hairline so no root lands on the forehead itself.
@@ -100,7 +103,7 @@ export function buildHairStrands(strandCount = 620): HairBuild {
     const wave = lerp(0.35, 1.25, hash01(strand * 11.3 + 5.1))
     const phase = hash01(strand * 5.9 + 9.4) * Math.PI * 2
     // Front strands sweep outwards instead of falling across the face.
-    const sweep = side * frontness * 1.15
+    const sweep = side * frontness * 1.15 * lerp(0.55, 1, Math.min(1, Math.abs(wrapped - PART_AZIMUTH)))
 
     // Resolved up front rather than captured mid-loop, so the fall always
     // starts exactly where the scalp phase ends whatever the segment count is.

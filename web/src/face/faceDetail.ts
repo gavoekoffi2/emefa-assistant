@@ -63,7 +63,7 @@ export function buildFaceDetail(): FaceDetail {
     for (let hair = 0; hair < 48; hair += 1) {
       // Trimmed at both ends: the outermost landmark sits past where a brow
       // actually stops, and running tufts out to it reads as a fringe.
-      const t = 0.14 + ((hair + 0.5) / 48) * 0.8
+      const t = 0.14 + ((hair + 0.5) / 48) * 0.72
       const jitter = hash01(hair * 3.7 + side * 41)
       // Brows sit on the orbital rim, not halfway up the forehead.
       // `t` runs outer → inner, so the tail of the brow is at t ≈ 0.
@@ -73,8 +73,8 @@ export function buildFaceDetail(): FaceDetail {
       // Hair grows steeply at the head of the brow and lies flat at the tail.
       const rise = lerp(0.34, 0.72, jitter) * lerp(0.55, 1, t)
 
-      endpoint(sampleArc(lower, rootT), [direction * 0.05, -0.3, 0.08], 0.45 + 0.55 * smoothstep(0, 0.32, t))
-      endpoint(sampleArc(lower, tipT), [direction * 0.13, -0.3 + rise, 0.08], 0.12)
+      endpoint(sampleArc(lower, rootT), [direction * 0.05, -0.78, 0.08], 0.45 + 0.55 * smoothstep(0, 0.32, t))
+      endpoint(sampleArc(lower, tipT), [direction * 0.13, -0.78 + rise, 0.08], 0.12)
     }
   })
 

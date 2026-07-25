@@ -227,7 +227,7 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
 
     const skinMaterial = surface(.3, .3)
     const cavityMaterial = surface(.1, .12)
-    const globeMaterial = surface(1.15, .05)
+    const globeMaterial = surface(.85, .04)
     const orbitMaterial = surface(.055, 0, THREE.BackSide)
 
     // Horizontal slices and vertical meridians: the grid that *is* the face.
@@ -437,37 +437,42 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
         const group = new THREE.Group()
         group.position.set(eye.centre[0], eye.centre[1], eye.centre[2])
 
-        // Orbit shell: an inverted sphere that contains the globe. The sockets
-        // were carved out of the mesh so an eyeball could sit behind them,
-        // which left the canthi looking straight through the skull. It is
-        // flattened along the view axis so it stays *behind* the skin around
-        // the orbit — a round shell of this width breaks the surface and draws
-        // a bright intersection ellipse right across the eye.
-        const orbitGeometry = withUnitOcclusion(new THREE.SphereGeometry(eye.radius * 1.24, 18, 12))
+        // The globe is an ellipsoid cut to the palpebral aperture, not a ball:
+        // its silhouette *is* the almond, so the eye reads as an eye-shaped
+        // opening. Flattened along the view axis so it can never break the skin
+        // around the orbit — a sphere here bulges through and the viewer sees a
+        // protruding round bead instead of an eye.
+        const unitSphere = withUnitOcclusion(new THREE.SphereGeometry(1, 24, 16))
+        const globeScale = new THREE.Vector3(eye.halfWidth * 1.02, eye.halfHeight * 1.04, eye.halfHeight * 1.55)
+
+        // Orbit backing, a shade larger, so a slight turn of the head never
+        // opens a gap at the canthi.
         for (const material of [orbitMaterial, new THREE.MeshBasicMaterial({
           colorWrite: false, depthWrite: true, side: THREE.BackSide,
         })]) {
-          const shell = new THREE.Mesh(orbitGeometry, material)
-          shell.scale.set(1, 1, .58)
+          const shell = new THREE.Mesh(unitSphere, material)
+          shell.scale.set(globeScale.x * 1.1, globeScale.y * 1.15, globeScale.z * 0.95)
           group.add(shell)
         }
 
-        const globeGeometry = withUnitOcclusion(new THREE.SphereGeometry(eye.radius, 22, 16))
-        group.add(new THREE.Mesh(globeGeometry, globeMaterial))
-        group.add(new THREE.Mesh(globeGeometry, new THREE.MeshBasicMaterial({
+        for (const material of [globeMaterial, new THREE.MeshBasicMaterial({
           colorWrite: false, depthWrite: true,
           polygonOffset: true, polygonOffsetFactor: 1.4, polygonOffsetUnits: 1.4,
-        })))
+        })]) {
+          const globe = new THREE.Mesh(unitSphere, material)
+          globe.scale.copy(globeScale)
+          group.add(globe)
+        }
 
-        // Iris as an annulus: the empty middle is the pupil, which is the only
-        // way to get a dark centre out of an additively blended hologram.
-        const iris = new THREE.Mesh(new THREE.CircleGeometry(eye.radius * .62, 34), irisMaterial)
-        iris.position.z = eye.radius * .94
+        // Iris sized to the aperture height, the way a real iris is: tall
+        // enough that the lids just graze it top and bottom.
+        const iris = new THREE.Mesh(new THREE.CircleGeometry(eye.halfHeight * .96, 34), irisMaterial)
+        iris.position.z = eye.halfHeight * 1.55 + .04
         group.add(iris)
         // A single specular highlight, offset towards the key light. Nothing
         // else so cheaply makes an eye look wet and alive.
-        const catchlight = new THREE.Mesh(new THREE.CircleGeometry(eye.radius * .075, 10), catchlightMaterial)
-        catchlight.position.set(-eye.radius * .2, eye.radius * .24, eye.radius * .96)
+        const catchlight = new THREE.Mesh(new THREE.CircleGeometry(eye.halfHeight * .17, 10), catchlightMaterial)
+        catchlight.position.set(-eye.halfHeight * .32, eye.halfHeight * .36, eye.halfHeight * 1.55 + .07)
         group.add(catchlight)
 
         // Resting orientation is stored as Euler angles rather than applied via

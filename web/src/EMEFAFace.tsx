@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
 import type { VoiceState } from './App'
 import './EMEFAFace.css'
 
@@ -130,6 +131,33 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
     const accentMaterial = new THREE.LineBasicMaterial({
       color: 0x52e5ff, transparent: true, opacity: .64,
       blending: THREE.AdditiveBlending, depthWrite: false,
+    })
+    // MediaPipe's 468-point canonical face gives EMEFA genuine human anatomy:
+    // eye sockets, nasal bridge and wings, lips, cheek planes, jaw and chin.
+    // The Apache-2.0 model is bundled locally so the face never depends on a
+    // third-party service or network request at conversation time.
+    const anatomicalFaceMaterial = new THREE.MeshBasicMaterial({
+      color: 0x83efff,
+      wireframe: true,
+      transparent: true,
+      opacity: .34,
+      blending: THREE.AdditiveBlending,
+      depthTest: false,
+      depthWrite: false,
+    })
+    let disposed = false
+    new OBJLoader().load('/models/emefa-canonical-face.obj', (anatomicalFace) => {
+      if (disposed) return
+      anatomicalFace.scale.set(.2, .2, .13)
+      anatomicalFace.position.set(0, .16, .035)
+      anatomicalFace.renderOrder = 1
+      anatomicalFace.traverse((object) => {
+        if (object instanceof THREE.Mesh) {
+          object.material = anatomicalFaceMaterial
+          object.renderOrder = 1
+        }
+      })
+      bust.add(anatomicalFace)
     })
 
     // A colorless anatomical surface writes only to the depth buffer. It hides
@@ -363,6 +391,7 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
       color.setHex(STATE_COLORS[currentState])
       dimMaterial.color.lerp(color, .05)
       accentMaterial.color.lerp(color, .04)
+      anatomicalFaceMaterial.color.lerp(color, .045)
       pointMaterial.color.lerp(color, .04)
       brightMaterial.opacity = .72 + smoothVoice * .25 + Math.sin(elapsed * 2.4) * .035
       pointMaterial.opacity = .38 + smoothVoice * .22
@@ -377,6 +406,7 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
     animate()
 
     return () => {
+      disposed = true
       cancelAnimationFrame(frame)
       observer.disconnect()
       canvas.removeEventListener('pointermove', handlePointer)

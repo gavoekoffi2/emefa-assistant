@@ -65,6 +65,9 @@ test('holographic entity uses a tall, wider human feminine head instead of a sph
   assert.match(face, /features\.scale\.x = FEATURE_WIDTH_SCALE/)
   assert.match(face, /prevent the cranium from reading as a striped fruit/)
   assert.match(face, /colorWrite: false, depthWrite: true/)
+  assert.match(face, /OBJLoader/)
+  assert.match(face, /emefa-canonical-face\.obj/)
+  assert.match(face, /MediaPipe's 468-point canonical face/)
 })
 
 test('voice room supports a continuous session, typed turns, and clean shutdown', () => {

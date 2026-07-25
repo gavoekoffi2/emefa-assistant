@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     brief_email_to: str | None = None
     elevenlabs_api_key: SecretStr | None = None
     elevenlabs_agent_id: str | None = None
+    elevenlabs_voice_id: str | None = None
     email_account: str | None = None
     himalaya_binary: str = "himalaya"
     himalaya_config: Path | None = None

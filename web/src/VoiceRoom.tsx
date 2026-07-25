@@ -7,6 +7,7 @@ import { MemoryPanel } from './MemoryPanel'
 import { PipelinePanel } from './PipelinePanel'
 import { DeliverablesPanel } from './DeliverablesPanel'
 import type { DeliverableRecord, SourceFileRecord } from './DeliverablesPanel'
+import { useClonedVoice } from './useClonedVoice'
 
 // three.js is heavy. Both 3D surfaces load as their own chunks so the
 // activation shell never downloads a renderer it will not use — splitting only
@@ -24,6 +25,7 @@ import type { Session, VoiceState } from './App'
 type ConversationTurn = { id: string; role: 'user' | 'assistant'; text: string }
 type SignedSession = { signed_url: string }
 type VoiceMessage = { message?: string; source?: string; role?: string }
+type VoiceResponsePart = { text?: string; type?: 'start' | 'delta' | 'stop'; event_id?: number }
 type AgentRun = {
   status: 'completed' | 'confirmation_required' | 'blocked' | 'failed' | 'rejected'
   answer?: string | null
@@ -65,6 +67,32 @@ const agentErrorCopy: Record<string, string> = {
   invalid_brain_step: 'Le moteur a renvoyé une réponse invalide. Réessayez.',
 }
 
+function splitSpeakableText(text: string, force = false) {
+  const segments: string[] = []
+  let remainder = text
+  while (remainder.length > 0) {
+    const sentence = remainder.match(/^([\s\S]{18,}?[.!?…;:])(?:\s+|$)/)
+    if (sentence) {
+      segments.push(sentence[1].trim())
+      remainder = remainder.slice(sentence[0].length)
+      continue
+    }
+    if (remainder.length > 220) {
+      const boundary = remainder.lastIndexOf(' ', 200)
+      const cut = boundary > 80 ? boundary : 200
+      segments.push(remainder.slice(0, cut).trim())
+      remainder = remainder.slice(cut).trimStart()
+      continue
+    }
+    break
+  }
+  if (force && remainder.trim()) {
+    segments.push(remainder.trim())
+    remainder = ''
+  }
+  return { segments, remainder }
+}
+
 async function getVoiceTicket(): Promise<SignedSession> {
   const response = await fetch('/v1/realtime/session', { credentials: 'include' })
   if (!response.ok) {
@@ -100,7 +128,18 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   const [deliverableCount, setDeliverableCount] = useState(0)
   const [deliverablesRefresh, setDeliverablesRefresh] = useState(0)
   const [visualMode, setVisualMode] = useState<'face' | 'core'>('face')
+  const [cloneFailed, setCloneFailed] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const streamedResponseRef = useRef(false)
+  const responseBufferRef = useRef('')
+  const bargeInFramesRef = useRef(0)
+
+  const clonedVoice = useClonedVoice({
+    onFailure: (message) => {
+      setCloneFailed(true)
+      setNotice(message)
+    },
+  })
 
   useEffect(() => {
     api<{ text: string }>('/v1/briefings/today')
@@ -228,9 +267,14 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   }
 
   const conversation = useConversation({
-    onConnect: () => { setNotice(''); setState('listening') },
-    onDisconnect: () => setState('idle'),
+    onConnect: () => {
+      conversation.setVolume({ volume: cloneFailed ? 1 : 0 })
+      setNotice('')
+      setState('listening')
+    },
+    onDisconnect: () => { clonedVoice.disable(); setState('idle') },
     onError: (error) => {
+      clonedVoice.disable()
       setState('error')
       setNotice(typeof error === 'string' ? error : 'La conversation vocale a été interrompue.')
     },
@@ -241,16 +285,68 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       if (!text) return
       const isUser = payload.source === 'user' || payload.role === 'user'
       if (isUser) {
+        clonedVoice.interrupt()
+        responseBufferRef.current = ''
+        streamedResponseRef.current = false
         setTranscript(text)
         setHistory((current) => [...current.slice(-7), { id: crypto.randomUUID(), role: 'user', text }])
         setState('thinking')
       } else {
+        // Older provider sessions may omit progressive response events.
+        if (!streamedResponseRef.current) clonedVoice.enqueue(text)
         setAnswer(text)
         setHistory((current) => [...current.slice(-7), { id: crypto.randomUUID(), role: 'assistant', text }])
         setActiveNodes([0, 1 + Math.floor(Math.random() * (graphNodes.length - 1))])
       }
     },
+    onInterruption: () => {
+      clonedVoice.interrupt()
+      bargeInFramesRef.current = 0
+      responseBufferRef.current = ''
+      streamedResponseRef.current = false
+      setState('listening')
+    },
+    onVadScore: ({ vadScore }) => {
+      if (!clonedVoice.isSpeaking) {
+        bargeInFramesRef.current = 0
+        return
+      }
+      bargeInFramesRef.current = vadScore >= 0.78 ? bargeInFramesRef.current + 1 : 0
+      if (bargeInFramesRef.current >= 2) {
+        clonedVoice.interrupt()
+        bargeInFramesRef.current = 0
+        responseBufferRef.current = ''
+        setState('listening')
+      }
+    },
+    onAgentChatResponsePart: (part: VoiceResponsePart) => {
+      if (part.type === 'start') {
+        responseBufferRef.current = ''
+        streamedResponseRef.current = false
+        return
+      }
+      if (part.type === 'delta' && part.text) {
+        streamedResponseRef.current = true
+        responseBufferRef.current += part.text
+        const split = splitSpeakableText(responseBufferRef.current)
+        responseBufferRef.current = split.remainder
+        split.segments.forEach(clonedVoice.enqueue)
+        return
+      }
+      if (part.type === 'stop') {
+        const split = splitSpeakableText(responseBufferRef.current, true)
+        responseBufferRef.current = ''
+        split.segments.forEach(clonedVoice.enqueue)
+      }
+    },
   })
+
+  const setConversationVolume = conversation.setVolume
+  useEffect(() => {
+    if (cloneFailed && conversation.status === 'connected') {
+      setConversationVolume({ volume: 1 })
+    }
+  }, [cloneFailed, conversation.status, setConversationVolume])
 
   const live = conversation.status !== 'disconnected'
 
@@ -268,15 +364,17 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
 
   useEffect(() => {
     if (conversation.status === 'connecting') setState('thinking')
-    else if (conversation.status === 'connected') setState(conversation.isSpeaking ? 'speaking' : 'listening')
+    else if (conversation.status === 'connected') setState(conversation.isSpeaking || clonedVoice.isSpeaking ? 'speaking' : 'listening')
     else setState((current) => current === 'error' ? current : 'idle')
-  }, [conversation.status, conversation.isSpeaking])
+  }, [conversation.status, conversation.isSpeaking, clonedVoice.isSpeaking])
 
   const startRealtime = async () => {
     setNotice(''); setState('thinking')
     try {
       const permissionStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
       permissionStream.getTracks().forEach((track) => track.stop())
+      setCloneFailed(false)
+      await clonedVoice.activate()
       const ticket = await getVoiceTicket()
       await conversation.startSession({
         signedUrl: ticket.signed_url,
@@ -315,6 +413,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       })
       return true
     } catch (cause) {
+      clonedVoice.disable()
       setState('error')
       const denied = cause instanceof DOMException && ['NotAllowedError', 'PermissionDeniedError'].includes(cause.name)
       setNotice(denied ? 'Autorisez le microphone pour parler directement à EMEFA.' : cause instanceof Error ? cause.message : 'EMEFA ne peut pas ouvrir la conversation vocale.')
@@ -323,7 +422,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   }
 
   const toggleLive = async () => {
-    if (live) { await conversation.endSession(); return }
+    if (live) { clonedVoice.disable(); await conversation.endSession(); return }
     await startRealtime()
   }
 
@@ -447,7 +546,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
           {visualMode === 'face'
             ? (
               <Suspense fallback={<VoiceOrb state={state} onClick={() => void toggleLive()} />}>
-                <EMEFAFace state={state} onClick={() => void toggleLive()} getOutputVolume={conversation.getOutputVolume} getOutputFrequencyData={conversation.getOutputByteFrequencyData} />
+                <EMEFAFace state={state} onClick={() => void toggleLive()} getOutputVolume={cloneFailed ? conversation.getOutputVolume : clonedVoice.getOutputVolume} getOutputFrequencyData={cloneFailed ? conversation.getOutputByteFrequencyData : clonedVoice.getOutputByteFrequencyData} />
               </Suspense>
             )
             : <VoiceOrb state={state} onClick={() => void toggleLive()} />}

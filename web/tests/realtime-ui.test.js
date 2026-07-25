@@ -30,22 +30,23 @@ test('voice room uses provider VAD and true barge-in instead of browser speech A
   assert.match(source, /conversation\.isSpeaking/)
 })
 
-test('free local face prototype follows real assistant output audio', () => {
+test('3D holographic face mesh follows real assistant output audio', () => {
   assert.match(source, /EMEFAFace/)
   assert.match(source, /getOutputVolume=\{conversation\.getOutputVolume\}/)
   assert.match(source, /visualMode/)
-  assert.match(face, /getOutputVolume\(\)/)
+  assert.match(face, /outputRef\.current\(\)/)
   assert.match(face, /requestAnimationFrame/)
+  assert.match(face, /THREE\.WebGLRenderer/)
+  assert.match(face, /THREE\.LineLoop/)
+  assert.match(face, /THREE\.Points/)
+  assert.match(face, /lowerPosition\.setXYZ/)
   assert.match(face, /--voice-level/)
-  assert.match(face, /Visage d’EMEFA/)
+  assert.match(face, /Visage holographique 3D d’EMEFA/)
+  assert.match(face, /FACIAL MESH/)
   assert.match(faceCss, /var\(--voice-level\)/)
-  assert.match(faceCss, /emefaBlink/)
-  assert.match(face, /emefa-tech-ring/)
-  assert.match(face, /emefa-hologram-veil/)
-  assert.match(face, /NEURAL LINK/)
-  assert.match(faceCss, /repeating-conic-gradient/)
-  assert.match(faceCss, /repeating-linear-gradient/)
+  assert.match(faceCss, /emefa-wireframe-canvas/)
   assert.match(faceCss, /emefa-projection-cone/)
+  assert.match(faceCss, /repeating-linear-gradient/)
 })
 
 test('voice room supports a continuous session, typed turns, and clean shutdown', () => {

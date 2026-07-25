@@ -87,16 +87,17 @@ export function loopEdges(loops: readonly (readonly number[])[]): Uint32Array {
 export const RIGHT_UPPER_LID = [133, 173, 157, 158, 159, 160, 161, 246, 33]
 export const LEFT_UPPER_LID = [362, 398, 384, 385, 386, 387, 388, 466, 263]
 export const NOSE_BASE = [129, 98, 97, 2, 326, 327, 358]
-/** Nasal dorsum, glabella to tip. Drawn faint — a bright stripe down the
- *  middle of a nose is worse than no nose at all. */
-export const NOSE_BRIDGE = [168, 6, 197, 195, 5, 4]
 
-export const FEATURE_CHAINS: readonly (readonly number[])[] = [NOSE_BRIDGE]
+/** Nostril openings. Without them the nose is a ridge and a line under it. */
+export const RIGHT_NOSTRIL = [166, 75, 60, 20]
+export const LEFT_NOSTRIL = [392, 305, 290, 250]
 
 export const ACCENT_CHAINS: readonly (readonly number[])[] = [
   RIGHT_UPPER_LID,
   LEFT_UPPER_LID,
   NOSE_BASE,
+  RIGHT_NOSTRIL,
+  LEFT_NOSTRIL,
 ]
 
 /** Open polylines of landmark indices flattened into line-segment index pairs. */

@@ -374,6 +374,38 @@ skin. That last test was rewritten twice: a cuboid predicate wrongly flagged the
 temples, and a plain depth predicate wrongly flagged the strands beside the
 ears — the honest test needs the surface normal.
 
+## Completed — Face iteration on the grid (2026-07-25, third pass)
+
+Feedback: still not good. Four things were wrong and all four were fixed.
+
+- **The scalp mask never actually took effect.** The grid's shadow floor
+  (`uShadow`) put a hard lower bound underneath it, so the mask could drive the
+  strength to zero and the lines still drew at a quarter opacity across the
+  whole cranium. That is why the forehead still looked enormous after the mask
+  was added. The floor is now ~0 for the grid materials and the mask multiplies
+  in, so the grid genuinely stops at the hairline.
+- **The eye aperture was being stretched symmetrically**, which drops the lower
+  lid and exposes sclera under the iris — the "startled" look. Real large eyes
+  open upwards: the upper lid rises, the lower lid stays near the limbus.
+- **The iris was a uniform glowing ring**, which is the single detail that most
+  makes a rendered eye read as a machine's. It is now shaded: dark pupil,
+  striated body, bright limbus, plus nostril contours so the nose has an
+  opening rather than just a ridge and a line under it.
+- **The brows spanned the whole gap between the two landmark arcs** — about 1.5
+  units, which reads as a caterpillar high on the forehead. They are now grown
+  off the lower arc alone with a controlled height, brightest at the root, and
+  the lash strokes were cut from a starburst back to something that only
+  thickens the lid margin.
+
+Also: cranium narrowed and the hair mass stopped splaying sideways, so the
+head's height-to-width ratio reads as a head rather than a sphere.
+
+Two of these were *my own regressions* from the previous pass, caught only by
+looking at rendered frames — worth remembering that the geometry can be right
+in every unit test and still be wrong on screen.
+
+48 web tests, 107 backend, lint and build clean.
+
 ## In Progress
 
 Nothing mid-flight.

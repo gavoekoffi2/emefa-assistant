@@ -123,9 +123,12 @@ export function feminizeFace(source: Float32Array): Float32Array {
       const near = smoothstep(3.6, 1.2, Math.hypot(dx, dy, dz))
       if (near <= 0) continue
       // The canonical model's palpebral fissure is ~6 mm tall, which reads as a
-      // squint on a rendered face; a female eye opening is nearer 9–10 mm.
-      positions[index * 3] = cx + dx * lerp(1, 1.3, near)
-      positions[index * 3 + 1] = cy + dy * lerp(1, 1.6, near)
+      // squint; a female eye opening is nearer 9–10 mm. The opening is made
+      // upwards, not symmetrically — dropping the lower lid by the same amount
+      // exposes sclera under the iris and the eye reads as startled.
+      const stretch = dy > 0 ? 1.55 : 1.1
+      positions[index * 3] = cx + dx * lerp(1, 1.42, near)
+      positions[index * 3 + 1] = cy + dy * lerp(1, stretch, near)
       positions[index * 3 + 2] = cz + dz
       // Outer canthus sits a little above the inner one.
       positions[index * 3 + 1] += near * smoothstep(1.4, 3.4, Math.abs(dx)) * 0.26
@@ -177,7 +180,7 @@ export type HeadBuild = {
  * what made the earlier head read as a doll rather than as an adult.
  */
 export const SKULL_CENTRE: [number, number, number] = [0, 0.95, -1]
-export const SKULL_RADII: [number, number, number] = [7.95, 8.5, 9.5]
+export const SKULL_RADII: [number, number, number] = [7.6, 8.4, 9.5]
 const CRANIUM_RINGS = 14
 
 /** Maps model units to scene units; the head ends up ~3.6 units tall. */

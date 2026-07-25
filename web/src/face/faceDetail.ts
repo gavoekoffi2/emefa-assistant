@@ -13,6 +13,7 @@
  */
 
 import { LEFT_BROW_OUTLINE, LEFT_EYE_RING, RIGHT_BROW_OUTLINE, RIGHT_EYE_RING } from './canonicalFace.ts'
+import { smoothstep } from './femaleHead.ts'
 import { hash01, lerp } from './femaleHead.ts'
 
 export type FaceDetail = {
@@ -53,10 +54,10 @@ export function buildFaceDetail(): FaceDetail {
   // brow hair actually grows: steeply upward at the head, flat at the tail.
   const brows = [RIGHT_BROW_OUTLINE, LEFT_BROW_OUTLINE]
   brows.forEach((outline, side) => {
-    const half = outline.length / 2
-    const lower = outline.slice(0, half)
-    // The upper arc is stored reversed relative to the lower one.
-    const upper = outline.slice(half).slice().reverse()
+    // Only the lower arc is used as a spine. Spanning the gap to the upper arc
+    // made the brow as tall as whatever that gap happened to be — about 1.5
+    // units, which reads as a caterpillar sitting high on the forehead.
+    const lower = outline.slice(0, outline.length / 2)
     const direction = side === 0 ? -1 : 1
 
     for (let hair = 0; hair < 48; hair += 1) {
@@ -68,15 +69,32 @@ export function buildFaceDetail(): FaceDetail {
       // `t` runs outer → inner, so the tail of the brow is at t ≈ 0.
       const tail = 1 - t
       const rootT = Math.min(0.995, t + (jitter - 0.5) * 0.05)
-      const tipT = Math.min(0.995, Math.max(0, rootT - 0.042 - tail * 0.04))
+      const tipT = Math.min(0.995, Math.max(0, rootT - 0.05 - tail * 0.04))
+      // Hair grows steeply at the head of the brow and lies flat at the tail.
+      const rise = lerp(0.34, 0.72, jitter) * lerp(0.55, 1, t)
 
-      const spread = lerp(0.25, 0.95, jitter)
-      endpoint(sampleArc(lower, rootT), [direction * 0.05, -1.3, 0.08], 1)
-      endpoint(sampleArc(upper, tipT), [
-        direction * 0.1,
-        lerp(-1.24, -1.02, spread) + tail * 0.08,
-        0.08,
-      ], 0.15)
+      endpoint(sampleArc(lower, rootT), [direction * 0.05, -0.3, 0.08], 0.45 + 0.55 * smoothstep(0, 0.32, t))
+      endpoint(sampleArc(lower, tipT), [direction * 0.13, -0.3 + rise, 0.08], 0.12)
+    }
+  })
+
+  // --- Eyelashes ------------------------------------------------------------
+  // A lid margin drawn as a single line is a wire. Real lashes thicken it and
+  // grow longer towards the outer corner, which is most of what gives an adult
+  // eye its shape from the front.
+  const lidArcs = [RIGHT_EYE_RING, LEFT_EYE_RING]
+  lidArcs.forEach((ring, side) => {
+    const upperLid = ring.slice(ring.length / 2)
+    const direction = side === 0 ? -1 : 1
+    for (let lash = 0; lash < 18; lash += 1) {
+      const t = 0.12 + (lash / 17) * 0.86
+      const length = 0.07 + 0.14 * t * t
+      endpoint(sampleArc(upperLid, t), [0, 0, 0.04], 1)
+      endpoint(sampleArc(upperLid, t), [
+        direction * length * 0.9,
+        length * 0.3,
+        0.04,
+      ], 0.08)
     }
   })
 

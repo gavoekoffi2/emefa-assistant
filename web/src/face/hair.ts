@@ -15,9 +15,9 @@
 import { SKULL_CENTRE, SKULL_RADII, hash01, lerp, smoothstep } from './femaleHead.ts'
 
 /** Segments per strand; 18 is enough for the fall to read as a curve. */
-const STRAND_SEGMENTS = 18
+const STRAND_SEGMENTS = 20
 /** Fraction of a strand that hugs the scalp before it falls free. */
-const SCALP_FRACTION = 0.4
+const SCALP_FRACTION = 0.52
 
 /**
  * Polar angle of the hairline for a given azimuth (0 = facing forward). Fitted
@@ -77,7 +77,7 @@ export type HairBuild = {
 /**
  * @param strandCount lowered on small screens; the silhouette survives it.
  */
-export function buildHairStrands(strandCount = 460): HairBuild {
+export function buildHairStrands(strandCount = 620): HairBuild {
   const positions: number[] = []
   const fade: number[] = []
 
@@ -97,7 +97,7 @@ export function buildHairStrands(strandCount = 460): HairBuild {
     // A wide spread of lengths gives the mass a layered edge instead of a
     // blunt hemline.
     const length = lerp(6.5, 18, hash01(strand * 7.7 + 2.3) ** 0.8) * lerp(0.72, 1, 1 - frontness * 0.55)
-    const wave = lerp(0.5, 1.9, hash01(strand * 11.3 + 5.1))
+    const wave = lerp(0.35, 1.25, hash01(strand * 11.3 + 5.1))
     const phase = hash01(strand * 5.9 + 9.4) * Math.PI * 2
     // Front strands sweep outwards instead of falling across the face.
     const sweep = side * frontness * 1.15
@@ -130,7 +130,7 @@ export function buildHairStrands(strandCount = 460): HairBuild {
         const flare = Math.sin(local * Math.PI) * 0.55 - local * local * 1.5
         const lateral = Math.sin(local * Math.PI * 1.6 + phase) * wave * local
         point = [
-          releasePoint[0] + outward[0] * flare + lateral * 0.6 + side * local * 0.7,
+          releasePoint[0] + outward[0] * flare + lateral * 0.4 + side * local * 0.22,
           releasePoint[1] - drop,
           // Bias the fall backwards so no strand drifts across the face.
           releasePoint[2] + outward[2] * flare - local * 2.2 - frontness * local * 1.6,

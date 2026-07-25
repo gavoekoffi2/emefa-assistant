@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import type { VoiceState } from './App'
 import {
-  ACCENT_CHAINS, FEATURE_CHAINS, FEATURE_LOOPS, chainEdges, loopEdges, parseCanonicalFaceObj,
+  ACCENT_CHAINS, FEATURE_LOOPS, chainEdges, loopEdges, parseCanonicalFaceObj,
 } from './face/canonicalFace.ts'
 import { SKULL_CENTRE, applySkin, buildFemaleHead, feminizeFace, hash01, smoothstep } from './face/femaleHead.ts'
 import { applyExpression, buildFaceRig, mouthAperture } from './face/faceRig.ts'
@@ -135,6 +135,38 @@ const LINE_FRAGMENT = /* glsl */`
   }
 `
 
+// An iris, not a glowing washer. A uniform ring is the single detail that most
+// makes a rendered eye read as a machine's: a real iris is a dark pupil, a
+// striated body, and a bright limbus at its outer edge.
+const IRIS_VERTEX = /* glsl */`
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`
+
+const IRIS_FRAGMENT = /* glsl */`
+  uniform vec3 uBase;
+  uniform vec3 uGlow;
+  uniform float uOpacity;
+  varying vec2 vUv;
+
+  void main() {
+    vec2 offset = vUv - 0.5;
+    float radius = length(offset) * 2.0;
+    if (radius > 1.0) discard;
+
+    float pupil = smoothstep(0.34, 0.46, radius);
+    float body = pupil * (1.0 - smoothstep(0.74, 0.94, radius));
+    float limbus = smoothstep(0.78, 0.94, radius) * (1.0 - smoothstep(0.95, 1.0, radius));
+    float fibres = 0.55 + 0.45 * sin(atan(offset.y, offset.x) * 24.0);
+
+    float alpha = (body * (0.3 + 0.45 * fibres) + limbus * 0.9) * uOpacity;
+    gl_FragColor = vec4(mix(uBase, uGlow, clamp(limbus + body * 0.35, 0.0, 1.0)), alpha);
+  }
+`
+
 /** A real-time, locally rendered 3D holographic facial mesh. */
 export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyData }: EMEFAFaceProps) {
   const buttonRef = useRef<HTMLButtonElement>(null)
@@ -195,26 +227,27 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
 
     const skinMaterial = surface(.3, .3)
     const cavityMaterial = surface(.1, .12)
-    const globeMaterial = surface(.9, .05)
-    const orbitMaterial = surface(.11, 0, THREE.BackSide)
+    const globeMaterial = surface(1.15, .05)
+    const orbitMaterial = surface(.055, 0, THREE.BackSide)
 
     // Horizontal slices and vertical meridians: the grid that *is* the face.
-    const latitudeMaterial = lines(.5, .2)
-    const meridianMaterial = lines(.34, .22)
+    const latitudeMaterial = lines(.5, .02)
+    const meridianMaterial = lines(.34, .02)
     // Lash line and vermilion border, kept faint — they exist because an
     // additive surface cannot render a lid margin, not to outline the face.
     const featureMaterial = lines(.95, .75)
     // Lash line and nose base, brighter than anything else on the face.
     const accentMaterial = lines(1.7, .9)
     const detailMaterial = lines(1, .7)
-    const hairMaterial = lines(.34, .55)
+    const hairMaterial = lines(.52, .5)
     const landmarkMaterial = new THREE.PointsMaterial({
       color: 0xcaf8ff, size: .013, transparent: true, opacity: .4,
       blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true,
     })
-    const irisMaterial = new THREE.MeshBasicMaterial({
-      color: 0xbdf6ff, transparent: true, opacity: .62,
-      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    const irisMaterial = new THREE.ShaderMaterial({
+      uniforms: { ...uniforms, uOpacity: { value: 1 } },
+      vertexShader: IRIS_VERTEX, fragmentShader: IRIS_FRAGMENT,
+      transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
     })
     const catchlightMaterial = new THREE.MeshBasicMaterial({
       color: 0xffffff, transparent: true, opacity: .8,
@@ -302,7 +335,9 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
       // The grid stops at the hairline and hands over to the hair strands; the
       // surface only dims there, so the skull keeps its volume.
       const mask = scalpMask(baseSmooth)
-      const gridShade = occlusion.map((value, vertex) => value * (0.06 + 0.94 * mask[vertex]))
+      // Multiplicative, so the grid genuinely vanishes above the hairline; the
+      // occlusion term then only modulates contrast where the grid is drawn.
+      const gridShade = occlusion.map((value, vertex) => mask[vertex] * (0.45 + 0.55 * value))
       const surfaceShade = occlusion.map((value, vertex) => value * (0.4 + 0.6 * mask[vertex]))
 
       const faceDeformed = new Float32Array(rest)
@@ -377,7 +412,6 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
         model.add(new THREE.LineSegments(lineGeometry, material))
       }
       contourLines(loopEdges(FEATURE_LOOPS), featureMaterial)
-      contourLines(chainEdges(FEATURE_CHAINS), featureMaterial)
       contourLines(chainEdges(ACCENT_CHAINS), accentMaterial)
 
       // Landmark points, drawn only on the 468 canonical vertices: the mesh's
@@ -427,7 +461,7 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
 
         // Iris as an annulus: the empty middle is the pupil, which is the only
         // way to get a dark centre out of an additively blended hologram.
-        const iris = new THREE.Mesh(new THREE.RingGeometry(eye.radius * .24, eye.radius * .58, 32), irisMaterial)
+        const iris = new THREE.Mesh(new THREE.CircleGeometry(eye.radius * .62, 34), irisMaterial)
         iris.position.z = eye.radius * .94
         group.add(iris)
         // A single specular highlight, offset towards the key light. Nothing
@@ -633,7 +667,6 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
       color.setHex(STATE_COLORS[currentState])
       uniforms.uGlow.value.lerp(color, Math.min(1, delta * 2.2))
       landmarkMaterial.color.lerp(color, Math.min(1, delta * 1.6))
-      irisMaterial.color.lerp(color, Math.min(1, delta * 1.6))
       latitudeMaterial.uniforms.uOpacity.value = .48 + viseme.level * .2
       meridianMaterial.uniforms.uOpacity.value = .33 + viseme.level * .14
       landmarkMaterial.opacity = .34 + viseme.level * .18

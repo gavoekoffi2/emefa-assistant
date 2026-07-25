@@ -436,6 +436,77 @@ two symmetrical curtains, which reads as a helmet rather than as a hairstyle.
 
 48 web tests, 107 backend, lint and build clean.
 
+## Completed — Lip-sync root cause, and braided hair (2026-07-25, fifth pass)
+
+### Lip sync was reading the wrong frequencies
+
+`getOutputByteFrequencyData()` does **not** return a raw FFT. The ElevenLabs
+client resamples the analyser into a *voice range* and stretches it across the
+whole buffer, so bin `i` is `100 Hz + (i / binCount) * 7900 Hz`
+(`resampleVoiceRange`, `MAX_VOICE_FREQUENCY = 8000` in
+`@elevenlabs/client`).
+
+This module had been treating that buffer as if it spanned 0 Hz…Nyquist, which
+is the obvious reading and is wrong by roughly 3×. The consequences:
+
+| band            | intended   | actually measured |
+|-----------------|------------|-------------------|
+| F1 (jaw open)   | 150–600 Hz | 147–297 Hz — the pitch fundamental |
+| F2 low (round)  | 600–1200   | 297–495 Hz |
+| F2 high (spread)| 1200–2800  | 495–1008 Hz |
+| sibilance       | 4–12 kHz   | 1.4–4 kHz — i.e. F2/F3 |
+
+Every articulation contrast was therefore computed from the wrong part of the
+spectrum, and the mouth mostly just tracked volume. Bands are now declared in
+hertz and mapped through `binForHz`, derived from `VOICE_RANGE_HZ`.
+
+Second fix: **lip sync no longer gates on the `speaking` state.** That state
+comes from mode-change events which lag the audio and can flip mid-utterance,
+muting the mouth in the middle of a sentence. The analyser is read every frame
+— it reports exactly what is playing — and both accessors return 0 / an empty
+buffer while disconnected, so an idle face simply resolves to a closed mouth.
+Attack time constants were also shortened; the analyser is already reporting
+the present, so smoothing there is pure delay against what the user hears.
+
+### Braided hair
+
+Loose strands from a hairline gave a flat curtain that read as a wig. `braids.ts`
+grows cornrows over the scalp — each a spine with three plaits twisting around
+it — gathered at the nape, plus four loose braids framing the face.
+
+The paths come out right because of the coordinate frame: parametrising the
+scalp about the vertical axis makes hair run around the head like latitude
+lines, whereas cornrows run front-to-back over the crown — which is exactly a
+*meridian* if the poles are put at the ears.
+
+Two defects found while building it, both invisible in the geometry and only
+apparent on screen:
+
+- **Braids buried in the skull.** The cranium is swept from the face's boundary
+  loop, so it runs ~1.1× the idealised skull ellipsoid over the front of the
+  scalp. A shell sized to the ellipsoid put 13% of the hairstyle *inside* the
+  head, where the depth prepass culled it. Points are now projected out past a
+  baked direction→radius field of the actual head (`buildHeadClearance`), and
+  the plaits are projected too — a spine that just clears still leaves the
+  inward third of its braid buried.
+- That clearance field must be built from the **head only**. Including the neck
+  and bust records radii near 3× the skull in the downward directions, and every
+  falling braid gets flung out to meet them.
+
+Also: denser grid (56 slices / 62 meridians), smaller and slightly oval iris,
+head reframed so the braided crown fits.
+
+50 web tests, 107 backend, lint and build clean. New tests cover the voice-range
+bin mapping, vowel formant classification built in hertz, and per-direction
+braid clearance against the real head surface.
+
+### Not replicated
+
+The reference supplied is an AI-generated raster illustration. Its per-strand
+braid detail and photographic facial structure are not reproducible by
+real-time procedural geometry — this is the closest achievable direction
+(braided updo, dense mesh, framing braids), not a copy.
+
 ## In Progress
 
 Nothing mid-flight.
@@ -454,7 +525,7 @@ Nothing mid-flight.
 ## Tests
 
 `cd backend && pip install -e ".[test]" && python -m pytest` → 107 pass.
-`cd web && npm ci && npm run lint && npm test && npm run build` → all pass (48 web tests).
+`cd web && npm ci && npm run lint && npm test && npm run build` → all pass (50 web tests).
 
 ## Decisions
 

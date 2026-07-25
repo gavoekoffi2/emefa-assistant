@@ -193,7 +193,7 @@ export const SKULL_RADII: [number, number, number] = [7.6, 8.4, 9.5]
 const CRANIUM_RINGS = 14
 
 /** Maps model units to scene units; the head ends up ~3.6 units tall. */
-export const MODEL_SCALE = 0.118
+export const MODEL_SCALE = 0.105
 
 function slerpDirection(from: [number, number, number], to: [number, number, number], t: number): [number, number, number] {
   const raw = from[0] * to[0] + from[1] * to[1] + from[2] * to[2]

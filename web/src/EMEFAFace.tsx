@@ -42,6 +42,10 @@ function interpolateProfile(y: number, profile: readonly ProfilePoint[]) {
 const HEAD_BOTTOM = -1.6
 const HEAD_CROWN = 1.95
 const VISIBLE_CROWN = 1.82
+// Claude requested a clearly broader face while preserving the approved height.
+// Separate multipliers keep cranial width and facial features proportional.
+const HEAD_WIDTH_SCALE = 1.3
+const FEATURE_WIDTH_SCALE = 1.25
 const HEAD_WIDTH_PROFILE: readonly ProfilePoint[] = [
   [-1.6, .3], [-1.46, .44], [-1.2, .62], [-.82, .74],
   [-.38, .84], [.02, .9], [.38, .88], [.72, .88],
@@ -63,7 +67,7 @@ function headPoint(y: number, angle: number) {
   const facing = Math.cos(angle)
   const depth = interpolateProfile(y, facing >= 0 ? FACE_DEPTH_PROFILE : REAR_DEPTH_PROFILE)
   return new THREE.Vector3(
-    Math.sin(angle) * width,
+    Math.sin(angle) * width * HEAD_WIDTH_SCALE,
     y,
     facing * depth - .06,
   )
@@ -185,6 +189,7 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
 
     const features = new THREE.Group()
     features.position.z = .02
+    features.scale.x = FEATURE_WIDTH_SCALE
     bust.add(features)
 
     // Brows and eyes are independent luminous splines so blinking stays visible.

@@ -20,20 +20,49 @@ const STATE_COLORS: Record<VoiceState, number> = {
   error: 0xff607c,
 }
 
-function headWidth(y: number) {
-  const normalized = (y + 1.48) / 3.12
-  const cranium = Math.sin(Math.max(0, Math.min(1, normalized)) * Math.PI)
-  const jaw = y < -.55 ? (y + 1.48) * .22 : 0
-  return .59 + cranium * .38 + jaw
+type ProfilePoint = readonly [number, number]
+
+function interpolateProfile(y: number, profile: readonly ProfilePoint[]) {
+  if (y <= profile[0][0]) return profile[0][1]
+  for (let index = 1; index < profile.length; index += 1) {
+    const [nextY, nextValue] = profile[index]
+    const [previousY, previousValue] = profile[index - 1]
+    if (y <= nextY) {
+      const progress = (y - previousY) / (nextY - previousY)
+      const eased = progress * progress * (3 - 2 * progress)
+      return THREE.MathUtils.lerp(previousValue, nextValue, eased)
+    }
+  }
+  return profile[profile.length - 1][1]
 }
 
+// Feminine craniofacial profile: narrow chin, defined jaw, high cheekbones,
+// temples, forehead and rounded crown. The old sine profile was symmetrical
+// top-to-bottom, which made the head read as a melon instead of a human skull.
+const HEAD_WIDTH_PROFILE: readonly ProfilePoint[] = [
+  [-1.48, .27], [-1.38, .39], [-1.15, .56], [-.82, .67],
+  [-.38, .77], [.02, .82], [.38, .78], [.72, .75],
+  [1.08, .7], [1.38, .55], [1.61, .24],
+]
+
+const FACE_DEPTH_PROFILE: readonly ProfilePoint[] = [
+  [-1.48, .39], [-1.18, .56], [-.72, .7], [-.25, .78],
+  [.18, .73], [.62, .68], [1.08, .61], [1.42, .46], [1.61, .25],
+]
+
+const REAR_DEPTH_PROFILE: readonly ProfilePoint[] = [
+  [-1.48, .34], [-1.1, .51], [-.5, .63], [.15, .7],
+  [.72, .75], [1.16, .69], [1.46, .49], [1.61, .24],
+]
+
 function headPoint(y: number, angle: number) {
-  const width = headWidth(y)
-  const depth = .69 + Math.max(0, y) * .035
+  const width = interpolateProfile(y, HEAD_WIDTH_PROFILE)
+  const facing = Math.cos(angle)
+  const depth = interpolateProfile(y, facing >= 0 ? FACE_DEPTH_PROFILE : REAR_DEPTH_PROFILE)
   return new THREE.Vector3(
     Math.sin(angle) * width,
     y,
-    Math.cos(angle) * depth - .06,
+    facing * depth - .06,
   )
 }
 
@@ -96,6 +125,38 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
       blending: THREE.AdditiveBlending, depthWrite: false,
     })
 
+    // A colorless anatomical surface writes only to the depth buffer. It hides
+    // the wireframe on the far side of the skull, so the face reads as a solid
+    // human volume rather than a transparent spherical cage.
+    const surfaceRows = 34
+    const surfaceColumns = 48
+    const surfacePositions: number[] = []
+    const surfaceIndices: number[] = []
+    for (let row = 0; row <= surfaceRows; row += 1) {
+      const y = -1.48 + row / surfaceRows * 3.09
+      for (let column = 0; column <= surfaceColumns; column += 1) {
+        const point = headPoint(y, -Math.PI + column / surfaceColumns * Math.PI * 2)
+        surfacePositions.push(point.x, point.y, point.z)
+      }
+    }
+    for (let row = 0; row < surfaceRows; row += 1) {
+      for (let column = 0; column < surfaceColumns; column += 1) {
+        const current = row * (surfaceColumns + 1) + column
+        const next = current + surfaceColumns + 1
+        surfaceIndices.push(current, next, current + 1, next, next + 1, current + 1)
+      }
+    }
+    const surfaceGeometry = new THREE.BufferGeometry()
+    surfaceGeometry.setAttribute('position', new THREE.Float32BufferAttribute(surfacePositions, 3))
+    surfaceGeometry.setIndex(surfaceIndices)
+    surfaceGeometry.computeVertexNormals()
+    const depthOccluder = new THREE.Mesh(
+      surfaceGeometry,
+      new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true, side: THREE.FrontSide }),
+    )
+    depthOccluder.renderOrder = -1
+    bust.add(depthOccluder)
+
     // Horizontal contour slices: the luminous strokes themselves form the skull.
     for (let row = 0; row < 29; row += 1) {
       const y = -1.47 + row / 28 * 3.08
@@ -148,12 +209,18 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
     const mouthCore = curve([new THREE.Vector3(-.29, -.57, .725), new THREE.Vector3(0, -.535, .755), new THREE.Vector3(.29, -.57, .725)], accentMaterial)
     features.add(upperLip, lowerLip, mouthCore)
 
+    // Cheekbones and a tapered jaw reinforce feminine facial anatomy.
+    features.add(
+      curve([new THREE.Vector3(-.67, .03, .54), new THREE.Vector3(-.58, -.18, .68), new THREE.Vector3(-.47, -.38, .7)], dimMaterial),
+      curve([new THREE.Vector3(.67, .03, .54), new THREE.Vector3(.58, -.18, .68), new THREE.Vector3(.47, -.38, .7)], dimMaterial),
+    )
+
     // Jaw accent, ears, neck and shoulders complete the floating holographic bust.
     features.add(curve([
-      new THREE.Vector3(-.72, -.72, .46), new THREE.Vector3(-.58, -1.18, .56),
-      new THREE.Vector3(-.28, -1.43, .65), new THREE.Vector3(0, -1.5, .7),
-      new THREE.Vector3(.28, -1.43, .65), new THREE.Vector3(.58, -1.18, .56),
-      new THREE.Vector3(.72, -.72, .46),
+      new THREE.Vector3(-.68, -.72, .48), new THREE.Vector3(-.54, -1.1, .56),
+      new THREE.Vector3(-.25, -1.39, .48), new THREE.Vector3(0, -1.5, .4),
+      new THREE.Vector3(.25, -1.39, .48), new THREE.Vector3(.54, -1.1, .56),
+      new THREE.Vector3(.68, -.72, .48),
     ], accentMaterial))
     features.add(
       curve(ellipsePoints(-.91, -.03, .115, .3, .05), dimMaterial, true),

@@ -55,6 +55,13 @@ test('3D holographic face mesh follows real assistant output audio', () => {
   assert.match(faceCss, /repeating-linear-gradient/)
 })
 
+test('holographic entity uses an anatomical feminine head profile instead of a spherical cage', () => {
+  assert.match(face, /HEAD_WIDTH_PROFILE/)
+  assert.match(face, /FACE_DEPTH_PROFILE/)
+  assert.match(face, /narrow chin, defined jaw, high cheekbones/)
+  assert.match(face, /colorWrite: false, depthWrite: true/)
+})
+
 test('voice room supports a continuous session, typed turns, and clean shutdown', () => {
   assert.match(source, /conversation\.sendUserMessage/)
   assert.match(source, /conversation\.sendUserActivity/)

@@ -50,6 +50,8 @@ export function EMEFAFace({ state, onClick, getOutputVolume }: EMEFAFaceProps) {
       <span className="emefa-face-halo halo-b" aria-hidden="true" />
       <span className="emefa-orbit orbit-a" aria-hidden="true"><i /><i /><i /></span>
       <span className="emefa-orbit orbit-b" aria-hidden="true"><i /><i /></span>
+      <span className="emefa-tech-ring" aria-hidden="true" />
+      <span className="emefa-hologram-veil" aria-hidden="true" />
       <span className="emefa-hud-corners" aria-hidden="true"><i /><i /><i /><i /></span>
       <span className="emefa-scan-beam" aria-hidden="true" />
       <span className="emefa-hud-data data-left" aria-hidden="true">

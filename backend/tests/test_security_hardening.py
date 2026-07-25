@@ -109,3 +109,26 @@ async def test_responses_carry_a_request_id(client):
     response = await client.get("/health")
     assert response.status_code == 200
     assert len(response.headers["X-Request-ID"]) == 16
+
+
+@pytest.mark.asyncio
+async def test_web_shell_is_never_cached_but_hashed_assets_can_be_cached(tmp_path):
+    web = tmp_path / "dist"
+    assets = web / "assets"
+    assets.mkdir(parents=True)
+    (web / "index.html").write_text("<html>EMEFA</html>")
+    (assets / "index-version.css").write_text("body{}")
+    app = create_app(
+        Settings(
+            enrollment_code="CODE-SECRET",
+            database_path=tmp_path / "cache.db",
+            cookie_secure=False,
+            web_dist_path=web,
+        )
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as web_client:
+        shell = await web_client.get("/")
+        asset = await web_client.get("/assets/index-version.css")
+    assert shell.headers["Cache-Control"] == "no-store, must-revalidate"
+    assert asset.headers["Cache-Control"] == "public, max-age=31536000, immutable"

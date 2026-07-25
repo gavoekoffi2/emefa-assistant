@@ -40,6 +40,12 @@ test('free local face prototype follows real assistant output audio', () => {
   assert.match(face, /Visage d’EMEFA/)
   assert.match(faceCss, /var\(--voice-level\)/)
   assert.match(faceCss, /emefaBlink/)
+  assert.match(face, /emefa-tech-ring/)
+  assert.match(face, /emefa-hologram-veil/)
+  assert.match(face, /NEURAL LINK/)
+  assert.match(faceCss, /repeating-conic-gradient/)
+  assert.match(faceCss, /repeating-linear-gradient/)
+  assert.match(faceCss, /emefa-projection-cone/)
 })
 
 test('voice room supports a continuous session, typed turns, and clean shutdown', () => {

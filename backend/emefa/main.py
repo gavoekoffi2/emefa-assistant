@@ -309,6 +309,12 @@ def create_app(
         )
         if request.url.path.startswith("/v1/"):
             response.headers["Cache-Control"] = "no-store"
+        elif request.url.path.startswith("/assets/"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        elif response.headers.get("Content-Type", "").startswith("text/html"):
+            # The HTML shell contains the current hashed JS/CSS filenames. It
+            # must never remain stale on a phone after a production deploy.
+            response.headers["Cache-Control"] = "no-store, must-revalidate"
         return response
 
     @application.get("/health", tags=["system"])

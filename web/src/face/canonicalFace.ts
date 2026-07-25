@@ -55,16 +55,17 @@ export const RIGHT_BROW_OUTLINE = [46, 53, 52, 65, 55, 107, 66, 105, 63, 70]
 export const LEFT_BROW_OUTLINE = [276, 283, 282, 295, 285, 336, 296, 334, 293, 300]
 
 /**
- * Contours that have to be drawn as explicit lines rather than left to shading:
- * the lash line, the brows and the vermilion border are what a viewer actually
- * uses to locate a face, and an additive surface renders none of them on its
- * own. They index the shared vertex buffer, so they blink and speak for free.
+ * Contours drawn as explicit lines: the lash line and the vermilion border.
+ * Kept deliberately faint — they exist because an additive surface cannot
+ * render a lid margin on its own, not to outline the face. The brows are *not*
+ * here: an outlined brow is the single strongest "drawn by hand" cue, so they
+ * are grown as hair tufts in `faceDetail.ts` instead.
+ *
+ * They index the shared vertex buffer, so they blink and speak for free.
  */
 export const FEATURE_LOOPS: readonly (readonly number[])[] = [
   RIGHT_EYE_RING,
   LEFT_EYE_RING,
-  RIGHT_BROW_OUTLINE,
-  LEFT_BROW_OUTLINE,
   OUTER_LIP_RING,
   INNER_LIP_RING,
 ]
@@ -74,6 +75,35 @@ export function loopEdges(loops: readonly (readonly number[])[]): Uint32Array {
   const edges: number[] = []
   for (const loop of loops) {
     for (let i = 0; i < loop.length; i += 1) edges.push(loop[i], loop[(i + 1) % loop.length])
+  }
+  return new Uint32Array(edges)
+}
+
+/**
+ * Open chains drawn brighter than everything else: the upper lash line and the
+ * base of the nose. These are the two contours a viewer uses to fix where the
+ * eyes and the nose are, and on a uniform grid neither of them survives.
+ */
+export const RIGHT_UPPER_LID = [133, 173, 157, 158, 159, 160, 161, 246, 33]
+export const LEFT_UPPER_LID = [362, 398, 384, 385, 386, 387, 388, 466, 263]
+export const NOSE_BASE = [129, 98, 97, 2, 326, 327, 358]
+/** Nasal dorsum, glabella to tip. Drawn faint — a bright stripe down the
+ *  middle of a nose is worse than no nose at all. */
+export const NOSE_BRIDGE = [168, 6, 197, 195, 5, 4]
+
+export const FEATURE_CHAINS: readonly (readonly number[])[] = [NOSE_BRIDGE]
+
+export const ACCENT_CHAINS: readonly (readonly number[])[] = [
+  RIGHT_UPPER_LID,
+  LEFT_UPPER_LID,
+  NOSE_BASE,
+]
+
+/** Open polylines of landmark indices flattened into line-segment index pairs. */
+export function chainEdges(chains: readonly (readonly number[])[]): Uint32Array {
+  const edges: number[] = []
+  for (const chain of chains) {
+    for (let i = 0; i < chain.length - 1; i += 1) edges.push(chain[i], chain[i + 1])
   }
   return new Uint32Array(edges)
 }

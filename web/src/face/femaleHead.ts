@@ -94,7 +94,7 @@ export function feminizeFace(source: Float32Array): Float32Array {
 
     // 6. Nose — narrower alar base and a slightly shallower dorsum.
     const nose = smoothstep(2, 4.4, z) * smoothstep(3.8, 2.4, y) * smoothstep(-3.8, -2.4, y) * smoothstep(3.4, 1.6, absX)
-    x *= lerp(1, 0.845, nose)
+    x *= lerp(1, 0.8, nose)
     z -= 0.38 * nose * smoothstep(1, -2.6, y)
 
     // 7. Lips — fuller vertically and more projected, with a smooth transition
@@ -124,8 +124,8 @@ export function feminizeFace(source: Float32Array): Float32Array {
       if (near <= 0) continue
       // The canonical model's palpebral fissure is ~6 mm tall, which reads as a
       // squint on a rendered face; a female eye opening is nearer 9–10 mm.
-      positions[index * 3] = cx + dx * lerp(1, 1.09, near)
-      positions[index * 3 + 1] = cy + dy * lerp(1, 1.34, near)
+      positions[index * 3] = cx + dx * lerp(1, 1.3, near)
+      positions[index * 3 + 1] = cy + dy * lerp(1, 1.6, near)
       positions[index * 3 + 2] = cz + dz
       // Outer canthus sits a little above the inner one.
       positions[index * 3 + 1] += near * smoothstep(1.4, 3.4, Math.abs(dx)) * 0.26
@@ -168,12 +168,16 @@ export type HeadBuild = {
 
 /**
  * Skull ellipsoid the cranium is swept over, and the single source of truth the
- * hair also builds against. A female skull is widest across the parietals —
- * noticeably wider than the cheekbones — so `x` has to exceed the face's own
- * half-width or the crown tapers into an egg.
+ * hair also builds against.
+ *
+ * A female skull is widest across the parietals — wider than the cheekbones —
+ * so `x` has to exceed the face's own half-width or the crown tapers into an
+ * egg. The height matters just as much in the other direction: a cranium that
+ * is tall relative to the face is the defining *infant* proportion, and it is
+ * what made the earlier head read as a doll rather than as an adult.
  */
-export const SKULL_CENTRE: [number, number, number] = [0, 1.25, -1]
-export const SKULL_RADII: [number, number, number] = [8.45, 9.3, 9.7]
+export const SKULL_CENTRE: [number, number, number] = [0, 0.95, -1]
+export const SKULL_RADII: [number, number, number] = [7.95, 8.5, 9.5]
 const CRANIUM_RINGS = 14
 
 /** Maps model units to scene units; the head ends up ~3.6 units tall. */
@@ -274,15 +278,15 @@ export function buildFemaleHead(face: CanonicalFace, facePositions: Float32Array
   // always hidden behind the jaw and never needs to follow it.
   const neckSegments = 30
   const neckRings: number[][] = []
-  const neckLevels = [-5, -8, -11, -13.5, -15.5, -17.3, -19, -21.4]
+  const neckLevels = [-5, -8.4, -11.6, -14.2, -16.2, -18, -19.7, -22]
   // Set back behind the chin: a column drawn under the face rather than behind
   // it is what made the previous open-mouth pose show a ledge across the jaw.
   const NECK_AXIS_Z = -2.3
   neckLevels.forEach((level, step) => {
     const t = step / (neckLevels.length - 1)
     const spread = smoothstep(0.42, 1, t)
-    const halfWidth = lerp(3.5, 4.3, smoothstep(0, 0.5, t)) + spread * 8.4
-    const depth = lerp(3.2, 3.9, smoothstep(0, 0.5, t)) + spread * 2.6
+    const halfWidth = lerp(3.55, 4.25, smoothstep(0, 0.5, t)) + spread * 7.6
+    const depth = lerp(3, 3.6, smoothstep(0, 0.5, t)) + spread * 2.4
     const ring: number[] = []
     for (let i = 0; i < neckSegments; i += 1) {
       const angle = i / neckSegments * Math.PI * 2

@@ -1,12 +1,18 @@
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import type { VoiceState } from './App'
-import { FEATURE_LOOPS, loopEdges, parseCanonicalFaceObj } from './face/canonicalFace.ts'
-import { applySkin, buildFemaleHead, feminizeFace, hash01, smoothstep, uniqueEdges } from './face/femaleHead.ts'
+import {
+  ACCENT_CHAINS, FEATURE_CHAINS, FEATURE_LOOPS, chainEdges, loopEdges, parseCanonicalFaceObj,
+} from './face/canonicalFace.ts'
+import { SKULL_CENTRE, applySkin, buildFemaleHead, feminizeFace, hash01, smoothstep } from './face/femaleHead.ts'
 import { applyExpression, buildFaceRig, mouthAperture } from './face/faceRig.ts'
 import type { Expression } from './face/faceRig.ts'
-import { buildHairStrands } from './face/hair.ts'
-import { evaluateContours, planContours } from './face/contours.ts'
+import { buildFaceDetail, evaluateFaceDetail } from './face/faceDetail.ts'
+import { buildHairStrands, scalpMask } from './face/hair.ts'
+import {
+  azimuthField, bakeIsoScalar, bakeIsoVector, evaluateIsoLines, evenLevels, heightField, planIsoLines,
+} from './face/contours.ts'
+import { applySubdivision, bakeOcclusion, buildSubdivisionLevel, computeNormals } from './face/subdivide.ts'
 import { advanceVisemes, createVisemeState, visemeTargets } from './face/visemes.ts'
 import './EMEFAFace.css'
 
@@ -29,23 +35,32 @@ const STATE_COLORS: Record<VoiceState, number> = {
 
 const MODEL_URL = `${import.meta.env.BASE_URL}models/emefa-canonical-face.obj`
 
-const HOLOGRAM_VERTEX = /* glsl */`
+// The bust dissolves into the projection instead of ending in a lit slab, and
+// concave regions are dimmed by the baked occlusion term. Shared by the surface
+// and by the grid, so both agree about where the face is in shadow.
+const HOLOGRAM_COMMON = /* glsl */`
+  float bodyFade(float height) { return mix(0.14, 1.0, smoothstep(-20.0, -8.0, height)); }
+`
+
+const SURFACE_VERTEX = /* glsl */`
+  attribute float occlusion;
   varying vec3 vNormal;
   varying vec3 vView;
   varying vec3 vLocal;
+  varying float vOcclusion;
   void main() {
     vec4 viewPosition = modelViewMatrix * vec4(position, 1.0);
     vNormal = normalize(normalMatrix * normal);
     vView = normalize(-viewPosition.xyz);
     vLocal = position;
+    vOcclusion = occlusion;
     gl_Position = projectionMatrix * viewPosition;
   }
 `
 
-// Rim light plus a soft key is what actually renders the face readable: on an
-// additively blended surface a flat fill would collapse the nose, the brow and
-// the lips into a single glowing blob.
-const HOLOGRAM_FRAGMENT = /* glsl */`
+// The surface is deliberately faint: it exists to give the grid something to
+// wrap and to hide the far side of the head, not to become the face itself.
+const SURFACE_FRAGMENT = /* glsl */`
   uniform vec3 uBase;
   uniform vec3 uGlow;
   uniform float uTime;
@@ -55,52 +70,68 @@ const HOLOGRAM_FRAGMENT = /* glsl */`
   varying vec3 vNormal;
   varying vec3 vView;
   varying vec3 vLocal;
+  varying float vOcclusion;
+  ${HOLOGRAM_COMMON}
 
   void main() {
     vec3 normal = normalize(vNormal);
     vec3 view = normalize(vView);
-    float facing = max(dot(normal, view), 0.0);
-    float fresnel = pow(1.0 - facing, 2.3);
+    float fresnel = pow(1.0 - max(dot(normal, view), 0.0), 2.3);
 
     vec3 key = normalize(vec3(-0.42, 0.62, 0.78));
     vec3 fill = normalize(vec3(0.76, -0.12, 0.52));
-    float shade = max(dot(normal, key), 0.0) * 0.95 + max(dot(normal, fill), 0.0) * 0.34;
+    float shade = max(dot(normal, key), 0.0) * 0.9 + max(dot(normal, fill), 0.0) * 0.3;
+    float specular = pow(max(dot(normal, normalize(key + view)), 0.0), 26.0);
 
-    // Fine projection scanlines, plus one slow bright sweep travelling upward.
-    float lines = 0.66 + 0.34 * sin(vLocal.y * 46.0 - uTime * 2.6);
-    float sweep = smoothstep(0.72, 1.0, sin(vLocal.y * 0.22 - uTime * 0.5));
+    float lines = 0.72 + 0.28 * sin(vLocal.y * 46.0 - uTime * 2.6);
+    float shadow = mix(0.16, 1.0, vOcclusion);
 
-    // The bust dissolves into the projection instead of ending in a lit slab.
-    // A fully lit torso is the fastest way to turn a person back into a mannequin.
-    float body = smoothstep(-20.0, -8.0, vLocal.y);
-
-    // Weighted towards the shading term: the fresnel silhouette alone gives a
-    // glowing outline with a featureless middle, which is what flattened the
-    // previous face into a mask.
-    float alpha = ((fresnel * uRim + shade * 0.55 + 0.03) * mix(0.72, 1.0, lines) + sweep * 0.08) * mix(0.16, 1.0, body);
-    vec3 color = mix(uBase, uGlow, clamp(fresnel * 0.85 + shade * 0.55, 0.0, 1.0));
-    gl_FragColor = vec4(color * (1.0 + uVoice * 0.4), alpha * uOpacity);
+    float alpha = (fresnel * uRim + shade * 0.42 + specular * 0.5 + 0.03) * lines * shadow;
+    vec3 color = mix(uBase, uGlow, clamp(fresnel * 0.8 + shade * 0.6 + specular, 0.0, 1.0));
+    gl_FragColor = vec4(color * (1.0 + uVoice * 0.4), alpha * uOpacity * bodyFade(vLocal.y));
   }
 `
 
-const HAIR_VERTEX = /* glsl */`
-  attribute float fade;
-  varying float vFade;
+// One shader for every line in the hologram — grid, feature contours, brow
+// tufts, hair. `strength` is baked per vertex: occlusion for the grid, a taper
+// for the strands.
+const LINE_VERTEX = /* glsl */`
+  attribute float strength;
+  attribute vec3 lineNormal;
+  varying float vStrength;
+  varying float vShade;
+  varying vec3 vLocal;
   void main() {
-    vFade = fade;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    vec4 viewPosition = modelViewMatrix * vec4(position, 1.0);
+    vStrength = strength;
+    vLocal = position;
+
+    // Each line vertex carries the normal of the skin it was cut from, so the
+    // grid is lit by the same key light as the surface. This is what makes the
+    // mesh describe a nose, a brow and a lip instead of a smooth shell.
+    vec3 normal = normalize(normalMatrix * lineNormal);
+    vec3 view = normalize(-viewPosition.xyz);
+    float key = max(dot(normal, normalize(vec3(-0.42, 0.62, 0.78))), 0.0);
+    float rim = pow(1.0 - abs(dot(normal, view)), 2.0);
+    vShade = 0.3 + key * 0.72 + rim * 0.55;
+
+    gl_Position = projectionMatrix * viewPosition;
   }
 `
 
-const HAIR_FRAGMENT = /* glsl */`
+const LINE_FRAGMENT = /* glsl */`
   uniform vec3 uBase;
   uniform vec3 uGlow;
   uniform float uOpacity;
-  varying float vFade;
+  uniform float uShadow;
+  varying float vStrength;
+  varying float vShade;
+  varying vec3 vLocal;
+  ${HOLOGRAM_COMMON}
+
   void main() {
-    // Roots read as solid mass, tips dissolve into the projection.
-    float strength = (1.0 - vFade * 0.82) * uOpacity;
-    gl_FragColor = vec4(mix(uGlow, uBase, vFade), strength);
+    float shaded = mix(uShadow, 1.0, vStrength) * vShade;
+    gl_FragColor = vec4(mix(uBase, uGlow, clamp(vStrength * vShade, 0.0, 1.0)), uOpacity * shaded * bodyFade(vLocal.y));
   }
 `
 
@@ -148,62 +179,46 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
       // Rim weight. Skin needs a strong fresnel to describe the silhouette, but
       // an eyeball does not: its rim is a full circle and the parts of it that
       // show through the canthi read as a ring drawn across the eye.
-      uRim: { value: .4 },
-    }
-    const hairUniforms = {
-      uBase: { value: uniforms.uBase.value },
-      uGlow: { value: uniforms.uGlow.value },
-      uOpacity: { value: .34 },
+      uRim: { value: .34 },
     }
 
-    const skinMaterial = new THREE.ShaderMaterial({
-      uniforms, vertexShader: HOLOGRAM_VERTEX, fragmentShader: HOLOGRAM_FRAGMENT,
-      transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.FrontSide,
+    const surface = (opacity: number, rim: number, side: THREE.Side = THREE.FrontSide) => new THREE.ShaderMaterial({
+      uniforms: { ...uniforms, uOpacity: { value: opacity }, uRim: { value: rim } },
+      vertexShader: SURFACE_VERTEX, fragmentShader: SURFACE_FRAGMENT,
+      transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side,
     })
-    // The oral cavity uses the same shading at a fraction of the intensity, so
-    // an open mouth reads as a recess instead of glowing like the lips.
-    const cavityMaterial = skinMaterial.clone()
-    cavityMaterial.uniforms = { ...uniforms, uOpacity: { value: .1 }, uRim: { value: .12 } }
+    const lines = (opacity: number, shadow: number) => new THREE.ShaderMaterial({
+      uniforms: { ...uniforms, uOpacity: { value: opacity }, uShadow: { value: shadow } },
+      vertexShader: LINE_VERTEX, fragmentShader: LINE_FRAGMENT,
+      transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+    })
 
-    const globeMaterial = new THREE.ShaderMaterial({
-      uniforms: { ...uniforms, uOpacity: { value: .62 }, uRim: { value: .05 } },
-      vertexShader: HOLOGRAM_VERTEX, fragmentShader: HOLOGRAM_FRAGMENT,
-      transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.FrontSide,
-    })
-    const orbitMaterial = new THREE.ShaderMaterial({
-      uniforms: { ...uniforms, uOpacity: { value: .11 }, uRim: { value: 0 } },
-      vertexShader: HOLOGRAM_VERTEX, fragmentShader: HOLOGRAM_FRAGMENT,
-      transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.BackSide,
-    })
-    const wireMaterial = new THREE.LineBasicMaterial({
-      color: 0x8ceaff, transparent: true, opacity: .055,
-      blending: THREE.AdditiveBlending, depthWrite: false,
-    })
-    // Lash line, brows and vermilion border. Bright, because these are the
-    // contours a viewer reads a face from.
-    const featureMaterial = new THREE.LineBasicMaterial({
-      color: 0xcaf8ff, transparent: true, opacity: .4,
-      blending: THREE.AdditiveBlending, depthWrite: false,
-    })
-    const contourMaterial = new THREE.LineBasicMaterial({
-      color: 0x7fe8ff, transparent: true, opacity: .22,
-      blending: THREE.AdditiveBlending, depthWrite: false,
-    })
-    const pointMaterial = new THREE.PointsMaterial({
-      color: 0xa9f4ff, size: .011, transparent: true, opacity: .3,
+    const skinMaterial = surface(.3, .3)
+    const cavityMaterial = surface(.1, .12)
+    const globeMaterial = surface(.9, .05)
+    const orbitMaterial = surface(.11, 0, THREE.BackSide)
+
+    // Horizontal slices and vertical meridians: the grid that *is* the face.
+    const latitudeMaterial = lines(.5, .2)
+    const meridianMaterial = lines(.34, .22)
+    // Lash line and vermilion border, kept faint — they exist because an
+    // additive surface cannot render a lid margin, not to outline the face.
+    const featureMaterial = lines(.95, .75)
+    // Lash line and nose base, brighter than anything else on the face.
+    const accentMaterial = lines(1.7, .9)
+    const detailMaterial = lines(1, .7)
+    const hairMaterial = lines(.34, .55)
+    const landmarkMaterial = new THREE.PointsMaterial({
+      color: 0xcaf8ff, size: .013, transparent: true, opacity: .4,
       blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true,
     })
     const irisMaterial = new THREE.MeshBasicMaterial({
-      color: 0x9ff4ff, transparent: true, opacity: .4,
+      color: 0xbdf6ff, transparent: true, opacity: .62,
       blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
     })
     const catchlightMaterial = new THREE.MeshBasicMaterial({
       color: 0xffffff, transparent: true, opacity: .8,
       blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
-    })
-    const hairMaterial = new THREE.ShaderMaterial({
-      uniforms: hairUniforms, vertexShader: HAIR_VERTEX, fragmentShader: HAIR_FRAGMENT,
-      transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
     })
 
     const rings = new THREE.Group()
@@ -220,17 +235,20 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
       rings.add(new THREE.Mesh(new THREE.TorusGeometry(radius, index === 1 ? .012 : .006, 5, 100), material))
     })
 
-    // --- Head assembly, once the landmark model has loaded --------------------
+    type Grid = { plan: ReturnType<typeof planIsoLines>; attribute: THREE.BufferAttribute }
     type Head = {
-      positions: THREE.BufferAttribute
       geometry: THREE.BufferGeometry
-      deformed: Float32Array
-      faceDeformed: Float32Array
+      surfacePositions: THREE.BufferAttribute
+      level: ReturnType<typeof buildSubdivisionLevel>
       rig: ReturnType<typeof buildFaceRig>
       skin: ReturnType<typeof buildFemaleHead>['skin']
       base: Float32Array
-      contourPlan: ReturnType<typeof planContours>
-      contourPositions: THREE.BufferAttribute
+      faceDeformed: Float32Array
+      deformed: Float32Array
+      smooth: Float32Array
+      grids: Grid[]
+      detail: ReturnType<typeof buildFaceDetail>
+      detailPositions: THREE.BufferAttribute
       eyes: THREE.Group[]
       restAperture: number
       cavity: THREE.ShaderMaterial
@@ -258,106 +276,158 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
       const rest = feminizeFace(canonical.positions)
       const build = buildFemaleHead(canonical, rest)
       const rig = buildFaceRig(rest)
+      const detail = buildFaceDetail()
 
-      const deformed = new Float32Array(build.basePositions)
+      // Smooth the head once, as a reusable linear operator. The grid is cut
+      // from the result, so its lines follow curves instead of tracing the
+      // landmark model's facets — which is what made the earlier face read as
+      // low-poly however good the proportions were.
+      const level = buildSubdivisionLevel(build.vertexCount, build.indices)
+      const baseSmooth = new Float32Array(level.vertexCount * 3)
+      applySubdivision(level, build.basePositions, baseSmooth)
+
+      const restNormals = computeNormals(baseSmooth, level.indices)
+      // Occlusion is quadratic in vertex count, so it is baked on the *base*
+      // mesh and pushed through the subdivision operator — which is exactly
+      // what a linear operator is for. Baking it on the smoothed mesh instead
+      // costs four times as many vertices for a term that is low-frequency
+      // anyway, and shows up as a visible hitch on load.
+      const occlusion = new Float32Array(level.vertexCount)
+      applySubdivision(level, bakeOcclusion(
+        build.basePositions,
+        computeNormals(build.basePositions, build.indices),
+        3,
+      ), occlusion, 1)
+
+      // The grid stops at the hairline and hands over to the hair strands; the
+      // surface only dims there, so the skull keeps its volume.
+      const mask = scalpMask(baseSmooth)
+      const gridShade = occlusion.map((value, vertex) => value * (0.06 + 0.94 * mask[vertex]))
+      const surfaceShade = occlusion.map((value, vertex) => value * (0.4 + 0.6 * mask[vertex]))
+
       const faceDeformed = new Float32Array(rest)
-
-      const geometry = new THREE.BufferGeometry()
-      const positions = new THREE.BufferAttribute(deformed, 3)
-      positions.setUsage(THREE.DynamicDrawUsage)
-      geometry.setAttribute('position', positions)
-      geometry.setIndex(new THREE.BufferAttribute(build.indices, 1))
-      geometry.addGroup(0, build.cavityIndexStart, 0)
-      geometry.addGroup(build.cavityIndexStart, build.cavityIndexCount, 1)
-      geometry.computeVertexNormals()
+      const deformed = new Float32Array(build.basePositions)
+      const smooth = new Float32Array(baseSmooth)
 
       const model = new THREE.Group()
       model.scale.setScalar(build.scale)
       model.position.y = .64
       bust.add(model)
 
-      // Depth-only pass, nudged away from the camera so the additive skin it is
-      // protecting still passes the depth test. Without it the far side of the
-      // head shows through the near side and the volume disappears.
+      const geometry = new THREE.BufferGeometry()
+      const surfacePositions = new THREE.BufferAttribute(smooth, 3)
+      surfacePositions.setUsage(THREE.DynamicDrawUsage)
+      geometry.setAttribute('position', surfacePositions)
+      geometry.setAttribute('occlusion', new THREE.BufferAttribute(surfaceShade, 1))
+      geometry.setIndex(new THREE.BufferAttribute(level.indices, 1))
+      // Subdivision quadruples every triangle, so the cavity range scales with it.
+      geometry.addGroup(0, build.cavityIndexStart * 4, 0)
+      geometry.addGroup(build.cavityIndexStart * 4, build.cavityIndexCount * 4, 1)
+      geometry.computeVertexNormals()
+
+      // Depth-only pass, nudged away from the camera so the additive skin and
+      // the grid it carries still pass the depth test. Without it the far side
+      // of the head shows through the near side and the volume disappears.
       const occluder = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
         colorWrite: false, depthWrite: true, side: THREE.FrontSide,
         polygonOffset: true, polygonOffsetFactor: 1.4, polygonOffsetUnits: 1.4,
       }))
       occluder.renderOrder = -1
       model.add(occluder)
-
       model.add(new THREE.Mesh(geometry, [skinMaterial, cavityMaterial]))
-      // Wireframe over the face only. Running it across the cranium, neck and
-      // bust too turned the whole bust into a uniform net that read as fabric
-      // rather than as skin, and buried the shading that describes the features.
-      model.add(new THREE.LineSegments(
-        new THREE.BufferGeometry()
-          .setAttribute('position', positions)
-          .setIndex(new THREE.BufferAttribute(uniqueEdges(build.indices.subarray(0, build.faceIndexCount)), 1)),
-        wireMaterial,
-      ))
-      if (!compact) {
-        // Points get their own unindexed view of the same buffer so each vertex
-        // is drawn once rather than once per adjacent triangle.
-        const pointGeometry = new THREE.BufferGeometry()
-        pointGeometry.setAttribute('position', positions)
-        model.add(new THREE.Points(pointGeometry, pointMaterial))
+
+      // --- The grid ----------------------------------------------------------
+      let crown = -Infinity
+      for (let vertex = 0; vertex < level.vertexCount; vertex += 1) {
+        crown = Math.max(crown, baseSmooth[vertex * 3 + 1])
       }
+      const grids: Grid[] = []
+      const addGrid = (plan: ReturnType<typeof planIsoLines>, material: THREE.ShaderMaterial) => {
+        const lineGeometry = new THREE.BufferGeometry()
+        const attribute = new THREE.BufferAttribute(new Float32Array(plan.segmentCount * 6), 3)
+        attribute.setUsage(THREE.DynamicDrawUsage)
+        lineGeometry.setAttribute('position', attribute)
+        lineGeometry.setAttribute('strength', new THREE.BufferAttribute(bakeIsoScalar(plan, gridShade), 1))
+        lineGeometry.setAttribute('lineNormal', new THREE.BufferAttribute(bakeIsoVector(plan, restNormals), 3))
+        model.add(new THREE.LineSegments(lineGeometry, material))
+        grids.push({ plan, attribute })
+      }
+      addGrid(
+        planIsoLines(level.indices, heightField(baseSmooth), evenLevels(-13, crown, compact ? 26 : 40)),
+        latitudeMaterial,
+      )
+      addGrid(
+        planIsoLines(
+          level.indices,
+          azimuthField(baseSmooth, SKULL_CENTRE[2]),
+          evenLevels(-Math.PI, Math.PI, compact ? 30 : 46),
+          true,
+        ),
+        meridianMaterial,
+      )
 
-      // Lash line, brows and vermilion border, indexed into the shared vertex
-      // buffer so they blink and speak with the skin at no extra cost.
-      model.add(new THREE.LineSegments(
-        new THREE.BufferGeometry()
-          .setAttribute('position', positions)
-          .setIndex(new THREE.BufferAttribute(loopEdges(FEATURE_LOOPS), 1)),
-        featureMaterial,
+      // Lash line and vermilion border index the shared vertex buffer, so they
+      // blink and speak with the skin at no extra cost.
+      const contourLines = (indices: Uint32Array, material: THREE.ShaderMaterial) => {
+        const lineGeometry = new THREE.BufferGeometry()
+        lineGeometry.setAttribute('position', surfacePositions)
+        lineGeometry.setAttribute('lineNormal', new THREE.BufferAttribute(restNormals, 3))
+        lineGeometry.setAttribute('strength', new THREE.BufferAttribute(occlusion, 1))
+        lineGeometry.setIndex(new THREE.BufferAttribute(indices, 1))
+        model.add(new THREE.LineSegments(lineGeometry, material))
+      }
+      contourLines(loopEdges(FEATURE_LOOPS), featureMaterial)
+      contourLines(chainEdges(FEATURE_CHAINS), featureMaterial)
+      contourLines(chainEdges(ACCENT_CHAINS), accentMaterial)
+
+      // Landmark points, drawn only on the 468 canonical vertices: the mesh's
+      // actual anatomical anchors rather than every subdivided corner.
+      const landmarkGeometry = new THREE.BufferGeometry()
+      landmarkGeometry.setAttribute('position', surfacePositions)
+      landmarkGeometry.setIndex(new THREE.BufferAttribute(
+        Uint32Array.from({ length: 468 }, (_, index) => index), 1,
       ))
+      model.add(new THREE.Points(landmarkGeometry, landmarkMaterial))
 
-      // Contours are planned against the rest pose and re-evaluated per frame,
-      // so they follow the jaw instead of sliding over it.
-      const contourPlan = planContours(build.basePositions, build.indices, compact ? 16 : 22, -11, 10.4)
-      const contourGeometry = new THREE.BufferGeometry()
-      const contourPositions = new THREE.BufferAttribute(new Float32Array(contourPlan.segmentCount * 6), 3)
-      contourPositions.setUsage(THREE.DynamicDrawUsage)
-      contourGeometry.setAttribute('position', contourPositions)
-      model.add(new THREE.LineSegments(contourGeometry, contourMaterial))
+      // --- Brow tufts and lid creases ----------------------------------------
+      const detailGeometry = new THREE.BufferGeometry()
+      const detailPositions = new THREE.BufferAttribute(new Float32Array(detail.endpointCount * 3), 3)
+      detailPositions.setUsage(THREE.DynamicDrawUsage)
+      detailGeometry.setAttribute('position', detailPositions)
+      detailGeometry.setAttribute('strength', new THREE.BufferAttribute(detail.fade, 1))
+      detailGeometry.setAttribute('lineNormal', flatNormals(detail.endpointCount))
+      model.add(new THREE.LineSegments(detailGeometry, detailMaterial))
 
       // --- Eyes --------------------------------------------------------------
       const eyeGroups = build.eyes.map((eye) => {
         const group = new THREE.Group()
         group.position.set(eye.centre[0], eye.centre[1], eye.centre[2])
-        // Orbit shell: an inverted sphere that fully contains the globe. The
-        // sockets were carved out of the mesh so an eyeball could sit behind
-        // them, which left the canthi looking straight through the skull. A
-        // cone into the orbit does not work — the globe pokes out through its
-        // walls and rings the eye. Real eye corners are dark; what breaks the
-        // illusion is seeing the *background* through them, not the shadow.
-        const orbitGeometry = new THREE.SphereGeometry(eye.radius * 1.24, 18, 12)
-        // Flattened along the view axis so the shell stays *behind* the skin
-        // around the orbit. A round shell of this width breaks the surface and
-        // draws a bright intersection ellipse right across the eye.
-        const orbitScale = new THREE.Vector3(1, 1, .58)
+
+        // Orbit shell: an inverted sphere that contains the globe. The sockets
+        // were carved out of the mesh so an eyeball could sit behind them,
+        // which left the canthi looking straight through the skull. It is
+        // flattened along the view axis so it stays *behind* the skin around
+        // the orbit — a round shell of this width breaks the surface and draws
+        // a bright intersection ellipse right across the eye.
+        const orbitGeometry = withUnitOcclusion(new THREE.SphereGeometry(eye.radius * 1.24, 18, 12))
         for (const material of [orbitMaterial, new THREE.MeshBasicMaterial({
           colorWrite: false, depthWrite: true, side: THREE.BackSide,
         })]) {
           const shell = new THREE.Mesh(orbitGeometry, material)
-          shell.scale.copy(orbitScale)
+          shell.scale.set(1, 1, .58)
           group.add(shell)
         }
 
-        const globeGeometry = new THREE.SphereGeometry(eye.radius, 22, 16)
-        const globe = new THREE.Mesh(globeGeometry, globeMaterial)
-        group.add(globe)
-        // Depth for the globe too, so wireframe behind the socket stays hidden.
-        const globeDepth = new THREE.Mesh(globeGeometry, new THREE.MeshBasicMaterial({
+        const globeGeometry = withUnitOcclusion(new THREE.SphereGeometry(eye.radius, 22, 16))
+        group.add(new THREE.Mesh(globeGeometry, globeMaterial))
+        group.add(new THREE.Mesh(globeGeometry, new THREE.MeshBasicMaterial({
           colorWrite: false, depthWrite: true,
           polygonOffset: true, polygonOffsetFactor: 1.4, polygonOffsetUnits: 1.4,
-        }))
-        group.add(globeDepth)
+        })))
 
         // Iris as an annulus: the empty middle is the pupil, which is the only
         // way to get a dark centre out of an additively blended hologram.
-        const iris = new THREE.Mesh(new THREE.RingGeometry(eye.radius * .26, eye.radius * .54, 30), irisMaterial)
+        const iris = new THREE.Mesh(new THREE.RingGeometry(eye.radius * .24, eye.radius * .58, 32), irisMaterial)
         iris.position.z = eye.radius * .94
         group.add(iris)
         // A single specular highlight, offset towards the key light. Nothing
@@ -375,19 +445,39 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
         return group
       })
 
-      const hair = buildHairStrands(compact ? 108 : 168)
+      const hair = buildHairStrands(compact ? 190 : 340)
       const hairGeometry = new THREE.BufferGeometry()
       hairGeometry.setAttribute('position', new THREE.BufferAttribute(hair.positions, 3))
-      hairGeometry.setAttribute('fade', new THREE.BufferAttribute(hair.fade, 1))
+      // Roots read as solid mass, tips dissolve into the projection.
+      hairGeometry.setAttribute('strength', new THREE.BufferAttribute(
+        hair.fade.map((value) => 1 - value * 0.85), 1,
+      ))
+      hairGeometry.setAttribute('lineNormal', flatNormals(hair.fade.length))
       model.add(new THREE.LineSegments(hairGeometry, hairMaterial))
 
       return {
-        positions, geometry, deformed, faceDeformed, rig,
+        geometry, surfacePositions, level, rig,
         skin: build.skin, base: build.basePositions,
-        contourPlan, contourPositions, eyes: eyeGroups,
+        faceDeformed, deformed, smooth,
+        grids, detail, detailPositions,
+        eyes: eyeGroups,
         restAperture: mouthAperture(rest),
         cavity: cavityMaterial,
       }
+    }
+
+    /** Forward-facing normals for lines that are not cut from the skin. */
+    function flatNormals(count: number) {
+      const normals = new Float32Array(count * 3)
+      for (let vertex = 0; vertex < count; vertex += 1) normals[vertex * 3 + 2] = 1
+      return new THREE.BufferAttribute(normals, 3)
+    }
+
+    /** The surface shader reads an occlusion attribute; eyeballs have none. */
+    function withUnitOcclusion(geometry: THREE.BufferGeometry) {
+      const count = geometry.getAttribute('position').count
+      geometry.setAttribute('occlusion', new THREE.BufferAttribute(new Float32Array(count).fill(1), 1))
+      return geometry
     }
 
     // --- Sizing ---------------------------------------------------------------
@@ -463,8 +553,7 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
       bust.rotation.y += (targetYaw - bust.rotation.y) * Math.min(1, delta * 2.4)
       bust.rotation.x += (targetPitch - bust.rotation.x) * Math.min(1, delta * 2.4)
       // Breathing, slightly deeper while listening.
-      const breath = Math.sin(elapsed * (currentState === 'listening' ? 1.05 : .8)) * .018 * motion
-      bust.position.y = breath
+      bust.position.y = Math.sin(elapsed * (currentState === 'listening' ? 1.05 : .8)) * .018 * motion
       bust.rotation.z = Math.sin(elapsed * .23) * .018 * motion
 
       // --- Blinking -----------------------------------------------------------
@@ -505,10 +594,18 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
       if (head) {
         applyExpression(head.rig, expression, head.faceDeformed)
         applySkin(head.base, head.faceDeformed, head.skin, head.deformed)
-        head.positions.needsUpdate = true
+        applySubdivision(head.level, head.deformed, head.smooth)
+        head.surfacePositions.needsUpdate = true
         head.geometry.computeVertexNormals()
-        evaluateContours(head.contourPlan, head.deformed, head.contourPositions.array as Float32Array)
-        head.contourPositions.needsUpdate = true
+
+        for (const grid of head.grids) {
+          evaluateIsoLines(grid.plan, head.smooth, grid.attribute.array as Float32Array)
+          grid.attribute.needsUpdate = true
+        }
+        // Brow tufts and lid creases read the *smoothed* landmarks, so they sit
+        // on the surface the grid describes rather than on the raw model.
+        evaluateFaceDetail(head.detail, head.smooth, head.detailPositions.array as Float32Array)
+        head.detailPositions.needsUpdate = true
 
         // The oral cavity only exists visually while the mouth is actually open.
         const aperture = mouthAperture(head.faceDeformed) - head.restAperture
@@ -535,14 +632,11 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
       // --- Palette ------------------------------------------------------------
       color.setHex(STATE_COLORS[currentState])
       uniforms.uGlow.value.lerp(color, Math.min(1, delta * 2.2))
-      wireMaterial.color.lerp(color, Math.min(1, delta * 1.8))
-      contourMaterial.color.lerp(color, Math.min(1, delta * 1.8))
-      pointMaterial.color.lerp(color, Math.min(1, delta * 1.6))
+      landmarkMaterial.color.lerp(color, Math.min(1, delta * 1.6))
       irisMaterial.color.lerp(color, Math.min(1, delta * 1.6))
-      featureMaterial.color.lerp(color, Math.min(1, delta * .9))
-      contourMaterial.opacity = .2 + viseme.level * .14
-      pointMaterial.opacity = .26 + viseme.level * .18
-      hairUniforms.uOpacity.value = .3 + viseme.level * .1
+      latitudeMaterial.uniforms.uOpacity.value = .48 + viseme.level * .2
+      meridianMaterial.uniforms.uOpacity.value = .33 + viseme.level * .14
+      landmarkMaterial.opacity = .34 + viseme.level * .18
       rings.rotation.z = elapsed * .11 * motion
       rings.scale.setScalar(1 + viseme.level * .055)
       ringMaterials.forEach((material, index) => { material.opacity = (.52 - index * .1) * (.8 + viseme.level * .3) })

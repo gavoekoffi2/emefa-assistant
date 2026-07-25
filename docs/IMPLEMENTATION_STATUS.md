@@ -319,6 +319,61 @@ canonical model's inner-lip ring; it is visible only when the face is magnified
 well beyond its in-app size. Subdividing the perioral region would fix it and is
 not worth the topology change yet.
 
+## Completed — Holographic grid over a real face (2026-07-25, second pass)
+
+Clarified requirement: the **line grid is the design** and is to be kept — what
+was wrong was the *shape* the lines were wrapped around. The first pass had
+started drifting towards a smooth shaded surface with outlined features, which
+is the opposite. Corrected.
+
+- `contours.ts` generalised from horizontal slices to `planIsoLines`, cutting a
+  line out of any per-vertex scalar field. The face now carries two: horizontal
+  slices (`heightField`) and vertical meridians (`azimuthField`, with a wrap
+  guard so the ±π seam does not fan lines across the back of the head). Together
+  they form the grid, cut from the real anatomy rather than from an egg.
+- `subdivide.ts` — Loop subdivision stored as a **sparse linear operator**. The
+  468-landmark model is too coarse for the grid to follow curves rather than
+  facets, but re-subdividing per frame would not fit the frame budget. Topology
+  is solved once; a frame costs one sparse multiply. Original vertices keep
+  their indices, so every landmark the rig addresses stays addressable.
+- Grid lines are **shaded by the skin normal they were cut from**, baked per
+  line vertex. Flat-lit lines describe a balloon however accurate the geometry
+  under them is; this is what makes the mesh render a nose, a brow and a lip.
+- `bakeOcclusion` supplies the missing shadow term — an additive surface has
+  none, so eye sockets and alar creases would otherwise be exactly as bright as
+  the cheeks. Baked on the base mesh and pushed through the subdivision
+  operator; baking it on the smoothed mesh cost 118 ms on load for a term that
+  is low-frequency anyway.
+- **The grid stops at the hairline** (`scalpMask`) and hands over to the hair
+  strands. Running it over the whole cranium was why the forehead looked
+  enormous: with no boundary between scalp and face, a viewer reads the entire
+  skull as forehead however low the hairline actually sits.
+- `faceDetail.ts` — eyebrows are grown as **hair tufts**, not drawn as closed
+  outlines (an outlined brow is the strongest "drawn by hand" cue), plus an
+  upper lid crease. Both are defined as landmark blends, so they rise with the
+  brow rig and fold with a blink.
+- Bright accent chains for the **upper lash line and the base of the nose**, the
+  two contours a viewer uses to fix where the eyes and nose are; a faint chain
+  for the nasal dorsum.
+- Adult rather than infant proportions: shorter cranium relative to the face,
+  larger palpebral aperture, narrower nasal base, lower hairline, hair shell
+  pulled in tight to the skull with a polar-dependent set-back so no strand
+  hangs in front of the skin.
+
+**Performance.** Per-frame CPU pipeline (expression → skinning → subdivision →
+normals → two grid evaluations) measured at **1.35 ms** on 4,731 smoothed
+vertices / 9,336 triangles / ~13,800 line segments. Build cost ~80 ms once.
+Rendering was only measured under SwiftShader software rasterisation, so GPU
+cost on real hardware is *not* measured here.
+
+**Tests.** 48 web tests. New coverage: the subdivision operator is a valid
+affine stencil (every row sums to one), landmark numbering survives it,
+dihedral angles actually decrease, meridians wrap without a seam artefact, the
+grid stops at the hairline, and no hair strand hangs in front of forward-facing
+skin. That last test was rewritten twice: a cuboid predicate wrongly flagged the
+temples, and a plain depth predicate wrongly flagged the strands beside the
+ears — the honest test needs the surface normal.
+
 ## In Progress
 
 Nothing mid-flight.
@@ -337,7 +392,7 @@ Nothing mid-flight.
 ## Tests
 
 `cd backend && pip install -e ".[test]" && python -m pytest` → 107 pass.
-`cd web && npm ci && npm run lint && npm test && npm run build` → all pass (42 web tests).
+`cd web && npm ci && npm run lint && npm test && npm run build` → all pass (48 web tests).
 
 ## Decisions
 

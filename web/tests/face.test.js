@@ -18,7 +18,11 @@ import {
 import { MODEL_SCALE, applySkin, buildFemaleHead, feminizeFace } from '../src/face/femaleHead.ts'
 import { applyExpression, buildFaceRig, mouthAperture } from '../src/face/faceRig.ts'
 import { buildHairStrands, hairlineAngle } from '../src/face/hair.ts'
-import { evaluateContours, planContours } from '../src/face/contours.ts'
+import {
+  azimuthField, bakeIsoScalar, evaluateIsoLines, evenLevels, heightField, planIsoLines,
+} from '../src/face/contours.ts'
+import { applySubdivision, buildSubdivisionLevel, computeNormals } from '../src/face/subdivide.ts'
+import { hairlineAngle as hairline, scalpMask } from '../src/face/hair.ts'
 import { advanceVisemes, createVisemeState, visemeTargets } from '../src/face/visemes.ts'
 
 const objectText = readFileSync(new URL('../public/models/emefa-canonical-face.obj', import.meta.url), 'utf8')
@@ -226,30 +230,125 @@ test('the neutral expression is a no-op', () => {
   }
 })
 
-// --- contours ---------------------------------------------------------------
+// --- subdivision ------------------------------------------------------------
 
-test('contours are re-evaluated from the deformed mesh, not baked at rest', () => {
-  const plan = planContours(build.basePositions, build.indices, 12, -11, 10.4)
+const level = buildSubdivisionLevel(build.vertexCount, build.indices)
+const baseSmooth = new Float32Array(level.vertexCount * 3)
+applySubdivision(level, build.basePositions, baseSmooth)
+
+test('the subdivision operator is a valid affine stencil', () => {
+  // Every row must sum to one, or the head drifts and shrinks each level.
+  for (let vertex = 0; vertex < level.vertexCount; vertex += 1) {
+    let total = 0
+    for (let entry = level.rowStart[vertex]; entry < level.rowStart[vertex + 1]; entry += 1) {
+      total += level.weights[entry]
+    }
+    assert.ok(Math.abs(total - 1) < 1e-5, `row ${vertex} sums to ${total}`)
+  }
+  assert.equal(level.indices.length, build.indices.length * 4)
+  assert.ok(level.vertexCount > build.vertexCount * 3)
+})
+
+test('subdivision keeps the landmark numbering the rig depends on', () => {
+  // Original vertices must stay at their own indices, and stay close to where
+  // they were — every feature contour and every rig weight is addressed by
+  // number, so a renumbering would silently scramble the face.
+  for (let vertex = 0; vertex < CANONICAL_VERTEX_COUNT; vertex += 1) {
+    const moved = Math.hypot(
+      baseSmooth[vertex * 3] - build.basePositions[vertex * 3],
+      baseSmooth[vertex * 3 + 1] - build.basePositions[vertex * 3 + 1],
+      baseSmooth[vertex * 3 + 2] - build.basePositions[vertex * 3 + 2],
+    )
+    assert.ok(moved < 1, `landmark ${vertex} moved ${moved.toFixed(2)} under subdivision`)
+  }
+  // The eye and mouth apertures are boundaries; the boundary rule has to keep
+  // them open rather than shrinking them into the surface.
+  const aperture = (positions) => positions[159 * 3 + 1] - positions[145 * 3 + 1]
+  assert.ok(aperture(baseSmooth) > aperture(build.basePositions) * 0.75)
+})
+
+test('subdivision smooths the surface it is given', () => {
+  // Dihedral angles across the smoothed mesh must be gentler than across the
+  // original: that is the whole point, and it is what removes the faceted
+  // silhouette from the jaw and the nose.
+  const meanDihedral = (positions, indices) => {
+    const normals = computeNormals(positions, indices)
+    let total = 0
+    let count = 0
+    for (let i = 0; i < indices.length; i += 3) {
+      for (let corner = 0; corner < 3; corner += 1) {
+        const a = indices[i + corner] * 3
+        const b = indices[i + (corner + 1) % 3] * 3
+        total += 1 - (normals[a] * normals[b] + normals[a + 1] * normals[b + 1] + normals[a + 2] * normals[b + 2])
+        count += 1
+      }
+    }
+    return total / count
+  }
+  assert.ok(
+    meanDihedral(baseSmooth, level.indices) < meanDihedral(build.basePositions, build.indices) * 0.6,
+  )
+})
+
+// --- the grid ---------------------------------------------------------------
+
+test('the grid is re-evaluated from the deformed mesh, not baked at rest', () => {
+  const plan = planIsoLines(level.indices, heightField(baseSmooth), evenLevels(-11, 9, 12))
   assert.ok(plan.segmentCount > 100)
 
   const restPoints = new Float32Array(plan.segmentCount * 6)
-  evaluateContours(plan, build.basePositions, restPoints)
+  evaluateIsoLines(plan, baseSmooth, restPoints)
 
   const face = pose({ jawOpen: 1 })
   const deformed = new Float32Array(build.vertexCount * 3)
   applySkin(build.basePositions, face, build.skin, deformed)
+  const smooth = new Float32Array(level.vertexCount * 3)
+  applySubdivision(level, deformed, smooth)
   const movedPoints = new Float32Array(plan.segmentCount * 6)
-  evaluateContours(plan, deformed, movedPoints)
+  evaluateIsoLines(plan, smooth, movedPoints)
 
   let moved = 0
   for (let i = 0; i < restPoints.length; i += 1) if (Math.abs(restPoints[i] - movedPoints[i]) > 1e-4) moved += 1
-  assert.ok(moved > 0, 'contours must follow the jaw')
+  assert.ok(moved > 0, 'the grid must follow the jaw')
   // But only where the jaw actually reaches: the crown must be untouched.
   let crownMoved = false
   for (let i = 0; i < plan.segmentCount * 2; i += 1) {
     if (restPoints[i * 3 + 1] > 6 && Math.abs(restPoints[i * 3 + 1] - movedPoints[i * 3 + 1]) > 1e-4) crownMoved = true
   }
   assert.equal(crownMoved, false)
+})
+
+test('the meridians wrap the head without a seam artefact', () => {
+  const field = azimuthField(baseSmooth, -1)
+  const seamless = planIsoLines(level.indices, field, evenLevels(-Math.PI, Math.PI, 16), true)
+  const seamed = planIsoLines(level.indices, field, evenLevels(-Math.PI, Math.PI, 16), false)
+  // Without the wrap guard, every triangle straddling ±π reports a spurious
+  // crossing at *every* level, which draws a fan across the back of the head.
+  assert.ok(seamless.segmentCount < seamed.segmentCount)
+  assert.ok(seamless.segmentCount > 400)
+})
+
+test('the grid stops at the hairline so the scalp is left to the hair', () => {
+  const mask = scalpMask(baseSmooth)
+  let onFace = 0
+  let onScalp = 0
+  for (let vertex = 0; vertex < level.vertexCount; vertex += 1) {
+    const y = baseSmooth[vertex * 3 + 1]
+    const z = baseSmooth[vertex * 3 + 2]
+    // Chin, unambiguously face.
+    if (y < -6 && z > 2) onFace = Math.max(onFace, mask[vertex])
+    // Crown, unambiguously scalp.
+    if (y > 8) onScalp = Math.max(onScalp, mask[vertex])
+  }
+  assert.ok(onFace > 0.95, 'the face must keep its grid')
+  assert.ok(onScalp < 0.05, 'the crown must not')
+  assert.ok(hairline(0) < hairline(Math.PI))
+})
+
+test('baked line shading interpolates the vertex term it is given', () => {
+  const plan = planIsoLines(level.indices, heightField(baseSmooth), evenLevels(-11, 9, 6))
+  const uniform = new Float32Array(level.vertexCount).fill(0.5)
+  for (const value of bakeIsoScalar(plan, uniform)) assert.ok(Math.abs(value - 0.5) < 1e-6)
 })
 
 // --- hair -------------------------------------------------------------------
@@ -260,13 +359,30 @@ test('the hairline drops from the forehead to the nape and no strand crosses the
 
   const hair = buildHairStrands(200)
   assert.equal(hair.positions.length / 3, hair.fade.length)
+
+  // "Across the face" means in front of skin that actually faces the viewer.
+  // A cuboid test clips the temples, where the hairline legitimately passes and
+  // the skin sits well forward; a plain depth test flags the strands falling
+  // beside the ears, where the surface is edge-on and "in front in z" means
+  // nothing. Both are correct hair, so the predicate needs the surface normal.
+  const skinNormals = computeNormals(rest, canonical.indices)
   let overFace = 0
   for (let i = 0; i < hair.positions.length; i += 3) {
     const [x, y, z] = [hair.positions[i], hair.positions[i + 1], hair.positions[i + 2]]
-    // In front of the face plane, at face height, near the midline.
-    if (z > 4 && y < 7 && y > -9 && Math.abs(x) < 5) overFace += 1
+    let nearest = -1
+    let nearestDistance = Infinity
+    for (let vertex = 0; vertex < CANONICAL_VERTEX_COUNT; vertex += 1) {
+      const distance = Math.hypot(rest[vertex * 3] - x, rest[vertex * 3 + 1] - y)
+      if (distance < nearestDistance) {
+        nearestDistance = distance
+        nearest = vertex
+      }
+    }
+    if (nearestDistance > 1.2) continue
+    if (skinNormals[nearest * 3 + 2] < 0.5) continue
+    if (z > rest[nearest * 3 + 2] + 0.35) overFace += 1
   }
-  assert.equal(overFace, 0, `${overFace} hair vertices fall across the face`)
+  assert.equal(overFace, 0, `${overFace} hair vertices hang in front of the face`)
 })
 
 // --- visemes ----------------------------------------------------------------

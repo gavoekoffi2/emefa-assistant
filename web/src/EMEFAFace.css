@@ -26,6 +26,43 @@
 .emefa-face-name{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);font:700 8px/1 Manrope,sans-serif;letter-spacing:.38em;color:#e9fbff;text-shadow:0 0 12px rgba(var(--hud-rgb),.8)}
 .emefa-face-signal{position:absolute;left:50%;bottom:1px;transform:translateX(-50%);white-space:nowrap;font:600 5.5px/1 Manrope,sans-serif;letter-spacing:.2em;color:rgba(var(--hud-rgb),.55)}
 
+/* Premium African hologram: projection, orbital telemetry and audio-reactive HUD. */
+.emefa-hologram-stage{position:absolute;inset:-16px -54px -28px;pointer-events:none;overflow:visible}
+.emefa-projection-cone{position:absolute;left:50%;bottom:26px;width:196px;height:214px;transform:translateX(-50%);clip-path:polygon(39% 0,61% 0,90% 100%,10% 100%);background:linear-gradient(180deg,rgba(var(--hud-rgb),0),rgba(var(--hud-rgb),.025) 40%,rgba(var(--hud-rgb),.14));opacity:.65}
+.emefa-projection-floor{position:absolute;left:50%;bottom:26px;width:220px;height:38px;transform:translateX(-50%) rotateX(66deg);border:1px solid rgba(var(--hud-rgb),.5);border-radius:50%;background:radial-gradient(ellipse,rgba(var(--hud-rgb),.22),rgba(var(--hud-rgb),.035) 48%,transparent 70%);box-shadow:0 0 20px rgba(var(--hud-rgb),.14),inset 0 0 16px rgba(var(--hud-rgb),.16)}
+.emefa-projection-floor::before,.emefa-projection-floor::after{content:"";position:absolute;inset:6px 17px;border:1px dashed rgba(var(--hud-rgb),.28);border-radius:50%}
+.emefa-projection-floor::after{inset:12px 48px;border-style:solid}
+
+.emefa-orbit{position:absolute;left:50%;top:47%;pointer-events:none;border:1px solid rgba(var(--hud-rgb),.2);border-radius:50%;will-change:transform}
+.emefa-orbit i{position:absolute;display:block;width:4px;height:4px;border-radius:50%;background:var(--hud);box-shadow:0 0 8px var(--hud)}
+.emefa-orbit.orbit-a{width:248px;height:184px;transform:translate(-50%,-50%) rotate(-13deg);animation:emefaOrbitA 13s linear infinite}
+.emefa-orbit.orbit-a i:nth-child(1){left:8%;top:27%}.emefa-orbit.orbit-a i:nth-child(2){right:12%;top:18%}.emefa-orbit.orbit-a i:nth-child(3){right:4%;bottom:30%}
+.emefa-orbit.orbit-b{width:181px;height:247px;transform:translate(-50%,-50%) rotate(17deg);border-style:dotted;animation:emefaOrbitB 17s linear infinite reverse}
+.emefa-orbit.orbit-b i:nth-child(1){left:14%;bottom:19%}.emefa-orbit.orbit-b i:nth-child(2){right:9%;top:34%}
+
+.emefa-hud-corners{position:absolute;inset:13px -20px 8px;pointer-events:none}
+.emefa-hud-corners i{position:absolute;width:31px;height:23px;opacity:.62}
+.emefa-hud-corners i:nth-child(1){left:0;top:0;border-left:2px solid var(--hud);border-top:2px solid var(--hud)}
+.emefa-hud-corners i:nth-child(2){right:0;top:0;border-right:2px solid var(--hud);border-top:2px solid var(--hud)}
+.emefa-hud-corners i:nth-child(3){right:0;bottom:0;border-right:2px solid var(--hud);border-bottom:2px solid var(--hud)}
+.emefa-hud-corners i:nth-child(4){left:0;bottom:0;border-left:2px solid var(--hud);border-bottom:2px solid var(--hud)}
+.emefa-scan-beam{position:absolute;z-index:3;left:5%;top:20%;width:90%;height:1px;background:linear-gradient(90deg,transparent,var(--hud),transparent);box-shadow:0 0 9px rgba(var(--hud-rgb),.8);opacity:.55;pointer-events:none;will-change:transform,opacity;animation:emefaScan 3.8s cubic-bezier(.45,0,.55,1) infinite}
+
+.emefa-hud-data{position:absolute;z-index:4;top:69px;width:56px;text-align:left;color:rgba(var(--hud-rgb),.74);pointer-events:none;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+.emefa-hud-data.data-left{left:-54px}.emefa-hud-data.data-right{right:-55px}
+.emefa-hud-data b,.emefa-hud-data small{display:block;font-size:5px;line-height:1.4;letter-spacing:.13em;white-space:nowrap}
+.emefa-hud-data small{margin-top:5px;opacity:.55}
+.emefa-hud-data.data-left>i{display:block;width:45px;height:1px;margin-top:4px;background:rgba(var(--hud-rgb),.23);transform-origin:left;animation:emefaDataPulse 2.1s ease-in-out infinite}
+.emefa-hud-data.data-left>i:nth-of-type(2){width:31px;animation-delay:-.7s}.emefa-hud-data.data-left>i:nth-of-type(3){width:39px;animation-delay:-1.4s}
+.emefa-voice-bars{display:flex;height:24px;align-items:center;gap:2px;margin-top:3px}
+.emefa-voice-bars i{display:block;width:2px;height:100%;background:var(--hud);transform-origin:center;transform:scaleY(calc(.15 + var(--voice-level) * 2.5));opacity:.7}
+.emefa-voice-bars i:nth-child(2),.emefa-voice-bars i:nth-child(4){height:70%}.emefa-voice-bars i:nth-child(3){height:48%}
+
+.emefa-face-portrait{z-index:2}
+.emefa-face-portrait::selection{background:transparent}
+.emefa-face.state-speaking .emefa-orbit{border-color:rgba(var(--hud-rgb),.48)}
+.emefa-face.state-speaking .emefa-projection-cone{opacity:.92}
+
 /* Natural idle life without processing video or using a GPU. */
 .emefa-face-portrait{animation:emefaBreath 4.8s ease-in-out infinite}
 .emefa-eye .emefa-eyelid{transform-box:fill-box;transform-origin:center;animation:emefaBlink 6.2s infinite}
@@ -42,7 +79,7 @@
 .emefa-upper-lip{transform-box:fill-box;transform-origin:center bottom;transform:translateY(calc(var(--voice-level) * -1.5px))}
 .emefa-mouth{filter:drop-shadow(0 1px 1px rgba(0,0,0,.25))}
 .emefa-face.state-speaking .emefa-mouth{filter:drop-shadow(0 0 5px rgba(var(--hud-rgb),.16))}
-.emefa-face.state-speaking .emefa-face-halo.halo-b{box-shadow:inset 0 0 44px rgba(var(--hud-rgb),.11),0 0 calc(30px + var(--voice-level) * 28px) rgba(var(--hud-rgb),.2)}
+.emefa-face.state-speaking .emefa-face-halo.halo-b{opacity:calc(.58 + var(--voice-level) * .4);transform:translate(-50%,-50%) scale(calc(1 + var(--voice-level) * .055))}
 .emefa-face.state-listening .emefa-face-signal{color:#60f4d0}
 .emefa-face.state-thinking .emefa-face-signal{color:#ad8cff}
 .emefa-face.state-speaking .emefa-face-signal{color:#78f4ff}
@@ -68,6 +105,10 @@
 .face-mode-toggle:hover{background:rgba(var(--hud-rgb),.12);color:var(--hud)}
 
 @keyframes emefaHaloSpin{to{transform:translate(-50%,-50%) rotate(360deg)}}
+@keyframes emefaOrbitA{to{transform:translate(-50%,-50%) rotate(347deg)}}
+@keyframes emefaOrbitB{to{transform:translate(-50%,-50%) rotate(377deg)}}
+@keyframes emefaScan{0%,100%{transform:translateY(0) scaleX(.6);opacity:0}12%{opacity:.62}50%{transform:translateY(150px) scaleX(1);opacity:.72}88%{opacity:.45}}
+@keyframes emefaDataPulse{0%,100%{transform:scaleX(.22);opacity:.28}50%{transform:scaleX(1);opacity:.78}}
 @keyframes emefaBreath{0%,100%{transform:translateY(1px) scale(1)}50%{transform:translateY(-2px) scale(1.006)}}
 @keyframes emefaBlink{0%,45%,48%,100%{transform:scaleY(0)}46%,47%{transform:scaleY(1)}}
 @keyframes emefaAttention{0%,100%{transform:translateX(-.7px)}50%{transform:translateX(.7px)}}
@@ -78,6 +119,10 @@
   .emefa-face-portrait{width:171px;height:197px}
   .emefa-face-halo.halo-a{width:198px;height:198px}
   .emefa-face-halo.halo-b{width:172px;height:207px}
+  .emefa-orbit.orbit-a{width:224px;height:165px}.emefa-orbit.orbit-b{width:163px;height:220px}
+  .emefa-hud-corners{inset:12px -17px 7px}
+  .emefa-hud-data.data-left{left:-48px}.emefa-hud-data.data-right{right:-50px}
+  .emefa-projection-floor{width:202px}
   .emefa-face-name{bottom:11px}.emefa-face-signal{bottom:-1px}
   .face-mode-toggle{right:calc(50% - 137px);bottom:5px}
 }
@@ -86,8 +131,15 @@
   .emefa-face-portrait{width:153px;height:176px}
   .emefa-face-halo.halo-a{width:175px;height:175px}
   .emefa-face-halo.halo-b{width:154px;height:184px}
+  .emefa-orbit.orbit-a{width:198px;height:146px}.emefa-orbit.orbit-b{width:145px;height:195px}
+  .emefa-hud-corners{inset:12px -13px 8px}
+  .emefa-hud-data{top:61px;transform:scale(.88)}
+  .emefa-hud-data.data-left{left:-51px;transform-origin:right top}.emefa-hud-data.data-right{right:-52px;transform-origin:left top}
+  .emefa-projection-floor{width:182px}
+  .emefa-scan-beam{animation-duration:4.2s}
   .face-mode-toggle{right:calc(50% - 124px);bottom:2px}
 }
 @media(prefers-reduced-motion:reduce){
-  .emefa-face-portrait,.emefa-face-halo,.emefa-eye,.emefa-eyelid{animation:none!important}
+  .emefa-face-portrait,.emefa-face-halo,.emefa-eye,.emefa-eyelid,.emefa-orbit,.emefa-scan-beam,.emefa-hud-data i{animation:none!important}
+  .emefa-scan-beam{opacity:.22;transform:translateY(74px)}
 }

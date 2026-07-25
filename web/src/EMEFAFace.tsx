@@ -42,8 +42,22 @@ export function EMEFAFace({ state, onClick, getOutputVolume }: EMEFAFaceProps) {
       onClick={onClick}
       aria-label={state === 'idle' ? 'Démarrer une conversation vocale avec EMEFA' : 'Arrêter la conversation vocale avec EMEFA'}
     >
+      <span className="emefa-hologram-stage" aria-hidden="true">
+        <span className="emefa-projection-cone" />
+        <span className="emefa-projection-floor" />
+      </span>
       <span className="emefa-face-halo halo-a" aria-hidden="true" />
       <span className="emefa-face-halo halo-b" aria-hidden="true" />
+      <span className="emefa-orbit orbit-a" aria-hidden="true"><i /><i /><i /></span>
+      <span className="emefa-orbit orbit-b" aria-hidden="true"><i /><i /></span>
+      <span className="emefa-hud-corners" aria-hidden="true"><i /><i /><i /><i /></span>
+      <span className="emefa-scan-beam" aria-hidden="true" />
+      <span className="emefa-hud-data data-left" aria-hidden="true">
+        <b>NEURAL LINK</b><i /><i /><i /><small>AFR-228</small>
+      </span>
+      <span className="emefa-hud-data data-right" aria-hidden="true">
+        <b>VOICE CORE</b><span className="emefa-voice-bars"><i /><i /><i /><i /><i /></span><small>SYNC</small>
+      </span>
       <svg className="emefa-face-portrait" viewBox="0 0 200 230" role="img" aria-label={`Visage d’EMEFA — ${state}`}>
         <defs>
           <linearGradient id="emefa-skin" x1="0" y1="0" x2="1" y2="1">

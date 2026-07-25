@@ -55,10 +55,12 @@ test('3D holographic face mesh follows real assistant output audio', () => {
   assert.match(faceCss, /repeating-linear-gradient/)
 })
 
-test('holographic entity uses an anatomical feminine head profile instead of a spherical cage', () => {
+test('holographic entity uses a tall, wider human feminine head instead of a spherical cage', () => {
   assert.match(face, /HEAD_WIDTH_PROFILE/)
   assert.match(face, /FACE_DEPTH_PROFILE/)
-  assert.match(face, /narrow chin, defined jaw, high cheekbones/)
+  assert.match(face, /visibly elongated skull, broad forehead/)
+  assert.match(face, /VISIBLE_CROWN/)
+  assert.match(face, /prevent the cranium from reading as a striped fruit/)
   assert.match(face, /colorWrite: false, depthWrite: true/)
 })
 

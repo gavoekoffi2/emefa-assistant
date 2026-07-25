@@ -36,23 +36,26 @@ function interpolateProfile(y: number, profile: readonly ProfilePoint[]) {
   return profile[profile.length - 1][1]
 }
 
-// Feminine craniofacial profile: narrow chin, defined jaw, high cheekbones,
-// temples, forehead and rounded crown. The old sine profile was symmetrical
-// top-to-bottom, which made the head read as a melon instead of a human skull.
+// Human female proportions: a visibly elongated skull, broad forehead and
+// cheekbones, a soft jaw, and a rounded crown. The final cap closes above the
+// visible contour lines so the forehead never converges into a pineapple point.
+const HEAD_BOTTOM = -1.6
+const HEAD_CROWN = 1.95
+const VISIBLE_CROWN = 1.82
 const HEAD_WIDTH_PROFILE: readonly ProfilePoint[] = [
-  [-1.48, .27], [-1.38, .39], [-1.15, .56], [-.82, .67],
-  [-.38, .77], [.02, .82], [.38, .78], [.72, .75],
-  [1.08, .7], [1.38, .55], [1.61, .24],
+  [-1.6, .3], [-1.46, .44], [-1.2, .62], [-.82, .74],
+  [-.38, .84], [.02, .9], [.38, .88], [.72, .88],
+  [1.1, .84], [1.45, .76], [1.72, .6], [1.9, .27], [1.95, .08],
 ]
 
 const FACE_DEPTH_PROFILE: readonly ProfilePoint[] = [
-  [-1.48, .39], [-1.18, .56], [-.72, .7], [-.25, .78],
-  [.18, .73], [.62, .68], [1.08, .61], [1.42, .46], [1.61, .25],
+  [-1.6, .4], [-1.3, .57], [-.78, .71], [-.25, .8],
+  [.18, .75], [.68, .71], [1.15, .66], [1.55, .54], [1.82, .34], [1.95, .1],
 ]
 
 const REAR_DEPTH_PROFILE: readonly ProfilePoint[] = [
-  [-1.48, .34], [-1.1, .51], [-.5, .63], [.15, .7],
-  [.72, .75], [1.16, .69], [1.46, .49], [1.61, .24],
+  [-1.6, .35], [-1.22, .53], [-.55, .67], [.18, .76],
+  [.8, .82], [1.28, .76], [1.62, .59], [1.84, .34], [1.95, .1],
 ]
 
 function headPoint(y: number, angle: number) {
@@ -106,10 +109,10 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
     renderer.outputColorSpace = THREE.SRGBColorSpace
     const scene = new THREE.Scene()
     const camera = new THREE.PerspectiveCamera(28, 1, .1, 30)
-    camera.position.set(0, .04, 7.2)
+    camera.position.set(0, .05, 6.75)
 
     const bust = new THREE.Group()
-    bust.position.y = .12
+    bust.position.y = .02
     scene.add(bust)
 
     const dimMaterial = new THREE.LineBasicMaterial({
@@ -133,7 +136,7 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
     const surfacePositions: number[] = []
     const surfaceIndices: number[] = []
     for (let row = 0; row <= surfaceRows; row += 1) {
-      const y = -1.48 + row / surfaceRows * 3.09
+      const y = HEAD_BOTTOM + row / surfaceRows * (HEAD_CROWN - HEAD_BOTTOM)
       for (let column = 0; column <= surfaceColumns; column += 1) {
         const point = headPoint(y, -Math.PI + column / surfaceColumns * Math.PI * 2)
         surfacePositions.push(point.x, point.y, point.z)
@@ -157,20 +160,27 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
     depthOccluder.renderOrder = -1
     bust.add(depthOccluder)
 
-    // Horizontal contour slices: the luminous strokes themselves form the skull.
-    for (let row = 0; row < 29; row += 1) {
-      const y = -1.47 + row / 28 * 3.08
+    // Fewer latitude bands prevent the cranium from reading as a striped fruit.
+    // The brighter side contours make the tall human silhouette unmistakable.
+    const contourRows = 23
+    for (let row = 0; row < contourRows; row += 1) {
+      const y = HEAD_BOTTOM + .02 + row / (contourRows - 1) * (VISIBLE_CROWN - HEAD_BOTTOM - .02)
       const points = Array.from({ length: 73 }, (_, index) => headPoint(y, -Math.PI + index / 72 * Math.PI * 2))
-      const line = curve(points, row % 4 === 0 ? accentMaterial : dimMaterial, true)
-      line.userData.baseOpacity = row % 4 === 0 ? .64 : .29
+      const line = curve(points, row % 5 === 0 ? accentMaterial : dimMaterial, true)
+      line.userData.baseOpacity = row % 5 === 0 ? .64 : .29
       bust.add(line)
     }
+    const silhouetteY = Array.from({ length: 64 }, (_, index) => HEAD_BOTTOM + .02 + index / 63 * (VISIBLE_CROWN - HEAD_BOTTOM - .02))
+    bust.add(
+      curve(silhouetteY.map((y) => headPoint(y, -Math.PI / 2)), brightMaterial),
+      curve(silhouetteY.map((y) => headPoint(y, Math.PI / 2)), brightMaterial),
+    )
 
-    // Vertical meridians reveal real volume while the head turns.
-    for (let column = 0; column < 22; column += 1) {
-      const angle = -Math.PI + column / 21 * Math.PI * 2
-      const points = Array.from({ length: 48 }, (_, index) => headPoint(-1.47 + index / 47 * 3.08, angle))
-      bust.add(curve(points, column % 5 === 0 ? accentMaterial : dimMaterial))
+    // Vertical meridians reveal the taller cranial volume while the head turns.
+    for (let column = 0; column < 18; column += 1) {
+      const angle = -Math.PI + column / 17 * Math.PI * 2
+      const points = Array.from({ length: 56 }, (_, index) => headPoint(HEAD_BOTTOM + .02 + index / 55 * (HEAD_CROWN - HEAD_BOTTOM - .04), angle))
+      bust.add(curve(points, column % 4 === 0 ? accentMaterial : dimMaterial))
     }
 
     const features = new THREE.Group()
@@ -178,10 +188,10 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
     bust.add(features)
 
     // Brows and eyes are independent luminous splines so blinking stays visible.
-    const leftEye = curve(ellipsePoints(-.35, .29, .24, .085, .685), brightMaterial, true)
-    const rightEye = curve(ellipsePoints(.35, .29, .24, .085, .685), brightMaterial, true)
-    const leftIris = curve(ellipsePoints(-.35, .29, .055, .072, .705), accentMaterial, true)
-    const rightIris = curve(ellipsePoints(.35, .29, .055, .072, .705), accentMaterial, true)
+    const leftEye = curve(ellipsePoints(-.39, .29, .26, .088, .705), brightMaterial, true)
+    const rightEye = curve(ellipsePoints(.39, .29, .26, .088, .705), brightMaterial, true)
+    const leftIris = curve(ellipsePoints(-.39, .29, .057, .074, .725), accentMaterial, true)
+    const rightIris = curve(ellipsePoints(.39, .29, .057, .074, .725), accentMaterial, true)
     const irises = new THREE.Group()
     irises.add(leftIris, rightIris)
     const eyes = new THREE.Group()
@@ -189,8 +199,8 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
     features.add(eyes)
     const brows = new THREE.Group()
     brows.add(
-      curve(ellipsePoints(-.35, .46, .27, .1, .67, .16, Math.PI - .16), accentMaterial),
-      curve(ellipsePoints(.35, .46, .27, .1, .67, .16, Math.PI - .16), accentMaterial),
+      curve(ellipsePoints(-.39, .47, .3, .105, .69, .16, Math.PI - .16), accentMaterial),
+      curve(ellipsePoints(.39, .47, .3, .105, .69, .16, Math.PI - .16), accentMaterial),
     )
     features.add(brows)
 
@@ -202,38 +212,39 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
     ], brightMaterial))
     features.add(curve(ellipsePoints(0, -.27, .15, .045, .79, 0, Math.PI), accentMaterial))
 
-    const upperLipPoints = ellipsePoints(0, -.57, .3, .085, .73, Math.PI, Math.PI * 2)
+    const upperLipPoints = ellipsePoints(0, -.57, .33, .085, .75, Math.PI, Math.PI * 2)
     const upperLip = curve(upperLipPoints, brightMaterial)
-    const lowerLipPoints = ellipsePoints(0, -.57, .3, .1, .73, 0, Math.PI)
+    const lowerLipPoints = ellipsePoints(0, -.57, .33, .1, .75, 0, Math.PI)
     const lowerLip = curve(lowerLipPoints, brightMaterial)
-    const mouthCore = curve([new THREE.Vector3(-.29, -.57, .725), new THREE.Vector3(0, -.535, .755), new THREE.Vector3(.29, -.57, .725)], accentMaterial)
+    const mouthCore = curve([new THREE.Vector3(-.32, -.57, .745), new THREE.Vector3(0, -.535, .775), new THREE.Vector3(.32, -.57, .745)], accentMaterial)
     features.add(upperLip, lowerLip, mouthCore)
 
     // Cheekbones and a tapered jaw reinforce feminine facial anatomy.
     features.add(
-      curve([new THREE.Vector3(-.67, .03, .54), new THREE.Vector3(-.58, -.18, .68), new THREE.Vector3(-.47, -.38, .7)], dimMaterial),
-      curve([new THREE.Vector3(.67, .03, .54), new THREE.Vector3(.58, -.18, .68), new THREE.Vector3(.47, -.38, .7)], dimMaterial),
+      curve([new THREE.Vector3(-.75, .03, .55), new THREE.Vector3(-.65, -.18, .7), new THREE.Vector3(-.52, -.4, .72)], dimMaterial),
+      curve([new THREE.Vector3(.75, .03, .55), new THREE.Vector3(.65, -.18, .7), new THREE.Vector3(.52, -.4, .72)], dimMaterial),
     )
 
     // Jaw accent, ears, neck and shoulders complete the floating holographic bust.
     features.add(curve([
-      new THREE.Vector3(-.68, -.72, .48), new THREE.Vector3(-.54, -1.1, .56),
-      new THREE.Vector3(-.25, -1.39, .48), new THREE.Vector3(0, -1.5, .4),
-      new THREE.Vector3(.25, -1.39, .48), new THREE.Vector3(.54, -1.1, .56),
-      new THREE.Vector3(.68, -.72, .48),
+      new THREE.Vector3(-.75, -.72, .5), new THREE.Vector3(-.61, -1.16, .57),
+      new THREE.Vector3(-.29, -1.48, .49), new THREE.Vector3(0, -1.61, .41),
+      new THREE.Vector3(.29, -1.48, .49), new THREE.Vector3(.61, -1.16, .57),
+      new THREE.Vector3(.75, -.72, .5),
     ], accentMaterial))
     features.add(
-      curve(ellipsePoints(-.91, -.03, .115, .3, .05), dimMaterial, true),
-      curve(ellipsePoints(.91, -.03, .115, .3, .05), dimMaterial, true),
-      curve([new THREE.Vector3(-.33, -1.42, .25), new THREE.Vector3(-.4, -2.02, .05)], accentMaterial),
-      curve([new THREE.Vector3(.33, -1.42, .25), new THREE.Vector3(.4, -2.02, .05)], accentMaterial),
+      curve(ellipsePoints(-1.01, -.03, .125, .33, .04), dimMaterial, true),
+      curve(ellipsePoints(1.01, -.03, .125, .33, .04), dimMaterial, true),
+      curve([new THREE.Vector3(-.36, -1.54, .25), new THREE.Vector3(-.43, -2.08, .05)], accentMaterial),
+      curve([new THREE.Vector3(.36, -1.54, .25), new THREE.Vector3(.43, -2.08, .05)], accentMaterial),
       curve([new THREE.Vector3(-1.48, -2.17, -.18), new THREE.Vector3(-.72, -1.91, .03), new THREE.Vector3(0, -2.08, .18), new THREE.Vector3(.72, -1.91, .03), new THREE.Vector3(1.48, -2.17, -.18)], dimMaterial),
     )
 
     // Thousands of dim vertices reinforce that this is a generated data sculpture.
     const pointPositions: number[] = []
-    for (let row = 0; row < 35; row += 1) {
-      const y = -1.46 + row / 34 * 3.05
+    const pointRows = 39
+    for (let row = 0; row < pointRows; row += 1) {
+      const y = HEAD_BOTTOM + .02 + row / (pointRows - 1) * (VISIBLE_CROWN - HEAD_BOTTOM - .02)
       for (let column = 0; column < 44; column += 1) {
         const point = headPoint(y, column / 44 * Math.PI * 2)
         pointPositions.push(point.x, point.y, point.z)
@@ -317,7 +328,7 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
       const automaticYaw = Math.sin(elapsed * .42) * .19
       bust.rotation.y += (automaticYaw + pointerTarget.x * .42 - bust.rotation.y) * .035
       bust.rotation.x += (Math.sin(elapsed * .3) * .025 - pointerTarget.y * .18 - bust.rotation.x) * .035
-      bust.position.y = .12 + Math.sin(elapsed * .85) * .025
+      bust.position.y = .02 + Math.sin(elapsed * .85) * .025
 
       const blinkCycle = 4.65 + Math.sin(elapsed * .17) * .7
       const blinkPhase = elapsed % blinkCycle

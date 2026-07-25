@@ -347,7 +347,7 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
 
       const model = new THREE.Group()
       model.scale.setScalar(build.scale)
-      model.position.y = .42
+      model.position.y = .38
       bust.add(model)
 
       const geometry = new THREE.BufferGeometry()
@@ -486,7 +486,7 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
 
       const hair = buildBraids(
         buildHeadClearance(build.basePositions, build.vertexCount),
-        compact ? 13 : 17,
+        compact ? 24 : 34,
       )
       const hairGeometry = new THREE.BufferGeometry()
       hairGeometry.setAttribute('position', new THREE.BufferAttribute(hair.positions, 3))

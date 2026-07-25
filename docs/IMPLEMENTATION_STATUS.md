@@ -539,6 +539,25 @@ facial structure need a sculpted 3D asset (glTF) with real materials, not
 procedural line geometry. That is a different piece of work and should be
 scoped separately if the exact look is required.
 
+## Completed — Neck, scale and hair volume (2026-07-25, seventh pass)
+
+Three notes from the product owner on the idle render: the neck is too long,
+the head could be a little larger, and above all there needs to be *much* more
+hair.
+
+- **Neck.** The shoulders start about two units higher and flare earlier, so
+  the visible column between jaw and bust is roughly a third shorter.
+- **Scale.** `MODEL_SCALE` 0.118 → 0.124, framing lowered to compensate.
+- **Hair.** Cornrows doubled (17 → 34) and spread further towards the ears;
+  their tails now fall two to three times further and fan outwards, so the mass
+  reads down the sides and back rather than stopping at the nape. Framing
+  braids went from 4 to 16, distributed along the temple line at varied
+  lengths, swung clear of the cheek and given a wave so they fall with movement
+  instead of hanging as straight strings.
+
+50 web tests, 107 backend, lint and build clean. The braid clearance test still
+holds: nothing is buried in the skull and nothing crosses the face.
+
 ## In Progress
 
 Nothing mid-flight.

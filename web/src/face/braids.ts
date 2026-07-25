@@ -178,7 +178,7 @@ function cross(a: [number, number, number], b: [number, number, number]): [numbe
   return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
 }
 
-export function buildBraids(clearance: HeadClearance, rowCount = 17): BraidBuild {
+export function buildBraids(clearance: HeadClearance, rowCount = 34): BraidBuild {
   const positions: number[] = []
   const fade: number[] = []
 
@@ -230,7 +230,7 @@ export function buildBraids(clearance: HeadClearance, rowCount = 17): BraidBuild
   for (let row = 0; row < rowCount; row += 1) {
     // Rows are spread from ear to ear, avoiding the poles where they would
     // pile up on top of each other.
-    const beta = lerp(0.46, Math.PI - 0.46, (row + 0.5) / rowCount)
+    const beta = lerp(0.34, Math.PI - 0.34, (row + 0.5) / rowCount)
     const jitter = hash01(row * 7.3 + 1.7)
     const startGamma = hairlineGamma(beta) + 0.02
     // Rows run back over the crown and stop short of the nape, where the
@@ -250,13 +250,14 @@ export function buildBraids(clearance: HeadClearance, rowCount = 17): BraidBuild
     // The tail drops from the nape and curls under, gathering into a low mass
     // rather than hanging straight.
     const last = spine[spine.length - 1]
-    const tailLength = lerp(3.4, 6.2, hash01(row * 3.9 + 5.1))
-    for (let step = 1; step <= 8; step += 1) {
-      const t = step / 8
+    const tailLength = lerp(7, 15, hash01(row * 3.9 + 5.1))
+    const fan = (beta - Math.PI / 2) / (Math.PI / 2)
+    for (let step = 1; step <= 12; step += 1) {
+      const t = step / 12
       spine.push([
-        last[0] * lerp(1, 0.82, t),
+        last[0] * lerp(1, 0.9, t) + fan * t * 2.6,
         last[1] - tailLength * t,
-        last[2] + Math.sin(t * Math.PI) * 1.6 - t * 0.8,
+        last[2] + Math.sin(t * Math.PI) * 1.4 - t * 1.6,
       ])
     }
 
@@ -266,20 +267,27 @@ export function buildBraids(clearance: HeadClearance, rowCount = 17): BraidBuild
   // --- Loose braids in front of the ears ------------------------------------
   // Two on each side, framing the face — the detail that turns an updo into a
   // hairstyle rather than a helmet.
-  for (let loose = 0; loose < 4; loose += 1) {
-    const side = loose < 2 ? -1 : 1
+  for (let loose = 0; loose < 16; loose += 1) {
+    const side = loose % 2 === 0 ? -1 : 1
     const jitter = hash01(loose * 11.7 + 3.3)
-    const beta = side < 0 ? lerp(0.5, 0.72, jitter) : Math.PI - lerp(0.5, 0.72, jitter)
+    const along = (Math.floor(loose / 2) + 0.5) / 8
+    const beta = side < 0
+      ? lerp(0.3, 0.86, along) + (jitter - 0.5) * 0.06
+      : Math.PI - lerp(0.3, 0.86, along) - (jitter - 0.5) * 0.06
     const start = scalpPoint(beta, hairlineGamma(beta) + 0.12, 0.05, clearance)
 
     const spine: Array<[number, number, number]> = [start]
-    const length = lerp(9, 14, jitter)
-    for (let step = 1; step <= 16; step += 1) {
-      const t = step / 16
+    const length = lerp(11, 21, jitter)
+    const wave = lerp(0.6, 1.4, hash01(loose * 5.3 + 8.1))
+    const phase = jitter * Math.PI * 2
+    for (let step = 1; step <= 20; step += 1) {
+      const t = step / 20
       spine.push([
-        start[0] + side * (0.5 + Math.sin(t * 2.4) * 0.5) * t,
+        // Swung clear of the cheek, then falling with a little movement rather
+        // than hanging as a straight string.
+        start[0] + side * (1.9 + Math.sin(t * 2.2) * 0.7) * t + Math.sin(t * 3.1 + phase) * wave * t,
         start[1] - length * t,
-        start[2] - t * 1.4 - Math.sin(t * Math.PI) * 0.6,
+        start[2] - t * 2.4 - Math.sin(t * Math.PI) * 0.7,
       ])
     }
     emitBraid(spine, lerp(0.28, 0.4, jitter), lerp(9, 13, jitter), jitter * 6.28, clearance)

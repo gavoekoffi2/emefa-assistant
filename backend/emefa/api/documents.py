@@ -1,6 +1,6 @@
 """Authenticated download access to EMEFA document artifacts."""
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
@@ -10,6 +10,16 @@ from emefa.domain.devices import Device
 from emefa.domain.documents import DocumentNotFoundError
 
 router = APIRouter(prefix="/v1/documents", tags=["documents"])
+
+
+@router.get("")
+def list_documents(
+    request: Request,
+    _device: Annotated[Device, Depends(current_device)],
+) -> list[dict[str, Any]]:
+    """List the durable deliverables produced by EMEFA, newest first."""
+
+    return request.app.state.documents.list()
 
 
 @router.get("/{document_id}/download", response_class=FileResponse)

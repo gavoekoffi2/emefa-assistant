@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 from uuid import UUID, uuid4
 
 from docx import Document
@@ -82,13 +84,34 @@ class DocumentStore:
             raise DocumentNotFoundError("document_not_found")
         return path
 
-    def describe(self, document_id: str) -> dict[str, str]:
+    def describe(self, document_id: str) -> dict[str, Any]:
         path = self.get(document_id)
         document = Document(str(path))
         title = document.paragraphs[0].text if document.paragraphs else "Document EMEFA"
         slug = re.sub(r"[^A-Za-z0-9À-ÿ]+", "-", title).strip("-")[:80] or "document-emefa"
+        modified_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
         return {
             "document_id": self._validated_id(document_id),
+            "title": title,
             "filename": f"{slug}.docx",
+            "content_type": self.mime_type,
+            "size_bytes": path.stat().st_size,
+            "updated_at": modified_at,
             "download_url": f"/v1/documents/{self._validated_id(document_id)}/download",
         }
+
+    def list(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Return newest generated artifacts without trusting filenames as IDs."""
+
+        candidates = sorted(
+            self.root.glob("*.docx"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        records: list[dict[str, Any]] = []
+        for path in candidates[:max(1, min(limit, 500))]:
+            try:
+                records.append(self.describe(path.stem))
+            except (DocumentNotFoundError, ValueError, OSError):
+                continue
+        return records

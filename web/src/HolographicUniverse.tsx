@@ -42,7 +42,14 @@ export function HolographicUniverse({ activeNodes, voiceState }: { activeNodes: 
     const canvas = canvasRef.current
     if (!canvas) return
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, powerPreference: 'high-performance' })
+    let renderer: THREE.WebGLRenderer
+    try {
+      renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, powerPreference: 'high-performance' })
+    } catch {
+      canvas.classList.add('webgl-fallback')
+      canvas.setAttribute('aria-label', 'Univers EMEFA en mode visuel simplifié')
+      return
+    }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.6))
     renderer.outputColorSpace = THREE.SRGBColorSpace
     renderer.toneMapping = THREE.ACESFilmicToneMapping

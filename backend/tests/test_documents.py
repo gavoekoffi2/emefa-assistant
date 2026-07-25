@@ -45,6 +45,16 @@ async def test_document_create_produces_downloadable_real_docx(tmp_path):
 
         unauthorized = await client.get(f"/v1/documents/{document_id}/download")
         assert unauthorized.status_code == 401
+        unauthorized_list = await client.get("/v1/documents")
+        assert unauthorized_list.status_code == 401
+        listing = await client.get("/v1/documents", headers=headers)
+        assert listing.status_code == 200
+        assert listing.json()[0]["document_id"] == document_id
+        assert listing.json()[0]["title"] == "Compte rendu"
+        assert listing.json()[0]["filename"] == "Compte-rendu.docx"
+        assert listing.json()[0]["size_bytes"] > 0
+        assert listing.json()[0]["updated_at"]
+        assert listing.json()[0]["download_url"] == f"/v1/documents/{document_id}/download"
         download = await client.get(f"/v1/documents/{document_id}/download", headers=headers)
 
     assert download.status_code == 200

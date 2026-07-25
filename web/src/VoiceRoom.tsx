@@ -1,10 +1,12 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useConversation } from '@elevenlabs/react'
 import { api, BrandMark, graphNodes, palette, statusCopy, VoiceOrb } from './App'
 import { isBusinessEmpty, ProfilePanel } from './ProfilePanel'
 import { TasksPanel } from './TasksPanel'
 import { MemoryPanel } from './MemoryPanel'
 import { PipelinePanel } from './PipelinePanel'
+import { DeliverablesPanel } from './DeliverablesPanel'
+import type { DeliverableRecord, SourceFileRecord } from './DeliverablesPanel'
 
 // three.js is heavy; load the hologram as its own chunk so the shell stays light.
 const HolographicUniverse = lazy(() =>
@@ -24,15 +26,6 @@ type AgentRun = {
   action_id?: string | null
 }
 type PendingApproval = { action_id: string; name: string; arguments: Record<string, unknown> }
-type UploadedFileRecord = {
-  file_id: string
-  filename: string
-  content_type: string
-  size_bytes: number
-  extraction_status: string
-  text_preview: string
-  download_url: string
-}
 type DemoScenario = { id: string; title: string; prompt: string; status: 'live' | 'assisted' | 'preview'; note: string }
 
 const scenarioStatusLabel: Record<DemoScenario['status'], string> = {
@@ -87,6 +80,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   const [tasksOpen, setTasksOpen] = useState(false)
   const [memoryOpen, setMemoryOpen] = useState(false)
   const [pipelineOpen, setPipelineOpen] = useState(false)
+  const [deliverablesOpen, setDeliverablesOpen] = useState(false)
   const [firstRun, setFirstRun] = useState(false)
   const [approval, setApproval] = useState<PendingApproval | null>(null)
   const [deciding, setDeciding] = useState(false)
@@ -94,8 +88,11 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   const [morningBrief, setMorningBrief] = useState<string | null>(null)
   const [scenarios, setScenarios] = useState<DemoScenario[]>([])
   const [scenariosOpen, setScenariosOpen] = useState(false)
-  const [uploadedFiles, setUploadedFiles] = useState<UploadedFileRecord[]>([])
+  const [uploadedFiles, setUploadedFiles] = useState<SourceFileRecord[]>([])
   const [uploading, setUploading] = useState(false)
+  const [fileStripOpen, setFileStripOpen] = useState(false)
+  const [deliverableCount, setDeliverableCount] = useState(0)
+  const [deliverablesRefresh, setDeliverablesRefresh] = useState(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -105,10 +102,38 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
     api<DemoScenario[]>('/v1/demo/scenarios')
       .then(setScenarios)
       .catch(() => undefined)
-    api<UploadedFileRecord[]>('/v1/files')
+    api<SourceFileRecord[]>('/v1/files')
       .then(setUploadedFiles)
       .catch(() => undefined)
+    api<DeliverableRecord[]>('/v1/documents')
+      .then((documents) => setDeliverableCount(documents.length))
+      .catch(() => undefined)
   }, [])
+
+  const closeWorkspacePanels = () => {
+    setProfileOpen(false); setTasksOpen(false); setMemoryOpen(false); setPipelineOpen(false); setDeliverablesOpen(false)
+  }
+
+  const openDeliverables = () => {
+    closeWorkspacePanels()
+    setFileStripOpen(false)
+    setDeliverablesOpen(true)
+    setDeliverablesRefresh((value) => value + 1)
+  }
+
+  const handleDeliverableCounts = useCallback((deliverables: number, sources: number) => {
+    setDeliverableCount(deliverables)
+    if (sources !== uploadedFiles.length) {
+      api<SourceFileRecord[]>('/v1/files').then(setUploadedFiles).catch(() => undefined)
+    }
+  }, [uploadedFiles.length])
+
+  const signalDeliverablesChanged = () => {
+    setDeliverablesRefresh((value) => value + 1)
+    api<DeliverableRecord[]>('/v1/documents')
+      .then((documents) => setDeliverableCount(documents.length))
+      .catch(() => undefined)
+  }
 
   const showMorningBrief = () => {
     if (!morningBrief) return
@@ -169,6 +194,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
     setHistory((current) => [...current.slice(-7), { id: crypto.randomUUID(), role: 'assistant', text }])
     settleState(outcome)
     refreshSystem()
+    if (run.status === 'completed') signalDeliverablesChanged()
   }
 
   const decideApproval = async (approve: boolean) => {
@@ -261,6 +287,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
               })
 
               if (run.status === 'completed' && run.answer) {
+                signalDeliverablesChanged()
                 return run.answer
               } else if (run.status === 'confirmation_required' && run.action_id && run.pending_action) {
                 setApproval({
@@ -335,7 +362,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
     if (selected.length === 0 || uploading) return
     setUploading(true); setNotice('')
     try {
-      const uploaded: UploadedFileRecord[] = []
+      const uploaded: SourceFileRecord[] = []
       for (const file of selected) {
         const form = new FormData()
         form.append('file', file)
@@ -344,9 +371,11 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
           const body = await response.json().catch(() => null) as { detail?: string } | null
           throw new Error(body?.detail || `Upload refusé (${response.status}).`)
         }
-        uploaded.push(await response.json() as UploadedFileRecord)
+        uploaded.push(await response.json() as SourceFileRecord)
       }
       setUploadedFiles((current) => [...uploaded, ...current])
+      setFileStripOpen(true)
+      setDeliverablesRefresh((value) => value + 1)
       const names = uploaded.map((file) => file.filename).join(', ')
       const text = uploaded.length === 1
         ? `Fichier reçu : ${names}. Vous pouvez maintenant me demander de travailler dessus.`
@@ -386,12 +415,12 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       <div className="space-vignette" />
       <header className="jarvis-header">
         <div className="brand-row"><BrandMark /><div><strong>EMEFA</strong><small>INTELLIGENCE COGNITIVE</small></div></div>
-        <nav><button className={profileOpen || tasksOpen || memoryOpen || pipelineOpen ? '' : 'nav-active'} onClick={() => { setProfileOpen(false); setTasksOpen(false); setMemoryOpen(false); setPipelineOpen(false) }}>Univers</button><button className={tasksOpen ? 'nav-active' : ''} onClick={() => { setProfileOpen(false); setMemoryOpen(false); setPipelineOpen(false); setTasksOpen(true) }}>Tâches</button><button className={pipelineOpen ? 'nav-active' : ''} onClick={() => { setProfileOpen(false); setTasksOpen(false); setMemoryOpen(false); setPipelineOpen(true) }}>Pipeline</button><button className={memoryOpen ? 'nav-active' : ''} onClick={() => { setProfileOpen(false); setTasksOpen(false); setPipelineOpen(false); setMemoryOpen(true) }}>Mémoire</button><button className={profileOpen ? 'nav-active' : ''} onClick={() => { setTasksOpen(false); setMemoryOpen(false); setPipelineOpen(false); setProfileOpen(true) }}>Profil</button></nav>
+        <nav><button className={profileOpen || tasksOpen || memoryOpen || pipelineOpen || deliverablesOpen ? '' : 'nav-active'} onClick={closeWorkspacePanels}>Univers</button><button className={deliverablesOpen ? 'nav-active' : ''} onClick={openDeliverables}>Livrables{deliverableCount > 0 ? ` (${deliverableCount})` : ''}</button><button className={tasksOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setTasksOpen(true) }}>Tâches</button><button className={pipelineOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setPipelineOpen(true) }}>Pipeline</button><button className={memoryOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setMemoryOpen(true) }}>Mémoire</button><button className={profileOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setProfileOpen(true) }}>Profil</button></nav>
         <div className="header-right"><span className="system-clock"><b>SYS</b> EN LIGNE</span><span className="privacy-status"><i /> {window.location.protocol === 'https:' ? 'CHIFFREMENT ACTIF' : 'CONNEXION LOCALE'}</span><button className="profile-button" onClick={onLogout} title={`Déconnecter ${session.name}`}>CG</button></div>
       </header>
       <aside className="space-sidebar">
         <span className="sidebar-label">MATRICE COGNITIVE</span>
-        {['EMEFA', 'Projets', 'Mémoire', 'Outils', 'Documents', 'Idées'].map((group, index) => <button key={group} className={group === 'EMEFA' ? 'selected' : ''}><span className="module-index">0{index + 1}</span><i style={{ background: palette[group] }} />{group}</button>)}
+        {['EMEFA', 'Projets', 'Mémoire', 'Outils', 'Documents', 'Idées'].map((group, index) => <button key={group} className={group === 'EMEFA' ? 'selected' : ''} onClick={group === 'Documents' ? openDeliverables : undefined}><span className="module-index">0{index + 1}</span><i style={{ background: palette[group] }} />{group}</button>)}
         <div className="sidebar-signal"><span /><span /><span /><span /><span /><small>SIGNAL NEURAL</small></div>
         <div className="sidebar-bottom"><span>{system ? system.skills.length : '—'}</span><small>compétences actives</small></div>
       </aside>
@@ -427,16 +456,17 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
           ))}
         </div>
       )}
-      {uploadedFiles.length > 0 && (
+      {fileStripOpen && uploadedFiles.length > 0 && (
         <div className="file-strip" role="status" aria-label="Fichiers envoyés à EMEFA">
-          <span>FICHIERS</span>
-          {uploadedFiles.slice(0, 3).map((file) => (
+          <span>FICHIER REÇU</span>
+          {uploadedFiles.slice(0, 1).map((file) => (
             <a key={file.file_id} href={file.download_url} title={file.extraction_status}>{file.filename}</a>
           ))}
-          <small>{uploadedFiles.length} disponible{uploadedFiles.length > 1 ? 's' : ''}</small>
+          <button className="file-strip-view" onClick={openDeliverables}>Voir l’espace fichiers</button>
+          <button className="file-strip-close" onClick={() => setFileStripOpen(false)} aria-label="Fermer la confirmation de fichier">✕</button>
         </div>
       )}
-      <section className="command-dock"><button className={`dock-scenarios${scenariosOpen ? ' active' : ''}`} onClick={() => setScenariosOpen((open) => !open)} disabled={scenarios.length === 0} aria-label="Parcours guidés" title="Parcours guidés">✦</button><input ref={fileInputRef} className="sr-only" type="file" multiple onChange={(event) => void uploadFiles(event.currentTarget.files)} aria-label="Envoyer des fichiers à EMEFA" /><button className="dock-upload" onClick={() => fileInputRef.current?.click()} disabled={uploading} aria-label="Envoyer des fichiers à EMEFA" title="Envoyer PDF, Word, images ou autres fichiers">{uploading ? '…' : '📎'}</button><span className="dock-prompt">›</span><input value={typed} onChange={(event) => { setTyped(event.target.value); if (live) conversation.sendUserActivity() }} onKeyDown={(event) => { if (event.key === 'Enter') void submitTyped() }} placeholder="Écrire à EMEFA — avec ou sans la voix…" aria-label="Écrire une demande" /><button onClick={() => void submitTyped()} disabled={!typed.trim()}>TRANSMETTRE</button></section>
+      <section className="command-dock"><button className="dock-deliverables" onClick={openDeliverables} aria-label={`Ouvrir les livrables${deliverableCount ? `, ${deliverableCount} disponibles` : ''}`} title="Résultats et fichiers"><span aria-hidden="true">▣</span>{deliverableCount > 0 && <b>{deliverableCount > 99 ? '99+' : deliverableCount}</b>}</button><button className={`dock-scenarios${scenariosOpen ? ' active' : ''}`} onClick={() => setScenariosOpen((open) => !open)} disabled={scenarios.length === 0} aria-label="Parcours guidés" title="Parcours guidés">✦</button><input ref={fileInputRef} className="sr-only" type="file" multiple onChange={(event) => void uploadFiles(event.currentTarget.files)} aria-label="Envoyer des fichiers à EMEFA" /><button className="dock-upload" onClick={() => fileInputRef.current?.click()} disabled={uploading} aria-label="Envoyer des fichiers à EMEFA" title="Envoyer PDF, Word, images ou autres fichiers">{uploading ? '…' : '📎'}</button><span className="dock-prompt">›</span><input value={typed} onChange={(event) => { setTyped(event.target.value); if (live) conversation.sendUserActivity() }} onKeyDown={(event) => { if (event.key === 'Enter') void submitTyped() }} placeholder="Écrire à EMEFA — avec ou sans la voix…" aria-label="Écrire une demande" /><button className="dock-send" onClick={() => void submitTyped()} disabled={!typed.trim()}>TRANSMETTRE</button></section>
       <div className="model-pill"><span>PROTOCOLE</span><strong>VOICE·LIVE</strong><i>●</i></div>
       {notice && <div className="voice-notice" role="alert">{notice}</div>}
       {morningBrief && (
@@ -464,6 +494,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       <TasksPanel open={tasksOpen} onClose={() => setTasksOpen(false)} onAskBrief={askBrief} />
       <MemoryPanel open={memoryOpen} onClose={() => setMemoryOpen(false)} />
       <PipelinePanel open={pipelineOpen} onClose={() => setPipelineOpen(false)} />
+      <DeliverablesPanel open={deliverablesOpen} refreshToken={deliverablesRefresh} onClose={() => setDeliverablesOpen(false)} onCounts={handleDeliverableCounts} />
     </div>
   )
 }

@@ -6,6 +6,8 @@ const source = readFileSync(new URL('../src/VoiceRoom.tsx', import.meta.url), 'u
 const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
 const hologram = readFileSync(new URL('../src/HolographicUniverse.tsx', import.meta.url), 'utf8')
 const holographicCss = readFileSync(new URL('../src/Holographic.css', import.meta.url), 'utf8')
+const appCss = readFileSync(new URL('../src/App.css', import.meta.url), 'utf8')
+const deliverablesPanel = readFileSync(new URL('../src/DeliverablesPanel.tsx', import.meta.url), 'utf8')
 
 test('voice room uses ElevenLabs continuous live conversation SDK', () => {
   assert.match(source, /useConversation/)
@@ -163,4 +165,36 @@ test('visual states reflect backend outcomes including awaiting and success', ()
   assert.match(source, /tool_execution_failed:/)
   assert.match(source, /Rien n’a été confirmé comme exécuté/)
   assert.match(hologram, /awaiting: 0xff9d57/)
+})
+
+test('a WebGL failure keeps the voice interface available in simplified mode', () => {
+  assert.match(hologram, /try \{/)
+  assert.match(hologram, /new THREE\.WebGLRenderer/)
+  assert.match(hologram, /catch \{/)
+  assert.match(hologram, /webgl-fallback/)
+  assert.match(hologram, /mode visuel simplifié/)
+})
+
+test('deliverables workspace persistently lists generated results and source files', () => {
+  assert.match(source, /DeliverablesPanel/)
+  assert.match(source, /openDeliverables/)
+  assert.match(source, /\/v1\/documents/)
+  assert.match(source, /dock-deliverables/)
+  assert.match(deliverablesPanel, /Résultats d’EMEFA/)
+  assert.match(deliverablesPanel, /Fichiers envoyés/)
+  assert.match(deliverablesPanel, /Télécharger/)
+  assert.match(deliverablesPanel, /download/)
+  assert.match(deliverablesPanel, /Les résultats restent disponibles après la conversation/)
+  assert.match(holographicCss, /deliverables-panel/)
+})
+
+test('upload confirmation can be closed and cannot cover mobile voice controls', () => {
+  assert.match(source, /fileStripOpen/)
+  assert.match(source, /setFileStripOpen\(false\)/)
+  assert.match(source, /Fermer la confirmation de fichier/)
+  assert.match(source, /Voir l’espace fichiers/)
+  assert.match(holographicCss, /\.voice-controls\{position:relative;z-index:20\}/)
+  assert.match(holographicCss, /\.file-strip\{position:fixed;[^}]*top:/)
+  assert.match(holographicCss, /bottom:auto/)
+  assert.doesNotMatch(appCss, /\.file-strip\{[^}]*pointer-events:none/)
 })

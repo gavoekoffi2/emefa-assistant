@@ -39,13 +39,12 @@ test('3D holographic face mesh follows real assistant output audio', () => {
   assert.match(face, /frequencyRef\.current\(\)/)
   assert.match(face, /requestAnimationFrame/)
   assert.match(face, /THREE\.WebGLRenderer/)
-  assert.match(face, /THREE\.LineLoop/)
+  assert.match(face, /THREE\.LineSegments/)
   assert.match(face, /THREE\.Points/)
-  assert.match(face, /lowerPosition\.setXYZ/)
-  assert.match(face, /spectral centroid|centroid/)
-  assert.match(face, /targetRound/)
-  assert.match(face, /targetWide/)
-  assert.match(face, /Tiny deterministic saccades/)
+  assert.match(face, /applyExpression/)
+  assert.match(face, /visemeTargets/)
+  assert.match(face, /advanceVisemes/)
+  assert.match(face, /held saccades/)
   assert.match(face, /--voice-level/)
   assert.match(face, /Visage holographique 3D d’EMEFA/)
   assert.match(face, /FACIAL MESH/)
@@ -55,19 +54,52 @@ test('3D holographic face mesh follows real assistant output audio', () => {
   assert.match(faceCss, /repeating-linear-gradient/)
 })
 
-test('holographic entity uses a tall, wider human feminine head instead of a spherical cage', () => {
-  assert.match(face, /HEAD_WIDTH_PROFILE/)
-  assert.match(face, /FACE_DEPTH_PROFILE/)
-  assert.match(face, /visibly elongated skull, broad forehead/)
-  assert.match(face, /VISIBLE_CROWN/)
-  assert.match(face, /HEAD_WIDTH_SCALE = 1\.8/)
-  assert.match(face, /FEATURE_WIDTH_SCALE = 1\.65/)
-  assert.match(face, /features\.scale\.x = FEATURE_WIDTH_SCALE/)
-  assert.match(face, /prevent the cranium from reading as a striped fruit/)
-  assert.match(face, /colorWrite: false, depthWrite: true/)
-  assert.match(face, /OBJLoader/)
+test('the hologram is one anatomical head, not a face plate inside a shell', () => {
+  const canonicalFace = readFileSync(new URL('../src/face/canonicalFace.ts', import.meta.url), 'utf8')
+  const femaleHead = readFileSync(new URL('../src/face/femaleHead.ts', import.meta.url), 'utf8')
+  // The landmark model must be parsed in-house: three's OBJLoader returns a
+  // non-indexed geometry, which would destroy the numbering the rig needs.
+  assert.doesNotMatch(face, /OBJLoader/)
   assert.match(face, /emefa-canonical-face\.obj/)
-  assert.match(face, /MediaPipe's 468-point canonical face/)
+  assert.match(canonicalFace, /parseCanonicalFaceObj/)
+  assert.match(canonicalFace, /RIGHT_EYE_RING/)
+  assert.match(canonicalFace, /INNER_LIP_RING/)
+  // Cranium, neck and bust are grown from the face's own boundary loop.
+  assert.match(femaleHead, /buildFemaleHead/)
+  assert.match(femaleHead, /SKULL_RADII/)
+  assert.match(femaleHead, /applySkin/)
+  assert.match(face, /colorWrite: false, depthWrite: true/)
+  // No surface-of-revolution profiles and no hand-drawn feature splines.
+  assert.doesNotMatch(face, /HEAD_WIDTH_PROFILE/)
+  assert.doesNotMatch(face, /ellipsePoints/)
+})
+
+test('the head reads as a woman through proportions, not through decoration', () => {
+  const femaleHead = readFileSync(new URL('../src/face/femaleHead.ts', import.meta.url), 'utf8')
+  const hair = readFileSync(new URL('../src/face/hair.ts', import.meta.url), 'utf8')
+  assert.match(femaleHead, /feminizeFace/)
+  assert.match(femaleHead, /Gonial angle/)
+  assert.match(femaleHead, /Supraorbital ridge/)
+  assert.match(femaleHead, /Malar volume/)
+  assert.match(femaleHead, /Palpebral aperture/)
+  assert.match(hair, /buildHairStrands/)
+  assert.match(hair, /hairlineAngle/)
+})
+
+test('speech is driven by a mandible and lip rig rather than by scaled ellipses', () => {
+  const faceRig = readFileSync(new URL('../src/face/faceRig.ts', import.meta.url), 'utf8')
+  const visemes = readFileSync(new URL('../src/face/visemes.ts', import.meta.url), 'utf8')
+  assert.match(faceRig, /jawPivot/)
+  assert.match(faceRig, /JAW_SLIDE_Z/)
+  assert.match(faceRig, /lipRound/)
+  assert.match(faceRig, /lipWide/)
+  assert.match(faceRig, /lipPress/)
+  assert.match(faceRig, /travelUpper/)
+  // Bands, not a whole-spectrum centroid dominated by the noise floor.
+  assert.match(visemes, /bandEnergies/)
+  assert.match(visemes, /BANDS/)
+  // Smoothing expressed as time constants, so articulation is frame-rate free.
+  assert.match(visemes, /Math\.exp\(-Math\.max\(dt/)
 })
 
 test('voice room supports a continuous session, typed turns, and clean shutdown', () => {

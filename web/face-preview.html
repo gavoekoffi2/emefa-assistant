@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <title>EMEFA — aperçu du visage</title>
+    <style>
+      :root { --hud: #6eeaff; --hud-rgb: 110, 234, 255; }
+      html, body { margin: 0; height: 100%; background: radial-gradient(ellipse at 50% 40%, #071a2a, #02060d 70%); }
+      #root { height: 100vh; display: grid; place-items: center; }
+      #root > * { zoom: var(--zoom, 1.6); }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/facePreview.tsx"></script>
+  </body>
+</html>

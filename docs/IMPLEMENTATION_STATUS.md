@@ -237,6 +237,88 @@ Turns the Phases 0–8 capabilities into one coherent, honest, demonstrable flow
 - **Brief unified:** main's `get_daily_brief` now delegates to the shared `compose_daily_brief` (adds due sales follow-ups); scheduler e-mails via `EmailProvider.send`.
 - Tests re-reconciled: backend **95 passing**, web **17 passing** (main's website + this branch's scenario/state tests), lint and build clean. `python-docx` is a real dependency now (main's pyproject).
 
+## Completed — Holographic face realism (2026-07-25)
+
+The hologram's face was the one open defect the previous author could not close:
+it did not read as a person. The cause was structural, not cosmetic — three
+mutually inconsistent shapes were being drawn on top of each other:
+
+1. an egg-shaped surface of revolution built from hand-tuned width/depth
+   profiles (`HEAD_WIDTH_PROFILE`, `FACE_DEPTH_PROFILE`);
+2. the MediaPipe canonical face mesh, loaded through three's `OBJLoader` (which
+   returns a *non-indexed* geometry, destroying the landmark numbering) and
+   scaled by eye to sit somewhere inside that egg;
+3. hand-drawn ellipse splines for eyes, nose and lips floating in front of both,
+   at fixed depths that matched neither surface.
+
+Nothing shared a coordinate frame, so no amount of tuning could make it cohere.
+
+**Rebuilt as one anatomical head.** New `web/src/face/` modules, all free of any
+three.js import so the geometry is unit-testable under plain Node:
+
+- `canonicalFace.ts` — parses the bundled Apache-2.0 landmark model in-house so
+  every vertex keeps its canonical index, and carves out the eye and inner-mouth
+  patches so the sockets and the mouth are real apertures rather than painted on.
+- `femaleHead.ts` — `feminizeFace` applies the documented dimorphic traits
+  (softer mandible, reduced gonial flare, shorter rounder chin, flattened
+  supraorbital ridge with a raised brow, more vertical forehead, narrower nasal
+  base, fuller lips, higher malar volume, larger palpebral aperture);
+  `buildFemaleHead` then grows the cranium, neck and bust **from the face's own
+  boundary loop**, so the head is continuous by construction. Generated vertices
+  are skinned to their parent landmark, so the cranium follows an opening jaw
+  instead of tearing.
+- `faceRig.ts` — mandible rotation about the condyle *plus* the condylar slide a
+  real jaw performs, lip rounding/spreading/closure around the commissure, and
+  eyelid closure modelled as a lid translation onto a closure line low in the
+  aperture.
+- `visemes.ts` — four speech bands (F1, F2-low, F2-high, sibilance) replacing a
+  whole-spectrum centroid that was dominated by the noise floor; smoothing is
+  expressed as time constants so articulation is frame-rate independent.
+- `contours.ts` — iso-height slices solved once against the rest pose and stored
+  as edge crossings, so the topographic lines stay welded to the deforming skin.
+- `hair.ts` — procedural shoulder-length strands grown from the same skull
+  ellipsoid, with a hairline that drops from forehead to nape.
+
+`EMEFAFace.tsx` keeps its public API, CSS classes, HUD, accessibility labels and
+click behaviour unchanged; only the geometry and shading were replaced. The
+surface now carries a real key/fill/fresnel term (an additive fresnel alone
+renders a glowing outline with a featureless middle), the bust dissolves into
+the projection, and eye/brow/lip contours are drawn explicitly because those are
+what a viewer reads a face from.
+
+**Bugs fixed along the way**
+
+- `EMEFAFace`: `pointerleave` listener was never removed; no WebGL
+  context-loss handling; animation smoothing was per-frame rather than
+  per-second (twice as fast on a 120 Hz display); unguarded calls into the voice
+  SDK's analyser; shared geometries/materials disposed more than once.
+- `HolographicUniverse`: same context-loss and double-dispose issues; now also
+  skips rendering while the document is hidden, and sets the pixel ratio on
+  resize so it survives a move between displays.
+- `DeliverablesPanel`: `onCounts` sat in the effect's dependency array while the
+  parent re-derived that callback from the counts it received, so every open
+  fetched the whole workspace twice. Held in a ref now.
+- **TD-9 completed:** `EMEFAFace` also imported three.js eagerly, which put the
+  whole library back into the entry bundle and defeated the earlier
+  `HolographicUniverse` split. Both 3D surfaces are lazy now — entry JS
+  1,253 kB → 694 kB (gzip 336 kB → 192 kB), with three.js in a deferred 534 kB
+  chunk that an unauthenticated visitor never downloads.
+
+**Verification.** `web/tests/face.test.js` adds 18 behavioural tests over the
+pure modules (model topology, landmark anatomy, each feminisation trait, seam
+welding, triangle winding, skinning, jaw/lip/blink kinematics, contour tracking,
+hair placement, viseme separation, frame-rate independence). Two of them caught
+real defects while being written — a blink that only closed the lid a third of
+the way, and hair strands descending across the forehead. Backend 107 pass; web
+42 pass; lint, `tsc` and build clean. `web/face-preview.html` is a dev-only
+harness (vite builds `index.html` only, so it never ships) used to render the
+face headlessly for visual review.
+
+**Known limitation.** The mouth aperture is a 20-gon, inherited from the
+canonical model's inner-lip ring; it is visible only when the face is magnified
+well beyond its in-app size. Subdividing the perioral region would fix it and is
+not worth the topology change yet.
+
 ## In Progress
 
 Nothing mid-flight.
@@ -254,8 +336,8 @@ Nothing mid-flight.
 
 ## Tests
 
-`cd backend && pip install -e ".[test]" && python -m pytest` → 27 pass.
-`cd web && npm ci && npm run lint && npm test && npm run build` → all pass.
+`cd backend && pip install -e ".[test]" && python -m pytest` → 107 pass.
+`cd web && npm ci && npm run lint && npm test && npm run build` → all pass (42 web tests).
 
 ## Decisions
 

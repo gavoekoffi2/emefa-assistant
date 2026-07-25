@@ -50,7 +50,6 @@ export function HolographicUniverse({ activeNodes, voiceState }: { activeNodes: 
       canvas.setAttribute('aria-label', 'Univers EMEFA en mode visuel simplifié')
       return
     }
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.6))
     renderer.outputColorSpace = THREE.SRGBColorSpace
     renderer.toneMapping = THREE.ACESFilmicToneMapping
     renderer.toneMappingExposure = 1.35
@@ -184,6 +183,7 @@ export function HolographicUniverse({ activeNodes, voiceState }: { activeNodes: 
     const resize = () => {
       const width = canvas.clientWidth || window.innerWidth
       const height = canvas.clientHeight || window.innerHeight
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.6))
       renderer.setSize(width, height, false)
       camera.aspect = width / height
       camera.updateProjectionMatrix()
@@ -192,10 +192,20 @@ export function HolographicUniverse({ activeNodes, voiceState }: { activeNodes: 
     resizeObserver.observe(canvas)
     resize()
 
+    // A lost GPU context leaves the background frozen for the rest of the
+    // session unless the default "never restore" behaviour is prevented.
+    let contextLost = false
+    const handleContextLost = (event: Event) => { event.preventDefault(); contextLost = true }
+    const handleContextRestored = () => { contextLost = false; resize() }
+    canvas.addEventListener('webglcontextlost', handleContextLost)
+    canvas.addEventListener('webglcontextrestored', handleContextRestored)
+
     const clock = new THREE.Clock()
     let animationFrame = 0
     const color = new THREE.Color()
     const animate = () => {
+      animationFrame = requestAnimationFrame(animate)
+      if (contextLost || document.hidden) return
       const elapsed = clock.getElapsedTime()
       const state = stateRef.current
       const motion = reducedMotion ? .08 : state === 'thinking' ? 1.65 : state === 'speaking' ? 1.3 : state === 'listening' ? .82 : .42
@@ -233,7 +243,6 @@ export function HolographicUniverse({ activeNodes, voiceState }: { activeNodes: 
         material.opacity += ((active ? .95 : .48) - material.opacity) * .08
       })
       renderer.render(scene, camera)
-      animationFrame = requestAnimationFrame(animate)
     }
     animate()
 
@@ -241,11 +250,23 @@ export function HolographicUniverse({ activeNodes, voiceState }: { activeNodes: 
       cancelAnimationFrame(animationFrame)
       resizeObserver.disconnect()
       window.removeEventListener('pointermove', handlePointer)
+      canvas.removeEventListener('webglcontextlost', handleContextLost)
+      canvas.removeEventListener('webglcontextrestored', handleContextRestored)
+      // Geometries and materials are shared across meshes here, so releasing
+      // them more than once would throw on an already-deleted GPU resource.
+      const releasedGeometries = new Set<THREE.BufferGeometry>()
+      const releasedMaterials = new Set<THREE.Material>()
       scene.traverse((object) => {
         if (!(object instanceof THREE.Mesh || object instanceof THREE.Line || object instanceof THREE.Points)) return
-        object.geometry?.dispose()
-        const materials = Array.isArray(object.material) ? object.material : [object.material]
-        materials.forEach((material) => material.dispose())
+        if (object.geometry && !releasedGeometries.has(object.geometry)) {
+          releasedGeometries.add(object.geometry)
+          object.geometry.dispose()
+        }
+        for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+          if (releasedMaterials.has(material)) continue
+          releasedMaterials.add(material)
+          material.dispose()
+        }
       })
       renderer.dispose()
     }

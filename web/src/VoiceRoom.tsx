@@ -7,11 +7,16 @@ import { MemoryPanel } from './MemoryPanel'
 import { PipelinePanel } from './PipelinePanel'
 import { DeliverablesPanel } from './DeliverablesPanel'
 import type { DeliverableRecord, SourceFileRecord } from './DeliverablesPanel'
-import { EMEFAFace } from './EMEFAFace'
 
-// three.js is heavy; load the hologram as its own chunk so the shell stays light.
+// three.js is heavy. Both 3D surfaces load as their own chunks so the
+// activation shell never downloads a renderer it will not use — splitting only
+// the background left the face importing three eagerly, which put the whole
+// library back into the entry bundle.
 const HolographicUniverse = lazy(() =>
   import('./HolographicUniverse').then((module) => ({ default: module.HolographicUniverse })),
+)
+const EMEFAFace = lazy(() =>
+  import('./EMEFAFace').then((module) => ({ default: module.EMEFAFace })),
 )
 import type { BusinessProfile } from './ProfilePanel'
 import type { Session, VoiceState } from './App'
@@ -440,7 +445,11 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
           <div className="core-readout left"><span>CORE</span><strong>EMF-01</strong></div>
           <div className="core-reticle" aria-hidden="true"><i /><i /><i /><i /></div>
           {visualMode === 'face'
-            ? <EMEFAFace state={state} onClick={() => void toggleLive()} getOutputVolume={conversation.getOutputVolume} getOutputFrequencyData={conversation.getOutputByteFrequencyData} />
+            ? (
+              <Suspense fallback={<VoiceOrb state={state} onClick={() => void toggleLive()} />}>
+                <EMEFAFace state={state} onClick={() => void toggleLive()} getOutputVolume={conversation.getOutputVolume} getOutputFrequencyData={conversation.getOutputByteFrequencyData} />
+              </Suspense>
+            )
             : <VoiceOrb state={state} onClick={() => void toggleLive()} />}
           <button
             className="face-mode-toggle"

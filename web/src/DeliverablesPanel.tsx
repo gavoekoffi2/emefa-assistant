@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from './App'
 
 export type DeliverableRecord = {
@@ -69,6 +69,12 @@ export function DeliverablesPanel({
 }) {
   const [data, setData] = useState<DeliverablesPayload | null>(null)
   const [error, setError] = useState('')
+  // `onCounts` reports back into the parent, which re-derives the callback from
+  // that very report. Keeping it in the dependency array made every open reload
+  // the whole workspace twice; a ref keeps the notification without making the
+  // fetch depend on the callback's identity.
+  const onCountsRef = useRef(onCounts)
+  useEffect(() => { onCountsRef.current = onCounts }, [onCounts])
 
   useEffect(() => {
     if (!open) return
@@ -78,13 +84,13 @@ export function DeliverablesPanel({
       .then((payload) => {
         if (cancelled) return
         setData(payload)
-        onCounts?.(payload.deliverables.length, payload.sources.length)
+        onCountsRef.current?.(payload.deliverables.length, payload.sources.length)
       })
       .catch((cause) => {
         if (!cancelled) setError(cause instanceof Error ? cause.message : 'Impossible de charger les livrables.')
       })
     return () => { cancelled = true }
-  }, [open, refreshToken, onCounts])
+  }, [open, refreshToken])
 
   if (!open) return null
 

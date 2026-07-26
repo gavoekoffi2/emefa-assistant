@@ -139,6 +139,19 @@ test('voice room supports a continuous session, typed turns, and clean shutdown'
   assert.match(source, /Conversation continue · interrompez EMEFA à tout moment/)
 })
 
+test('the latest exchange is isolated in a compact responsive conversation widget', () => {
+  assert.match(source, /<section className="conversation-widget"/)
+  assert.match(source, /aria-label="Dernier échange avec EMEFA"/)
+  assert.match(source, /className="conversation-turn user-turn"/)
+  assert.match(source, /className="conversation-turn assistant-turn"/)
+  assert.match(source, />VOUS</)
+  assert.match(source, />EMEFA</)
+  assert.doesNotMatch(source, /className="voice-copy"/)
+  assert.match(holographicCss, /\.conversation-widget\{[^}]*max-height:148px[^}]*overflow:hidden/)
+  assert.match(holographicCss, /\.assistant-turn p\{[^}]*overflow-y:auto/)
+  assert.match(holographicCss, /@media\(max-width:800px\)[\s\S]*\.conversation-widget\{width:92vw/)
+})
+
 test('typed input reaches the EMEFA runtime when the voice session is offline', () => {
   assert.match(source, /\/v1\/agent\/runs/)
   assert.match(source, /confirmation_required/)

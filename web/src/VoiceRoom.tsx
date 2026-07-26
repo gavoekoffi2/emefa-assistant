@@ -625,7 +625,20 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
           >{visualMode === 'face' ? 'NOYAU' : 'VISAGE'}</button>
           <div className="core-readout right"><span>LATENCE</span><strong>TEMPS RÉEL</strong></div>
         </div>
-        <div className="voice-copy"><p className="heard">{state === 'listening' && transcript ? `« ${transcript} »` : latestUser ? `« ${latestUser} »` : live ? 'Parlez, je vous écoute…' : visualMode === 'face' ? 'Touchez le visage pour commencer à parler' : 'Touchez le noyau pour commencer à parler'}</p><p className="answer">{answer}</p></div>
+        <section className="conversation-widget" aria-live="polite" aria-label="Dernier échange avec EMEFA">
+          <header className="conversation-widget-head">
+            <span><i aria-hidden="true" />CONVERSATION</span>
+            <small>{live ? 'EN DIRECT' : 'DERNIER ÉCHANGE'}</small>
+          </header>
+          <div className="conversation-turn user-turn">
+            <span className="turn-speaker">VOUS</span>
+            <p>{state === 'listening' && transcript ? transcript : latestUser || (live ? 'Parlez, je vous écoute…' : visualMode === 'face' ? 'Touchez le visage pour commencer à parler' : 'Touchez le noyau pour commencer à parler')}</p>
+          </div>
+          <div className="conversation-turn assistant-turn">
+            <span className="turn-speaker">EMEFA</span>
+            <p>{answer}</p>
+          </div>
+        </section>
         <div className="voice-controls"><button className={live ? 'danger' : ''} onClick={() => void toggleLive()}><span className="mic-symbol">⌁</span>{live ? 'Terminer la conversation' : 'Initialiser la liaison vocale'}</button><small>{live ? 'Conversation continue · interrompez EMEFA à tout moment' : 'Activation unique · échange vocal naturel'}</small></div>
         <section className="screen-share-panel" hidden={!screenSharing} aria-live="polite" aria-label="Partage d’écran EMEFA">
           <video ref={screenVideoRef} className="screen-share-preview" autoPlay muted playsInline aria-hidden="true" />

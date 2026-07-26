@@ -193,7 +193,7 @@ export const SKULL_RADII: [number, number, number] = [7.6, 8.4, 9.5]
 const CRANIUM_RINGS = 14
 
 /** Maps model units to scene units; the head ends up ~3.6 units tall. */
-export const MODEL_SCALE = 0.118
+export const MODEL_SCALE = 0.124
 
 function slerpDirection(from: [number, number, number], to: [number, number, number], t: number): [number, number, number] {
   const raw = from[0] * to[0] + from[1] * to[1] + from[2] * to[2]
@@ -290,13 +290,13 @@ export function buildFemaleHead(face: CanonicalFace, facePositions: Float32Array
   // always hidden behind the jaw and never needs to follow it.
   const neckSegments = 30
   const neckRings: number[][] = []
-  const neckLevels = [-5, -7.2, -9.4, -11.2, -12.8, -14.4, -16.2, -18.6]
+  const neckLevels = [-5, -6.8, -8.6, -10.2, -11.6, -13, -14.6, -17]
   // Set back behind the chin: a column drawn under the face rather than behind
   // it is what made the previous open-mouth pose show a ledge across the jaw.
   const NECK_AXIS_Z = -2.3
   neckLevels.forEach((level, step) => {
     const t = step / (neckLevels.length - 1)
-    const spread = smoothstep(0.28, 1, t)
+    const spread = smoothstep(0.22, 1, t)
     const halfWidth = lerp(3.9, 4.6, smoothstep(0, 0.5, t)) + spread * 7.4
     const depth = lerp(3, 3.6, smoothstep(0, 0.5, t)) + spread * 2.4
     const ring: number[] = []

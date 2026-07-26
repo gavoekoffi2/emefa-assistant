@@ -8,7 +8,8 @@ import { SKULL_CENTRE, applySkin, buildFemaleHead, feminizeFace, hash01, smooths
 import { applyExpression, buildFaceRig, mouthAperture } from './face/faceRig.ts'
 import type { Expression } from './face/faceRig.ts'
 import { buildFaceDetail, evaluateFaceDetail } from './face/faceDetail.ts'
-import { buildHairStrands, scalpMask } from './face/hair.ts'
+import { scalpMask } from './face/hair.ts'
+import { buildBraids, buildHeadClearance } from './face/braids.ts'
 import {
   azimuthField, bakeIsoScalar, bakeIsoVector, evaluateIsoLines, evenLevels, heightField, planIsoLines,
 } from './face/contours.ts'
@@ -204,8 +205,8 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
 
     const uniforms = {
       uTime: { value: 0 },
-      uBase: { value: new THREE.Color(0x2ea8e0) },
-      uGlow: { value: new THREE.Color(0xbdf6ff) },
+      uBase: { value: new THREE.Color(0x1f6dff) },
+      uGlow: { value: new THREE.Color(0x9fe8ff) },
       uVoice: { value: 0 },
       uOpacity: { value: 1 },
       // Rim weight. Skin needs a strong fresnel to describe the silhouette, but
@@ -225,23 +226,23 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
       transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
     })
 
-    const skinMaterial = surface(.3, .3)
+    const skinMaterial = surface(.34, .4)
     const cavityMaterial = surface(.1, .12)
-    const globeMaterial = surface(.85, .04)
-    const orbitMaterial = surface(.055, 0, THREE.BackSide)
+    const globeMaterial = surface(1.5, .04)
+    const orbitMaterial = surface(.07, 0, THREE.BackSide)
 
     // Horizontal slices and vertical meridians: the grid that *is* the face.
-    const latitudeMaterial = lines(.5, .02)
-    const meridianMaterial = lines(.34, .02)
+    const latitudeMaterial = lines(.62, .04)
+    const meridianMaterial = lines(.46, .04)
     // Lash line and vermilion border, kept faint — they exist because an
     // additive surface cannot render a lid margin, not to outline the face.
-    const featureMaterial = lines(.95, .75)
+    const featureMaterial = lines(2.2, .9)
     // Lash line and nose base, brighter than anything else on the face.
-    const accentMaterial = lines(1.7, .9)
-    const detailMaterial = lines(1, .7)
-    const hairMaterial = lines(.52, .5)
+    const accentMaterial = lines(3.4, 1)
+    const detailMaterial = lines(2, .8)
+    const hairMaterial = lines(1.35, .45)
     const landmarkMaterial = new THREE.PointsMaterial({
-      color: 0xcaf8ff, size: .013, transparent: true, opacity: .4,
+      color: 0xdcfbff, size: .0095, transparent: true, opacity: .3,
       blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true,
     })
     const irisMaterial = new THREE.ShaderMaterial({
@@ -346,7 +347,7 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
 
       const model = new THREE.Group()
       model.scale.setScalar(build.scale)
-      model.position.y = .64
+      model.position.y = .38
       bust.add(model)
 
       const geometry = new THREE.BufferGeometry()
@@ -388,14 +389,14 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
         grids.push({ plan, attribute })
       }
       addGrid(
-        planIsoLines(level.indices, heightField(baseSmooth), evenLevels(-13, crown, compact ? 26 : 40)),
+        planIsoLines(level.indices, heightField(baseSmooth), evenLevels(-13, crown, compact ? 46 : 84)),
         latitudeMaterial,
       )
       addGrid(
         planIsoLines(
           level.indices,
           azimuthField(baseSmooth, SKULL_CENTRE[2]),
-          evenLevels(-Math.PI, Math.PI, compact ? 30 : 46),
+          evenLevels(-Math.PI, Math.PI, compact ? 46 : 92),
           true,
         ),
         meridianMaterial,
@@ -414,13 +415,11 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
       contourLines(loopEdges(FEATURE_LOOPS), featureMaterial)
       contourLines(chainEdges(ACCENT_CHAINS), accentMaterial)
 
-      // Landmark points, drawn only on the 468 canonical vertices: the mesh's
-      // actual anatomical anchors rather than every subdivided corner.
+      // A vertex scatter across the whole surface, not just the 468 anatomical
+      // anchors: the reference reads as a *sampled* volume, and the sparkle of
+      // nodes over the skin is a large part of why.
       const landmarkGeometry = new THREE.BufferGeometry()
       landmarkGeometry.setAttribute('position', surfacePositions)
-      landmarkGeometry.setIndex(new THREE.BufferAttribute(
-        Uint32Array.from({ length: 468 }, (_, index) => index), 1,
-      ))
       model.add(new THREE.Points(landmarkGeometry, landmarkMaterial))
 
       // --- Brow tufts and lid creases ----------------------------------------
@@ -466,12 +465,13 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
 
         // Iris sized to the aperture height, the way a real iris is: tall
         // enough that the lids just graze it top and bottom.
-        const iris = new THREE.Mesh(new THREE.CircleGeometry(eye.halfHeight * .96, 34), irisMaterial)
+        const iris = new THREE.Mesh(new THREE.CircleGeometry(eye.halfHeight * .78, 34), irisMaterial)
+        iris.scale.set(1.18, 1, 1)
         iris.position.z = eye.halfHeight * 1.55 + .04
         group.add(iris)
         // A single specular highlight, offset towards the key light. Nothing
         // else so cheaply makes an eye look wet and alive.
-        const catchlight = new THREE.Mesh(new THREE.CircleGeometry(eye.halfHeight * .17, 10), catchlightMaterial)
+        const catchlight = new THREE.Mesh(new THREE.CircleGeometry(eye.halfHeight * .12, 10), catchlightMaterial)
         catchlight.position.set(-eye.halfHeight * .32, eye.halfHeight * .36, eye.halfHeight * 1.55 + .07)
         group.add(catchlight)
 
@@ -484,7 +484,10 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
         return group
       })
 
-      const hair = buildHairStrands(compact ? 190 : 340)
+      const hair = buildBraids(
+        buildHeadClearance(build.basePositions, build.vertexCount),
+        compact ? 24 : 34,
+      )
       const hairGeometry = new THREE.BufferGeometry()
       hairGeometry.setAttribute('position', new THREE.BufferAttribute(hair.positions, 3))
       // Roots read as solid mass, tips dissolve into the projection.
@@ -578,9 +581,14 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
       if (contextLost || document.hidden) return
 
       const currentState = stateRef.current
-      const speaking = currentState === 'speaking'
-      const level = speaking ? readVolume() : 0
-      advanceVisemes(viseme, speaking ? visemeTargets(readSpectrum(), level) : ZERO_TARGETS, level, delta)
+      // Lip sync reads the output analyser every frame and never gates on the
+      // `speaking` state. That state comes from mode-change events which lag
+      // the audio and can flip mid-utterance, muting the mouth in the middle of
+      // a sentence; the analyser reports exactly what is being played right
+      // now. Both accessors return 0 / an empty buffer while disconnected, so
+      // an idle face simply resolves to a closed mouth.
+      const level = readVolume()
+      advanceVisemes(viseme, visemeTargets(readSpectrum(), level), level, delta)
       buttonRef.current?.style.setProperty('--voice-level', viseme.level.toFixed(3))
       uniforms.uTime.value = elapsed
       uniforms.uVoice.value = viseme.level
@@ -672,9 +680,9 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
       color.setHex(STATE_COLORS[currentState])
       uniforms.uGlow.value.lerp(color, Math.min(1, delta * 2.2))
       landmarkMaterial.color.lerp(color, Math.min(1, delta * 1.6))
-      latitudeMaterial.uniforms.uOpacity.value = .48 + viseme.level * .2
-      meridianMaterial.uniforms.uOpacity.value = .33 + viseme.level * .14
-      landmarkMaterial.opacity = .34 + viseme.level * .18
+      latitudeMaterial.uniforms.uOpacity.value = .58 + viseme.level * .22
+      meridianMaterial.uniforms.uOpacity.value = .44 + viseme.level * .18
+      landmarkMaterial.opacity = .28 + viseme.level * .18
       rings.rotation.z = elapsed * .11 * motion
       rings.scale.setScalar(1 + viseme.level * .055)
       ringMaterials.forEach((material, index) => { material.opacity = (.52 - index * .1) * (.8 + viseme.level * .3) })
@@ -737,4 +745,3 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
 }
 
 const EMPTY_SPECTRUM = new Uint8Array()
-const ZERO_TARGETS = { jawOpen: 0, lipRound: 0, lipWide: 0, lipPress: 0 }

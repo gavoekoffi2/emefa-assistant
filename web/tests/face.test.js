@@ -15,7 +15,9 @@ import {
   findBoundaryLoops,
   parseCanonicalFaceObj,
 } from '../src/face/canonicalFace.ts'
-import { MODEL_SCALE, applySkin, buildFemaleHead, feminizeFace } from '../src/face/femaleHead.ts'
+import {
+  MODEL_SCALE, SKULL_CENTRE, SKULL_RADII, applySkin, buildFemaleHead, feminizeFace,
+} from '../src/face/femaleHead.ts'
 import { applyExpression, buildFaceRig, mouthAperture } from '../src/face/faceRig.ts'
 import { buildHairStrands, hairlineAngle } from '../src/face/hair.ts'
 import {
@@ -23,7 +25,8 @@ import {
 } from '../src/face/contours.ts'
 import { applySubdivision, buildSubdivisionLevel, computeNormals } from '../src/face/subdivide.ts'
 import { hairlineAngle as hairline, scalpMask } from '../src/face/hair.ts'
-import { advanceVisemes, createVisemeState, visemeTargets } from '../src/face/visemes.ts'
+import { VOICE_RANGE_HZ, advanceVisemes, binForHz, createVisemeState, visemeTargets } from '../src/face/visemes.ts'
+import { buildBraids, buildHeadClearance } from '../src/face/braids.ts'
 
 const objectText = readFileSync(new URL('../public/models/emefa-canonical-face.obj', import.meta.url), 'utf8')
 const canonical = parseCanonicalFaceObj(objectText)
@@ -387,20 +390,39 @@ test('the hairline drops from the forehead to the nape and no strand crosses the
 
 // --- visemes ----------------------------------------------------------------
 
-const spectrumFrom = (peaks) => {
-  const spectrum = new Uint8Array(512)
+// Spectra are built in *hertz*, because the analyser buffer this code consumes
+// is not a raw FFT: the client resamples it into a 100 Hz–8 kHz voice range
+// stretched across every bin. Treating it as 0 Hz–Nyquist put every band about
+// three times too low, so "F1" measured the pitch fundamental and "sibilance"
+// measured F2 — which is why the mouth only ever flapped with volume.
+const spectrumAtHz = (peaks) => {
+  const spectrum = new Uint8Array(1024)
+  const [low, high] = VOICE_RANGE_HZ
   for (let index = 0; index < spectrum.length; index += 1) {
-    const f = index / spectrum.length
+    const hz = low + (index / spectrum.length) * (high - low)
     let value = 0
-    for (const [centre, gain, width] of peaks) value += gain * Math.exp(-((f - centre) ** 2) / (2 * width * width))
+    for (const [centreHz, gain, widthHz] of peaks) {
+      value += gain * Math.exp(-((hz - centreHz) ** 2) / (2 * widthHz * widthHz))
+    }
     spectrum[index] = Math.min(255, Math.round(value * 255))
   }
   return spectrum
 }
-const OPEN_A = spectrumFrom([[0.012, 0.9, 0.008], [0.03, 0.5, 0.012], [0.07, 0.25, 0.02]])
-const ROUND_OU = spectrumFrom([[0.012, 0.8, 0.008], [0.032, 0.85, 0.012], [0.075, 0.1, 0.02]])
-const SPREAD_I = spectrumFrom([[0.01, 0.45, 0.006], [0.03, 0.12, 0.01], [0.085, 0.9, 0.03]])
-const SIBILANT_S = spectrumFrom([[0.01, 0.03, 0.006], [0.25, 0.8, 0.2]])
+
+// Formant pairs for real French vowels (F1, F2), plus a sibilant.
+const OPEN_A = spectrumAtHz([[750, 1, 110], [1350, 0.6, 160]])
+const ROUND_OU = spectrumAtHz([[320, 0.9, 90], [800, 0.95, 130], [2200, 0.06, 200]])
+const SPREAD_I = spectrumAtHz([[300, 0.5, 80], [900, 0.12, 130], [2400, 1, 260]])
+const SIBILANT_S = spectrumAtHz([[600, 0.04, 120], [6200, 1, 1400]])
+
+test('band edges follow the client voice range, not the Nyquist span', () => {
+  assert.deepEqual([...VOICE_RANGE_HZ], [100, 8000])
+  assert.equal(binForHz(100, 1024), 0)
+  assert.equal(binForHz(8000, 1024), 1024)
+  // The midpoint of the range lands mid-buffer — the property that a
+  // 0-to-Nyquist reading gets wrong.
+  assert.equal(binForHz(4050, 1024), 512)
+})
 
 test('the viseme solver separates rounded, spread and sibilant articulation', () => {
   const round = visemeTargets(ROUND_OU, 0.8)
@@ -416,11 +438,11 @@ test('the viseme solver separates rounded, spread and sibilant articulation', ()
 })
 
 test('silence and closure are told apart', () => {
-  const silent = visemeTargets(new Uint8Array(512), 0)
+  const silent = visemeTargets(new Uint8Array(1024), 0)
   assert.deepEqual(silent, { jawOpen: 0, lipRound: 0, lipWide: 0, lipPress: 0 })
 
   // Audio still flowing but nothing in the speech bands: a bilabial stop.
-  const closure = visemeTargets(new Uint8Array(512), 0.4)
+  const closure = visemeTargets(new Uint8Array(1024), 0.4)
   assert.ok(closure.lipPress > 0.5)
   assert.equal(closure.jawOpen, 0)
 })
@@ -442,4 +464,67 @@ test('articulation is frame-rate independent and opens faster than it relaxes', 
   closing.jawOpen = targets.jawOpen
   advanceVisemes(closing, { jawOpen: 0, lipRound: 0, lipWide: 0, lipPress: 0 }, 0, 0.03)
   assert.ok(opening.jawOpen / targets.jawOpen > 1 - closing.jawOpen / targets.jawOpen)
+})
+
+
+test('braided hair covers the scalp and hangs clear of the face', () => {
+  const braids = buildBraids(buildHeadClearance(build.basePositions, build.vertexCount), 17)
+  assert.equal(braids.positions.length / 3, braids.fade.length)
+
+  let overCrown = 0
+  let acrossFace = 0
+  for (let i = 0; i < braids.positions.length; i += 3) {
+    const [x, y, z] = [braids.positions[i], braids.positions[i + 1], braids.positions[i + 2]]
+    if (y > 6) overCrown += 1
+    // In front of the face plane at face height near the midline.
+    if (z > 4.5 && y < 5 && y > -9 && Math.abs(x) < 4.5) acrossFace += 1
+  }
+  assert.ok(overCrown > braids.fade.length * 0.3, 'cornrows must actually cover the crown')
+  assert.equal(acrossFace, 0, `${acrossFace} braid vertices fall across the face`)
+
+  // The braid shell has to clear the *swept cranium*, not the ellipsoid it was
+  // derived from. The cranium is grown from the face's boundary loop, so over
+  // the front of the scalp it sits well outside the ellipsoid — a shell sized
+  // to the ellipsoid ends up inside the skull there and the depth prepass
+  // culls the entire hairstyle. Clearance is per-direction: the head's radius
+  // varies a lot between the brow and the nape, so a single global comparison
+  // both misses real burial and cries wolf over the deliberately set-back
+  // front rows.
+  const direction = (positions, index) => {
+    const d = [
+      (positions[index * 3] - SKULL_CENTRE[0]) / SKULL_RADII[0],
+      (positions[index * 3 + 1] - SKULL_CENTRE[1]) / SKULL_RADII[1],
+      (positions[index * 3 + 2] - SKULL_CENTRE[2]) / SKULL_RADII[2],
+    ]
+    const radius = Math.hypot(d[0], d[1], d[2]) || 1
+    return { unit: [d[0] / radius, d[1] / radius, d[2] / radius], radius }
+  }
+  const headDirections = []
+  for (let vertex = 0; vertex < build.vertexCount; vertex += 1) {
+    if (build.basePositions[vertex * 3 + 1] < 0) continue
+    headDirections.push(direction(build.basePositions, vertex))
+  }
+
+  let buried = 0
+  let sampled = 0
+  for (let i = 0; i < braids.positions.length / 3; i += 7) {
+    if (braids.positions[i * 3 + 1] < 4) continue
+    const braid = direction(braids.positions, i)
+    let nearest = null
+    let best = -Infinity
+    for (const candidate of headDirections) {
+      const alignment = braid.unit[0] * candidate.unit[0]
+        + braid.unit[1] * candidate.unit[1]
+        + braid.unit[2] * candidate.unit[2]
+      if (alignment > best) {
+        best = alignment
+        nearest = candidate
+      }
+    }
+    if (best < 0.995) continue
+    sampled += 1
+    if (braid.radius < nearest.radius * 0.99) buried += 1
+  }
+  assert.ok(sampled > 40, `only ${sampled} braid vertices had head geometry behind them`)
+  assert.equal(buried, 0, `${buried} of ${sampled} braid vertices sit inside the skull`)
 })

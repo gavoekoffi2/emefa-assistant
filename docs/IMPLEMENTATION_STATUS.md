@@ -558,39 +558,54 @@ hair.
 50 web tests, 107 backend, lint and build clean. The braid clearance test still
 holds: nothing is buried in the skull and nothing crosses the face.
 
+## Completed — JARVIS capability audit + uploaded-image vision (2026-07-26)
+
+- Current product re-audited from code, configuration and live health rather than from old roadmap assumptions.
+- Architecture and researched tool choices recorded in `docs/JARVIS_CAPABILITY_PLAN.md`.
+- `OpenRouterVisionAnalyzer`: asynchronous OpenRouter multimodal adapter; image bytes remain server-side until an explicit analysis request and are sent as a private data URL, never exposed through a public URL.
+- New governed `image_analyze` skill (PERSONAL_READ), conditionally registered only when OpenRouter is configured; available through the text engine and the live ElevenLabs `emefa_execute` bridge.
+- Default model is configurable through `EMEFA_VISION_MODEL`; current default `google/gemini-2.5-flash-lite` was present in the live OpenRouter catalogue on 2026-07-26.
+- Real provider proof: generated image containing `EMEFA 42` and a teal-blue rectangle; OpenRouter returned HTTP 200, read the exact text and identified the rectangle/color.
+- Baseline before/after: live `/health` OK; backend 110 passing before the slice. Final suite count is recorded below.
+
 ## In Progress
 
 Nothing mid-flight.
 
 ## Blocked on product owner
 
-1. **ElevenLabs agent governance (S3):** need the dashboard agent's persona/config exported into the repo, or API access to fetch it.
-2. **Voice routing ADR + baseline benchmark:** requires live credentials to measure latency/interruption/cost before choosing ElevenLabs custom-LLM vs LiveKit.
-3. **First external integrations (email/calendar/documents):** provider choices and credentials needed before Phase 5/6 slices can be real (no fake integrations).
+- Camera and screen sharing are not blocked technically, but their implementation must keep explicit visible activation and stop controls.
+- Calendar/contacts require Google OAuth consent and credentials.
+- Calls and WhatsApp require dedicated SIP/Twilio/Meta accounts and real phone-number configuration.
+- Domotics require a real Home Assistant instance and paired devices.
+- Computer control requires a dedicated, paired local agent; it must not run on the public VPS as a substitute for the user's computer.
 
 ## Blocked
 
-- Nothing blocking development. Live provider verification (ElevenLabs/DeepSeek calls) requires secrets not present in this environment — behavior verified through code + existing mock-transport tests only.
-- ElevenLabs agent persona/config is dashboard state, not in git; needs export/versioning (owner action or API task).
+- Nothing blocking the image-vision slice.
+- Agent Reach's Python entry point is broken in this environment (`ModuleNotFoundError`); research used its documented GitHub CLI fallback. This does not affect EMEFA runtime.
+- Parallel delegation is temporarily unavailable because the configured delegation model is unsupported; audit and implementation were completed in the main session.
 
 ## Tests
 
-`cd backend && pip install -e ".[test]" && python -m pytest` → 107 pass.
-`cd web && npm ci && npm run lint && npm test && npm run build` → all pass (50 web tests).
+- Backend: `python -m pytest -q` → **114 passed**.
+- Web: `npm run lint && npm test && npm run build` → **51 passed**, lint clean, production build successful.
+- Real vision smoke test: OpenRouter HTTP 200 and correct grounded answer for the generated proof image.
 
 ## Decisions
 
-- No rewrite of any subsystem; ElevenLabs voice path and 3D UI preserved as-is (evidence in audit docs).
-- SQLite retained for single-instance MVP; unused OpenAI-realtime settings to be removed when `config.py` is next touched.
-- Audit docs written in English (matching spec pack); ops runbook remains French.
+- No rewrite: preserve ElevenLabs, the governed FastAPI engine and the current WebGL avatar.
+- SQLite retained for the single-instance MVP; add FTS5 and durable jobs before introducing new databases.
+- Memory remains user-visible and user-controllable; do not duplicate it with Mem0/Letta now.
+- Playwright is the preferred deterministic Web execution layer; any Browser Use/MCP planner remains behind EMEFA's policy and approval boundary.
+- n8n may orchestrate bounded business workflows but does not become EMEFA's authority or bypass approvals.
+- Vision uses the already-configured OpenRouter account before adding another provider.
 
 ## Next
 
-Phase 1 exit gate (roadmap §17) is now satisfied: app starts, UI untouched and working, build passes, tests pass, no critical secret exposure, tenant/auth foundation defined (ADR-001). Remaining Phase 1-adjacent items moved to backlog NEXT (persist conversation state when identity lands).
-
-**Phase 2 — Assistant Identity & Onboarding** is the next slice:
-1. Migration 2: implicit tenant/user/assistant rows + `assistant_profile` / `business_profile` tables (per ADR-001).
-2. Backend endpoints to read/update the assistant + business profile (device-authenticated).
-3. Conversational onboarding flow reusing the existing conversation UI; persisted summary the user can correct.
-4. Wire profile context into `DeepSeekBrain` system prompt composition.
-Exit gate: create/configure assistant, minimum onboarding persisted, reload without losing setup (roadmap §22).
+1. Deploy and live-test uploaded-image vision from the authenticated EMEFA interface.
+2. Add explicit camera capture and screen-share controls on the same vision adapter.
+3. Add durable background jobs, artifacts and progress notifications.
+4. Add sourced Web research and Google Calendar OAuth.
+5. Add isolated Playwright browser execution, then an allowlisted MCP gateway.
+6. Add phone, WhatsApp, Home Assistant and local-computer control only when their real accounts/devices are available.

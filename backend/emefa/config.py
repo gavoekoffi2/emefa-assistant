@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     openrouter_api_key: SecretStr | None = None
     openrouter_model: str = "deepseek/deepseek-chat"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    vision_model: str = "google/gemini-2.5-flash-lite"
     voice_llm_token: SecretStr | None = None
     brief_hour: int | None = None
     brief_email_to: str | None = None

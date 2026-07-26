@@ -40,6 +40,7 @@ from emefa.infrastructure.deepseek import DeepSeekBrain
 from emefa.infrastructure.email import HimalayaEmailProvider
 from emefa.infrastructure.realtime import RealtimeGateway
 from emefa.infrastructure.voice_llm import VoiceLLMProxy
+from emefa.infrastructure.vision import OpenRouterVisionAnalyzer
 from emefa.infrastructure.website_profile import WebsiteProfileImporter
 from emefa.observability import (
     configure_logging,
@@ -139,6 +140,11 @@ def create_app(
     # Resolve the OpenAI-compatible LLM provider once; the text brain and the
     # voice Custom-LLM bridge share it. DeepSeek direct wins over OpenRouter.
     llm_api_key: str | None = None
+    openrouter_key = (
+        active_settings.openrouter_api_key.get_secret_value().strip()
+        if active_settings.openrouter_api_key is not None
+        else ""
+    )
     llm_model = active_settings.deepseek_model
     llm_base_url = "https://api.deepseek.com"
     if (
@@ -146,11 +152,8 @@ def create_app(
         and active_settings.deepseek_api_key.get_secret_value().strip()
     ):
         llm_api_key = active_settings.deepseek_api_key.get_secret_value().strip()
-    elif (
-        active_settings.openrouter_api_key is not None
-        and active_settings.openrouter_api_key.get_secret_value().strip()
-    ):
-        llm_api_key = active_settings.openrouter_api_key.get_secret_value().strip()
+    elif openrouter_key:
+        llm_api_key = openrouter_key
         llm_model = active_settings.openrouter_model
         llm_base_url = active_settings.openrouter_base_url
 
@@ -172,6 +175,15 @@ def create_app(
         model=llm_model,
         base_url=llm_base_url,
         context_provider=compose_context,
+    )
+    vision_analyzer = (
+        OpenRouterVisionAnalyzer(
+            api_key=openrouter_key,
+            model=active_settings.vision_model,
+            base_url=active_settings.openrouter_base_url,
+        )
+        if openrouter_key
+        else None
     )
 
     realtime_key = (
@@ -209,6 +221,8 @@ def create_app(
         if close is not None:
             await close()
         await voice_llm_proxy.close()
+        if vision_analyzer is not None:
+            await vision_analyzer.close()
         await realtime_gateway.close()
 
     application = FastAPI(
@@ -227,6 +241,7 @@ def create_app(
     application.state.conversations = conversations
     application.state.documents = DocumentStore(active_settings.database_path)
     application.state.uploaded_files = uploaded_files
+    application.state.vision = vision_analyzer
     application.state.website_importer = WebsiteProfileImporter()
     application.state.compose_context = compose_context
     application.state.compose_text_context = compose_text_context
@@ -241,6 +256,7 @@ def create_app(
             application.state.documents,
             prospects,
             uploaded_files=uploaded_files,
+            vision_analyzer=vision_analyzer,
         ),
         memory=conversations,
     )
@@ -259,6 +275,7 @@ def create_app(
             application.state.documents,
             prospects,
             uploaded_files=uploaded_files,
+            vision_analyzer=vision_analyzer,
             include_mailbox_read=False,
         ),
         memory=conversations,

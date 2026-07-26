@@ -20,6 +20,7 @@ from emefa.domain.profiles import ASSISTANT_FIELDS, BUSINESS_FIELDS, ProfileRepo
 from emefa.domain.prospects import STAGES, ProspectRepository
 from emefa.domain.uploaded_files import UploadedFileNotFoundError, UploadedFileStore
 from emefa.domain.tasks import TaskRepository
+from emefa.domain.vision import VisionAnalyzer
 from emefa.observability import audit
 
 
@@ -121,6 +122,7 @@ def build_tool_shelf(
     documents: DocumentStore | None = None,
     prospects: ProspectRepository | None = None,
     uploaded_files: UploadedFileStore | None = None,
+    vision_analyzer: VisionAnalyzer | None = None,
     include_mailbox_read: bool = True,
 ) -> ToolShelf:
     """Assemble the governed tool shelf.
@@ -267,7 +269,7 @@ def build_tool_shelf(
     if documents is not None:
         _add_document_skills(shelf, documents)
     if uploaded_files is not None:
-        _add_uploaded_file_skills(shelf, uploaded_files)
+        _add_uploaded_file_skills(shelf, uploaded_files, vision_analyzer)
     if prospects is not None:
         _add_prospect_skills(shelf, prospects)
     return shelf
@@ -437,7 +439,11 @@ def _add_document_skills(shelf: ToolShelf, documents: DocumentStore) -> None:
     ))
 
 
-def _add_uploaded_file_skills(shelf: ToolShelf, uploaded_files: UploadedFileStore) -> None:
+def _add_uploaded_file_skills(
+    shelf: ToolShelf,
+    uploaded_files: UploadedFileStore,
+    vision_analyzer: VisionAnalyzer | None = None,
+) -> None:
     def list_files(arguments: Mapping[str, Any]) -> dict[str, Any]:
         limit = max(1, min(int(arguments.get("limit", 20)), 50))
         entries = uploaded_files.list(limit=limit)
@@ -486,6 +492,54 @@ def _add_uploaded_file_skills(shelf: ToolShelf, uploaded_files: UploadedFileStor
         },
         handler=read_file,
     ))
+    if vision_analyzer is not None:
+        async def analyze_image(arguments: Mapping[str, Any]) -> dict[str, Any]:
+            file_id = str(arguments.get("file_id", "")).strip()
+            question = str(arguments.get("question", "")).strip()[:2_000]
+            if not question:
+                question = "Décris précisément cette image en français."
+            try:
+                record = uploaded_files.describe(file_id)
+                if not record.content_type.startswith("image/"):
+                    return {"error": "file_is_not_an_image"}
+                analysis = await vision_analyzer.analyze(
+                    uploaded_files.get_path(file_id), record.content_type, question
+                )
+            except UploadedFileNotFoundError:
+                return {"error": "file_not_found"}
+            audit("skill_image_analyzed", file_id=file_id)
+            return {
+                "file_id": file_id,
+                "filename": record.filename,
+                "analysis": analysis,
+            }
+
+        shelf.add(AgentTool(
+            name="image_analyze",
+            description=(
+                "Analyse visuellement une image envoyée à EMEFA. Utilise file_list pour "
+                "retrouver son file_id, puis cet outil pour décrire la scène, lire le texte "
+                "visible, examiner un document photographié ou répondre à une question sur "
+                "l'image. L'image est transmise au fournisseur visuel configuré."
+            ),
+            risk=ActionRisk.PERSONAL_READ,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "file_id": {
+                        "type": "string",
+                        "description": "Identifiant UUID de l'image envoyée",
+                    },
+                    "question": {
+                        "type": "string",
+                        "description": "Question précise à propos de l'image",
+                    },
+                },
+                "required": ["file_id"],
+                "additionalProperties": False,
+            },
+            handler=analyze_image,
+        ))
 
 
 def _add_email_skills(

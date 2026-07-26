@@ -9,6 +9,7 @@ import { DeliverablesPanel } from './DeliverablesPanel'
 import { CommandCenterPanel } from './CommandCenterPanel'
 import type { DeliverableRecord, SourceFileRecord } from './DeliverablesPanel'
 import { useClonedVoice } from './useClonedVoice'
+import { useLiveKitVoice, type LiveKitTicket } from './useLiveKitVoice'
 import { splitSpeakableText } from './voiceText.ts'
 
 // three.js is heavy. Both 3D surfaces load as their own chunks so the
@@ -46,6 +47,8 @@ const scenarioStatusLabel: Record<DemoScenario['status'], string> = {
 type SystemStatus = {
   brain_configured: boolean
   voice_configured: boolean
+  voice_transport: 'elevenlabs' | 'livekit'
+  livekit_configured: boolean
   skills: Array<{ name: string; risk: string }>
   open_task_count: number
   schema_version: number
@@ -76,6 +79,15 @@ async function getVoiceTicket(): Promise<SignedSession> {
     throw new Error(body?.detail || `Connexion vocale refusée (${response.status}).`)
   }
   return response.json() as Promise<SignedSession>
+}
+
+async function getLiveKitTicket(): Promise<LiveKitTicket> {
+  const response = await fetch('/v1/livekit/session', { method: 'POST', credentials: 'include' })
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as { detail?: string } | null
+    throw new Error(body?.detail || `Connexion LiveKit refusée (${response.status}).`)
+  }
+  return response.json() as Promise<LiveKitTicket>
 }
 
 export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: () => void }) {
@@ -132,6 +144,22 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
     onFailure: (message) => {
       setCloneFailed(true)
       setNotice(message)
+    },
+  })
+  const livekitVoice = useLiveKitVoice({
+    onUserTranscript: (text) => {
+      setTranscript(text)
+      setHistory((current) => [...current.slice(-7), { id: crypto.randomUUID(), role: 'user', text }])
+      setState('thinking')
+    },
+    onAgentTranscript: (text) => {
+      setAnswer(text)
+      setHistory((current) => [...current.slice(-7), { id: crypto.randomUUID(), role: 'assistant', text }])
+      setActiveNodes([0, 1 + Math.floor(Math.random() * (graphNodes.length - 1))])
+    },
+    onError: (message) => {
+      setState('error')
+      setNotice(`LiveKit : ${message}`)
     },
   })
 
@@ -353,7 +381,10 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
     }
   }, [cloneFailed, conversation.status, setConversationVolume])
 
-  const live = conversation.status !== 'disconnected'
+  const livekitEnabled = system?.voice_transport === 'livekit'
+  const live = livekitEnabled
+    ? livekitVoice.status !== 'disconnected'
+    : conversation.status !== 'disconnected'
 
   // During a live voice session, actions prepared orally create pending
   // approvals server-side; poll so the card surfaces without a reload.
@@ -368,16 +399,28 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   }, [live])
 
   useEffect(() => {
+    if (livekitEnabled) {
+      if (livekitVoice.status === 'connecting') setState('thinking')
+      else if (livekitVoice.status === 'speaking') setState('speaking')
+      else if (livekitVoice.status === 'listening') setState('listening')
+      else setState((current) => current === 'error' ? current : 'idle')
+      return
+    }
     if (conversation.status === 'connecting') setState('thinking')
     else if (conversation.status === 'connected') setState(conversation.isSpeaking || clonedVoice.isSpeaking ? 'speaking' : 'listening')
     else setState((current) => current === 'error' ? current : 'idle')
-  }, [conversation.status, conversation.isSpeaking, clonedVoice.isSpeaking])
+  }, [livekitEnabled, livekitVoice.status, conversation.status, conversation.isSpeaking, clonedVoice.isSpeaking])
 
   const startRealtime = async () => {
     setNotice(''); setState('thinking')
     try {
       const permissionStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
       permissionStream.getTracks().forEach((track) => track.stop())
+      if (livekitEnabled) {
+        const ticket = await getLiveKitTicket()
+        await livekitVoice.start(ticket)
+        return true
+      }
       setCloneFailed(false)
       await clonedVoice.activate()
       const ticket = await getVoiceTicket()
@@ -448,7 +491,12 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   }
 
   const toggleLive = async () => {
-    if (live) { clonedVoice.disable(); await conversation.endSession(); return }
+    if (live) {
+      clonedVoice.disable()
+      if (livekitEnabled) await livekitVoice.stop()
+      else await conversation.endSession()
+      return
+    }
     await startRealtime()
   }
 
@@ -647,7 +695,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
           {visualMode === 'face'
             ? (
               <Suspense fallback={<VoiceOrb state={state} onClick={() => void toggleLive()} />}>
-                <EMEFAFace state={state} onClick={() => void toggleLive()} getOutputVolume={cloneFailed ? conversation.getOutputVolume : clonedVoice.getOutputVolume} getOutputFrequencyData={cloneFailed ? conversation.getOutputByteFrequencyData : clonedVoice.getOutputByteFrequencyData} />
+                <EMEFAFace state={state} onClick={() => void toggleLive()} getOutputVolume={livekitEnabled ? livekitVoice.getOutputVolume : cloneFailed ? conversation.getOutputVolume : clonedVoice.getOutputVolume} getOutputFrequencyData={livekitEnabled ? livekitVoice.getOutputByteFrequencyData : cloneFailed ? conversation.getOutputByteFrequencyData : clonedVoice.getOutputByteFrequencyData} />
               </Suspense>
             )
             : <VoiceOrb state={state} onClick={() => void toggleLive()} />}

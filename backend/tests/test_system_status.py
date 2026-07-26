@@ -35,6 +35,8 @@ async def test_system_status_reports_real_state(tmp_path):
     body = response.json()
     assert body["brain_configured"] is True  # explicit brain injected
     assert body["voice_configured"] is False  # no ElevenLabs key in tests
+    assert body["voice_transport"] == "elevenlabs"
+    assert body["livekit_configured"] is False
     assert body["open_task_count"] == 1
     assert body["schema_version"] == 10
     skill_names = {skill["name"] for skill in body["skills"]}

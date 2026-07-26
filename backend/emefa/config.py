@@ -1,6 +1,7 @@
 """Environment-backed configuration for EMEFA."""
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -27,6 +28,12 @@ class Settings(BaseSettings):
     elevenlabs_api_key: SecretStr | None = None
     elevenlabs_agent_id: str | None = None
     elevenlabs_voice_id: str | None = None
+    livekit_url: str | None = None
+    livekit_api_key: SecretStr | None = None
+    livekit_api_secret: SecretStr | None = None
+    livekit_agent_name: str = "emefa"
+    livekit_token_ttl_seconds: int = 300
+    voice_transport: Literal["elevenlabs", "livekit"] = "elevenlabs"
     email_account: str | None = None
     himalaya_binary: str = "himalaya"
     himalaya_config: Path | None = None

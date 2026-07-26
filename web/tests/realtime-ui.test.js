@@ -12,6 +12,8 @@ const deliverablesPanel = readFileSync(new URL('../src/DeliverablesPanel.tsx', i
 const face = readFileSync(new URL('../src/EMEFAFace.tsx', import.meta.url), 'utf8')
 const faceCss = readFileSync(new URL('../src/EMEFAFace.css', import.meta.url), 'utf8')
 const clonedVoice = readFileSync(new URL('../src/useClonedVoice.ts', import.meta.url), 'utf8')
+const livekitVoice = readFileSync(new URL('../src/useLiveKitVoice.ts', import.meta.url), 'utf8')
+const packageJson = readFileSync(new URL('../package.json', import.meta.url), 'utf8')
 
 test('voice room uses ElevenLabs continuous live conversation SDK', () => {
   assert.match(source, /useConversation/)
@@ -22,6 +24,21 @@ test('voice room uses ElevenLabs continuous live conversation SDK', () => {
   assert.match(source, /\/v1\/realtime\/session/)
   assert.match(source, /getUserMedia/)
   assert.match(app, /ConversationProvider/)
+})
+
+test('LiveKit stays behind the server transport flag while ElevenLabs remains the rollback path', () => {
+  assert.match(packageJson, /"livekit-client"/)
+  assert.match(source, /voice_transport: 'elevenlabs' \| 'livekit'/)
+  assert.match(source, /system\?\.voice_transport === 'livekit'/)
+  assert.match(source, /\/v1\/livekit\/session/)
+  assert.match(source, /livekitVoice\.start/)
+  assert.match(source, /conversation\.startSession/)
+  assert.match(livekitVoice, /new Room/)
+  assert.match(livekitVoice, /RoomEvent\.TrackSubscribed/)
+  assert.match(livekitVoice, /RoomEvent\.TranscriptionReceived/)
+  assert.match(livekitVoice, /setMicrophoneEnabled\(true\)/)
+  assert.match(livekitVoice, /createMediaElementSource/)
+  assert.match(livekitVoice, /analyser\.connect\(context\.destination\)/)
 })
 
 test('voice room uses provider VAD and true barge-in instead of browser speech APIs', () => {
@@ -72,8 +89,8 @@ test('local acoustic barge-in requires sustained high-confidence speech', () => 
 
 test('3D holographic face mesh follows real assistant output audio', () => {
   assert.match(source, /EMEFAFace/)
-  assert.match(source, /getOutputVolume=\{cloneFailed \? conversation\.getOutputVolume : clonedVoice\.getOutputVolume\}/)
-  assert.match(source, /getOutputFrequencyData=\{cloneFailed \? conversation\.getOutputByteFrequencyData : clonedVoice\.getOutputByteFrequencyData\}/)
+  assert.match(source, /getOutputVolume=\{livekitEnabled \? livekitVoice\.getOutputVolume : cloneFailed \? conversation\.getOutputVolume : clonedVoice\.getOutputVolume\}/)
+  assert.match(source, /getOutputFrequencyData=\{livekitEnabled \? livekitVoice\.getOutputByteFrequencyData : cloneFailed \? conversation\.getOutputByteFrequencyData : clonedVoice\.getOutputByteFrequencyData\}/)
   assert.match(source, /visualMode/)
   assert.match(face, /outputRef\.current\(\)/)
   assert.match(face, /frequencyRef\.current\(\)/)

@@ -132,3 +132,25 @@ async def test_web_shell_is_never_cached_but_hashed_assets_can_be_cached(tmp_pat
         asset = await web_client.get("/assets/index-version.css")
     assert shell.headers["Cache-Control"] == "no-store, must-revalidate"
     assert asset.headers["Cache-Control"] == "public, max-age=31536000, immutable"
+
+
+@pytest.mark.asyncio
+async def test_csp_allows_only_the_configured_livekit_websocket_origin(tmp_path):
+    app = create_app(
+        Settings(
+            enrollment_code="CODE-SECRET",
+            database_path=tmp_path / "csp.db",
+            cookie_secure=False,
+            livekit_url="wss://emefa-pilot.livekit.cloud",
+            livekit_api_key="key-id",
+            livekit_api_secret="signing-secret-signing-secret-32-bytes-minimum",
+        )
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as web_client:
+        response = await web_client.get("/health")
+
+    csp = response.headers["Content-Security-Policy"]
+    assert "wss://emefa-pilot.livekit.cloud" in csp
+    assert "wss://*.livekit.cloud" not in csp

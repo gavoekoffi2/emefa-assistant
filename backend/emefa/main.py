@@ -15,6 +15,7 @@ from emefa.api.demo import router as demo_router
 from emefa.api.devices import router as devices_router
 from emefa.api.documents import router as documents_router
 from emefa.api.files import router as files_router
+from emefa.api.livekit import router as livekit_router
 from emefa.api.memories import router as memories_router
 from emefa.api.profile import router as profile_router
 from emefa.api.prospects import router as prospects_router
@@ -40,6 +41,7 @@ from emefa.domain.tasks import TaskRepository
 from emefa.domain.uploaded_files import UploadedFileStore
 from emefa.infrastructure.deepseek import DeepSeekBrain
 from emefa.infrastructure.email import HimalayaEmailProvider
+from emefa.infrastructure.livekit import LiveKitBroker
 from emefa.infrastructure.realtime import RealtimeGateway
 from emefa.infrastructure.vision import OpenRouterVisionAnalyzer
 from emefa.infrastructure.voice_llm import VoiceLLMProxy
@@ -205,6 +207,23 @@ def create_app(
         agent_id=active_settings.elevenlabs_agent_id,
         voice_id=active_settings.elevenlabs_voice_id,
     )
+    livekit_key = (
+        active_settings.livekit_api_key.get_secret_value().strip()
+        if active_settings.livekit_api_key is not None
+        else None
+    )
+    livekit_secret = (
+        active_settings.livekit_api_secret.get_secret_value().strip()
+        if active_settings.livekit_api_secret is not None
+        else None
+    )
+    livekit_broker = LiveKitBroker(
+        url=active_settings.livekit_url,
+        api_key=livekit_key,
+        api_secret=livekit_secret,
+        agent_name=active_settings.livekit_agent_name,
+        token_ttl_seconds=active_settings.livekit_token_ttl_seconds,
+    )
 
     @asynccontextmanager
     async def lifespan(_application: FastAPI):
@@ -244,6 +263,7 @@ def create_app(
         if vision_analyzer is not None:
             await vision_analyzer.close()
         await realtime_gateway.close()
+        await livekit_broker.close()
 
     application = FastAPI(
         title="EMEFA",
@@ -309,6 +329,7 @@ def create_app(
     application.state.approvals = approvals
     application.state.brain_configured = brain_configured
     application.state.realtime = realtime_gateway
+    application.state.livekit = livekit_broker
     application.state.activation_limiter = FailureLimiter(
         max_failures=active_settings.activation_max_failures,
         window_seconds=active_settings.activation_window_seconds,
@@ -344,11 +365,18 @@ def create_app(
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Permissions-Policy"] = "camera=(), geolocation=(), microphone=(self)"
+        livekit_connect_source = (
+            f" {active_settings.livekit_url.strip()}"
+            if active_settings.livekit_url
+            and active_settings.livekit_url.strip().startswith(("wss://", "ws://"))
+            else ""
+        )
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self'; "
             "style-src 'self' https://fonts.googleapis.com; "
             "font-src https://fonts.gstatic.com; img-src 'self' data:; "
-            "connect-src 'self' https://api.elevenlabs.io wss://api.elevenlabs.io; "
+            "connect-src 'self' https://api.elevenlabs.io wss://api.elevenlabs.io"
+            f"{livekit_connect_source}; "
             "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
         )
         if request.url.path.startswith("/v1/"):
@@ -384,6 +412,7 @@ def create_app(
     application.include_router(tasks_router)
     application.include_router(voice_llm_router)
     application.include_router(realtime_router)
+    application.include_router(livekit_router)
     if active_settings.web_dist_path is not None and active_settings.web_dist_path.is_dir():
         application.mount(
             "/",

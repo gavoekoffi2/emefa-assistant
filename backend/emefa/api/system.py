@@ -19,6 +19,8 @@ class SkillSummary(BaseModel):
 class SystemStatus(BaseModel):
     brain_configured: bool
     voice_configured: bool
+    voice_transport: str
+    livekit_configured: bool
     skills: list[SkillSummary]
     open_task_count: int
     schema_version: int
@@ -30,9 +32,14 @@ def system_status(
     device: Annotated[Device, Depends(current_device)],
 ) -> SystemStatus:
     state = request.app.state
+    voice_transport = state.settings.voice_transport
     return SystemStatus(
         brain_configured=state.brain_configured,
-        voice_configured=state.realtime.configured,
+        voice_configured=(
+            state.livekit.configured if voice_transport == "livekit" else state.realtime.configured
+        ),
+        voice_transport=voice_transport,
+        livekit_configured=state.livekit.configured,
         skills=[
             SkillSummary(name=tool["name"], risk=tool["risk"])
             for tool in state.agent.tools.describe()

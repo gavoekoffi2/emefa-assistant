@@ -206,7 +206,9 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
     const uniforms = {
       uTime: { value: 0 },
       uBase: { value: new THREE.Color(0x1f6dff) },
-      uGlow: { value: new THREE.Color(0x9fe8ff) },
+      // Keep the facial highlights readable without washing out the centre of
+      // the face on bright phone displays.
+      uGlow: { value: new THREE.Color(0x86d8f2) },
       uVoice: { value: 0 },
       uOpacity: { value: 1 },
       // Rim weight. Skin needs a strong fresnel to describe the silhouette, but
@@ -226,20 +228,20 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
       transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
     })
 
-    const skinMaterial = surface(.34, .4)
+    const skinMaterial = surface(.29, .36)
     const cavityMaterial = surface(.1, .12)
-    const globeMaterial = surface(1.5, .04)
+    const globeMaterial = surface(1.25, .04)
     const orbitMaterial = surface(.07, 0, THREE.BackSide)
 
     // Horizontal slices and vertical meridians: the grid that *is* the face.
-    const latitudeMaterial = lines(.62, .04)
-    const meridianMaterial = lines(.46, .04)
+    const latitudeMaterial = lines(.54, .04)
+    const meridianMaterial = lines(.4, .04)
     // Lash line and vermilion border, kept faint — they exist because an
     // additive surface cannot render a lid margin, not to outline the face.
-    const featureMaterial = lines(2.2, .9)
+    const featureMaterial = lines(1.9, .9)
     // Lash line and nose base, brighter than anything else on the face.
-    const accentMaterial = lines(3.4, 1)
-    const detailMaterial = lines(2, .8)
+    const accentMaterial = lines(2.9, 1)
+    const detailMaterial = lines(1.7, .8)
     const hairMaterial = lines(1.35, .45)
     const landmarkMaterial = new THREE.PointsMaterial({
       color: 0xdcfbff, size: .0095, transparent: true, opacity: .3,
@@ -251,7 +253,7 @@ export function EMEFAFace({ state, onClick, getOutputVolume, getOutputFrequencyD
       transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
     })
     const catchlightMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffffff, transparent: true, opacity: .8,
+      color: 0xffffff, transparent: true, opacity: .68,
       blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
     })
 

@@ -17,7 +17,7 @@
   isolation:isolate;
 }
 .emefa-face:focus-visible{outline:1px solid var(--hud);outline-offset:8px;border-radius:45%}
-.emefa-wireframe-canvas{position:absolute;z-index:3;inset:0;width:100%;height:100%;display:block;touch-action:none;filter:drop-shadow(0 0 2px rgba(var(--hud-rgb),.95)) drop-shadow(0 0 6px rgba(var(--hud-rgb),.75)) drop-shadow(0 0 16px rgba(var(--hud-rgb),.45)) drop-shadow(0 0 34px rgba(var(--hud-rgb),.22))}
+.emefa-wireframe-canvas{position:absolute;z-index:3;inset:0;width:100%;height:100%;display:block;touch-action:none;filter:drop-shadow(0 0 2px rgba(var(--hud-rgb),.8)) drop-shadow(0 0 6px rgba(var(--hud-rgb),.58)) drop-shadow(0 0 16px rgba(var(--hud-rgb),.32)) drop-shadow(0 0 34px rgba(var(--hud-rgb),.15))}
 .emefa-face.wireframe-fallback .emefa-wireframe-canvas{display:none}
 .emefa-face.wireframe-fallback::before{content:'◜╲╱◝\A│ ◇◇ │\A│  ╲╱  │\A ╲___╱';white-space:pre;position:absolute;color:var(--hud);font:22px/1.25 ui-monospace,monospace;text-shadow:0 0 10px var(--hud)}
 
@@ -46,7 +46,7 @@
 .emefa-face-name{position:absolute;z-index:8;left:50%;bottom:9px;transform:translateX(-50%);white-space:nowrap;font:700 7px/1 Manrope,sans-serif;letter-spacing:.3em;color:#e9fbff;text-shadow:0 0 12px rgba(var(--hud-rgb),.9)}
 .emefa-face-signal{position:absolute;z-index:8;left:50%;bottom:-4px;transform:translateX(-50%);white-space:nowrap;font:600 5.5px/1 Manrope,sans-serif;letter-spacing:.2em;color:rgba(var(--hud-rgb),.66)}
 .emefa-face.state-listening .emefa-face-signal{color:#60f4d0}.emefa-face.state-thinking .emefa-face-signal{color:#ad8cff}.emefa-face.state-speaking .emefa-face-signal{color:#8af7ff}.emefa-face.state-error .emefa-face-signal{color:#ff607c}
-.emefa-face.state-speaking .emefa-wireframe-canvas{filter:drop-shadow(0 0 2px rgba(var(--hud-rgb),1)) drop-shadow(0 0 8px rgba(var(--hud-rgb),.9)) drop-shadow(0 0 20px rgba(var(--hud-rgb),.6)) drop-shadow(0 0 44px rgba(var(--hud-rgb),.3))}
+.emefa-face.state-speaking .emefa-wireframe-canvas{filter:drop-shadow(0 0 2px rgba(var(--hud-rgb),.88)) drop-shadow(0 0 8px rgba(var(--hud-rgb),.7)) drop-shadow(0 0 20px rgba(var(--hud-rgb),.45)) drop-shadow(0 0 44px rgba(var(--hud-rgb),.2))}
 
 .face-mode-toggle{position:absolute;z-index:12;right:16px;bottom:11px;min-width:58px;height:24px;padding:0 8px;border:1px solid rgba(var(--hud-rgb),.25);border-radius:999px;background:rgba(2,13,25,.78);color:rgba(var(--hud-rgb),.7);font:600 6px/1 Manrope,sans-serif;letter-spacing:.15em;pointer-events:auto;cursor:pointer}.face-mode-toggle:hover{background:rgba(var(--hud-rgb),.12);color:var(--hud)}
 

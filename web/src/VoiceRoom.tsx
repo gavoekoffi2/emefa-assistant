@@ -6,6 +6,7 @@ import { TasksPanel } from './TasksPanel'
 import { MemoryPanel } from './MemoryPanel'
 import { PipelinePanel } from './PipelinePanel'
 import { DeliverablesPanel } from './DeliverablesPanel'
+import { CommandCenterPanel } from './CommandCenterPanel'
 import type { DeliverableRecord, SourceFileRecord } from './DeliverablesPanel'
 import { useClonedVoice } from './useClonedVoice'
 import { splitSpeakableText } from './voiceText.ts'
@@ -90,6 +91,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   const [memoryOpen, setMemoryOpen] = useState(false)
   const [pipelineOpen, setPipelineOpen] = useState(false)
   const [deliverablesOpen, setDeliverablesOpen] = useState(false)
+  const [commandCenterOpen, setCommandCenterOpen] = useState(false)
   const [firstRun, setFirstRun] = useState(false)
   const [approval, setApproval] = useState<PendingApproval | null>(null)
   const [deciding, setDeciding] = useState(false)
@@ -149,7 +151,18 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   }, [])
 
   const closeWorkspacePanels = () => {
-    setProfileOpen(false); setTasksOpen(false); setMemoryOpen(false); setPipelineOpen(false); setDeliverablesOpen(false)
+    setProfileOpen(false); setTasksOpen(false); setMemoryOpen(false); setPipelineOpen(false); setDeliverablesOpen(false); setCommandCenterOpen(false)
+  }
+
+  const openCommandCenter = () => {
+    closeWorkspacePanels()
+    setCommandCenterOpen(true)
+  }
+
+  const refreshApprovals = () => {
+    api<PendingApproval[]>('/v1/agent/approvals')
+      .then((pending) => setApproval(pending[0] ?? null))
+      .catch(() => undefined)
   }
 
   const openDeliverables = () => {
@@ -609,7 +622,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       <div className="space-vignette" />
       <header className="jarvis-header">
         <div className="brand-row"><BrandMark /><div><strong>EMEFA</strong><small>INTELLIGENCE COGNITIVE</small></div></div>
-        <nav><button className={profileOpen || tasksOpen || memoryOpen || pipelineOpen || deliverablesOpen ? '' : 'nav-active'} onClick={closeWorkspacePanels}>Univers</button><button className={deliverablesOpen ? 'nav-active' : ''} onClick={openDeliverables}>Livrables{deliverableCount > 0 ? ` (${deliverableCount})` : ''}</button><button className={tasksOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setTasksOpen(true) }}>Tâches</button><button className={pipelineOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setPipelineOpen(true) }}>Pipeline</button><button className={memoryOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setMemoryOpen(true) }}>Mémoire</button><button className={profileOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setProfileOpen(true) }}>Profil</button></nav>
+        <nav><button className={profileOpen || tasksOpen || memoryOpen || pipelineOpen || deliverablesOpen || commandCenterOpen ? '' : 'nav-active'} onClick={closeWorkspacePanels}>Univers</button><button className={commandCenterOpen ? 'nav-active' : ''} onClick={openCommandCenter}>Pilotage</button><button className={deliverablesOpen ? 'nav-active' : ''} onClick={openDeliverables}>Livrables{deliverableCount > 0 ? ` (${deliverableCount})` : ''}</button><button className={tasksOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setTasksOpen(true) }}>Tâches</button><button className={pipelineOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setPipelineOpen(true) }}>Pipeline</button><button className={memoryOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setMemoryOpen(true) }}>Mémoire</button><button className={profileOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setProfileOpen(true) }}>Profil</button></nav>
         <div className="header-right"><span className="system-clock"><b>SYS</b> EN LIGNE</span><span className="privacy-status"><i /> {window.location.protocol === 'https:' ? 'CHIFFREMENT ACTIF' : 'CONNEXION LOCALE'}</span><button className="profile-button" onClick={onLogout} title={`Déconnecter ${session.name}`}>CG</button></div>
       </header>
       <aside className="space-sidebar">
@@ -722,6 +735,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       <TasksPanel open={tasksOpen} onClose={() => setTasksOpen(false)} onAskBrief={askBrief} />
       <MemoryPanel open={memoryOpen} onClose={() => setMemoryOpen(false)} />
       <PipelinePanel open={pipelineOpen} onClose={() => setPipelineOpen(false)} />
+      <CommandCenterPanel open={commandCenterOpen} onClose={() => setCommandCenterOpen(false)} onApprovalCreated={refreshApprovals} />
       <DeliverablesPanel open={deliverablesOpen} refreshToken={deliverablesRefresh} onClose={() => setDeliverablesOpen(false)} onCounts={handleDeliverableCounts} />
     </div>
   )

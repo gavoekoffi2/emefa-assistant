@@ -10,14 +10,15 @@ from fastapi.staticfiles import StaticFiles
 from emefa import __version__
 from emefa.api.agent import router as agent_router
 from emefa.api.briefings import router as briefings_router
+from emefa.api.command_center import router as command_center_router
 from emefa.api.demo import router as demo_router
 from emefa.api.devices import router as devices_router
 from emefa.api.documents import router as documents_router
+from emefa.api.files import router as files_router
+from emefa.api.memories import router as memories_router
 from emefa.api.profile import router as profile_router
 from emefa.api.prospects import router as prospects_router
 from emefa.api.realtime import router as realtime_router
-from emefa.api.files import router as files_router
-from emefa.api.memories import router as memories_router
 from emefa.api.system import router as system_router
 from emefa.api.tasks import router as tasks_router
 from emefa.api.voice_llm import router as voice_llm_router
@@ -26,21 +27,22 @@ from emefa.config import Settings
 from emefa.domain.agent import AgentEngine, AgentStep, Brain
 from emefa.domain.approvals import ApprovalRepository
 from emefa.domain.briefings import BriefingRepository
+from emefa.domain.command_center import InitiativeRepository, RoutineRepository
 from emefa.domain.conversations import VOICE_CONVERSATION_ID, ConversationStore
 from emefa.domain.devices import DeviceRepository
 from emefa.domain.documents import DocumentStore
-from emefa.domain.profiles import ProfileRepository
 from emefa.domain.email import EmailProvider
 from emefa.domain.memories import MemoryRepository
+from emefa.domain.profiles import ProfileRepository
 from emefa.domain.prospects import ProspectRepository
-from emefa.domain.uploaded_files import UploadedFileStore
 from emefa.domain.ratelimit import FailureLimiter
 from emefa.domain.tasks import TaskRepository
+from emefa.domain.uploaded_files import UploadedFileStore
 from emefa.infrastructure.deepseek import DeepSeekBrain
 from emefa.infrastructure.email import HimalayaEmailProvider
 from emefa.infrastructure.realtime import RealtimeGateway
-from emefa.infrastructure.voice_llm import VoiceLLMProxy
 from emefa.infrastructure.vision import OpenRouterVisionAnalyzer
+from emefa.infrastructure.voice_llm import VoiceLLMProxy
 from emefa.infrastructure.website_profile import WebsiteProfileImporter
 from emefa.observability import (
     configure_logging,
@@ -48,6 +50,7 @@ from emefa.observability import (
     new_request_id,
     request_id_var,
 )
+from emefa.routine_runner import routine_scheduler_loop
 from emefa.scheduler import brief_scheduler_loop
 from emefa.skills import build_tool_shelf
 
@@ -73,6 +76,9 @@ def create_app(
     uploaded_files = UploadedFileStore(active_settings.database_path)
     briefings = BriefingRepository(active_settings.database_path)
     conversations = ConversationStore(active_settings.database_path)
+    initiatives = InitiativeRepository(active_settings.database_path)
+    routines = RoutineRepository(active_settings.database_path)
+    approvals = ApprovalRepository(active_settings.database_path)
     active_email_provider = email_provider
     if active_email_provider is None and active_settings.email_account:
         active_email_provider = HimalayaEmailProvider(
@@ -97,6 +103,9 @@ def create_app(
         memory_block = memories.context_block()
         if memory_block:
             parts.append(memory_block)
+        initiative_block = initiatives.context_block()
+        if initiative_block:
+            parts.append(initiative_block)
         files = uploaded_files.list(limit=8)
         if files:
             lines = [
@@ -212,11 +221,22 @@ def create_app(
                     active_settings.brief_email_to,
                 )
             )
+        routine_task = asyncio.create_task(
+            routine_scheduler_loop(
+                routines,
+                application.state.agent,
+                approvals,
+                timezone_name=active_settings.routine_timezone,
+            )
+        )
         yield
         if scheduler_task is not None:
             scheduler_task.cancel()
             with suppress(asyncio.CancelledError):
                 await scheduler_task
+        routine_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await routine_task
         close = getattr(selected_brain, "close", None)
         if close is not None:
             await close()
@@ -238,6 +258,8 @@ def create_app(
     application.state.memories = memories
     application.state.prospects = prospects
     application.state.briefings = briefings
+    application.state.initiatives = initiatives
+    application.state.routines = routines
     application.state.conversations = conversations
     application.state.documents = DocumentStore(active_settings.database_path)
     application.state.uploaded_files = uploaded_files
@@ -255,6 +277,8 @@ def create_app(
             active_email_provider,
             application.state.documents,
             prospects,
+            initiatives=initiatives,
+            routines=routines,
             uploaded_files=uploaded_files,
             vision_analyzer=vision_analyzer,
         ),
@@ -274,13 +298,15 @@ def create_app(
             active_email_provider,
             application.state.documents,
             prospects,
+            initiatives=initiatives,
+            routines=routines,
             uploaded_files=uploaded_files,
             vision_analyzer=vision_analyzer,
             include_mailbox_read=False,
         ),
         memory=conversations,
     )
-    application.state.approvals = ApprovalRepository(active_settings.database_path)
+    application.state.approvals = approvals
     application.state.brain_configured = brain_configured
     application.state.realtime = realtime_gateway
     application.state.activation_limiter = FailureLimiter(
@@ -350,6 +376,7 @@ def create_app(
     application.include_router(agent_router)
     application.include_router(profile_router)
     application.include_router(briefings_router)
+    application.include_router(command_center_router)
     application.include_router(demo_router)
     application.include_router(memories_router)
     application.include_router(prospects_router)

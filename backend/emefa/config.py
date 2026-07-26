@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     voice_llm_token: SecretStr | None = None
     brief_hour: int | None = None
     brief_email_to: str | None = None
+    routine_timezone: str = "Africa/Lome"
     elevenlabs_api_key: SecretStr | None = None
     elevenlabs_agent_id: str | None = None
     elevenlabs_voice_id: str | None = None

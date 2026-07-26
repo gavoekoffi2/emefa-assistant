@@ -190,6 +190,59 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         )
         """,
     ),
+    # 10 — governed command center: initiatives, routines and auditable runs.
+    (
+        f"""
+        CREATE TABLE initiatives (
+            initiative_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            title TEXT NOT NULL,
+            objective TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'proposed',
+            priority TEXT NOT NULL DEFAULT 'normal',
+            risk TEXT NOT NULL DEFAULT 'low',
+            autonomy_level INTEGER NOT NULL DEFAULT 0,
+            next_action TEXT NOT NULL DEFAULT '',
+            due_date TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE INDEX idx_initiatives_status ON initiatives(user_id, status, priority, due_date)",
+        f"""
+        CREATE TABLE routines (
+            routine_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            name TEXT NOT NULL,
+            prompt TEXT NOT NULL,
+            schedule_kind TEXT NOT NULL DEFAULT 'manual',
+            schedule_hour INTEGER,
+            schedule_weekday INTEGER,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            requires_confirmation INTEGER NOT NULL DEFAULT 1,
+            last_run_at TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE INDEX idx_routines_enabled ON routines(user_id, enabled, schedule_kind)",
+        f"""
+        CREATE TABLE routine_runs (
+            run_id TEXT PRIMARY KEY,
+            routine_id TEXT NOT NULL REFERENCES routines(routine_id) ON DELETE CASCADE,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            status TEXT NOT NULL,
+            result TEXT NOT NULL DEFAULT '',
+            action_id TEXT,
+            started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            finished_at TEXT
+        )
+        """,
+        "CREATE INDEX idx_routine_runs_recent ON routine_runs(routine_id, started_at)",
+    ),
 )
 
 

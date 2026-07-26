@@ -182,6 +182,7 @@ def create_app(
     realtime_gateway = RealtimeGateway(
         api_key=realtime_key,
         agent_id=active_settings.elevenlabs_agent_id,
+        voice_id=active_settings.elevenlabs_voice_id,
     )
 
     @asynccontextmanager

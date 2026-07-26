@@ -10,6 +10,7 @@ const appCss = readFileSync(new URL('../src/App.css', import.meta.url), 'utf8')
 const deliverablesPanel = readFileSync(new URL('../src/DeliverablesPanel.tsx', import.meta.url), 'utf8')
 const face = readFileSync(new URL('../src/EMEFAFace.tsx', import.meta.url), 'utf8')
 const faceCss = readFileSync(new URL('../src/EMEFAFace.css', import.meta.url), 'utf8')
+const clonedVoice = readFileSync(new URL('../src/useClonedVoice.ts', import.meta.url), 'utf8')
 
 test('voice room uses ElevenLabs continuous live conversation SDK', () => {
   assert.match(source, /useConversation/)
@@ -30,10 +31,25 @@ test('voice room uses provider VAD and true barge-in instead of browser speech A
   assert.match(source, /conversation\.isSpeaking/)
 })
 
+test('cloned voice replaces only TTS while preserving the realtime agent transport', () => {
+  assert.match(source, /conversation\.setVolume\(\{ volume: cloneFailed \? 1 : 0 \}\)/)
+  assert.match(source, /onAgentChatResponsePart/)
+  assert.match(source, /onInterruption/)
+  assert.match(source, /onVadScore/)
+  assert.match(source, /bargeInFramesRef/)
+  assert.match(source, /clonedVoice\.interrupt/)
+  assert.match(clonedVoice, /\/v1\/realtime\/speech/)
+  assert.match(clonedVoice, /new AudioContext/)
+  assert.match(clonedVoice, /decodeAudioData/)
+  assert.match(clonedVoice, /AbortController/)
+  assert.match(clonedVoice, /getByteFrequencyData/)
+  assert.doesNotMatch(clonedVoice, /speechSynthesis|SpeechRecognition|MediaRecorder/)
+})
+
 test('3D holographic face mesh follows real assistant output audio', () => {
   assert.match(source, /EMEFAFace/)
-  assert.match(source, /getOutputVolume=\{conversation\.getOutputVolume\}/)
-  assert.match(source, /getOutputFrequencyData=\{conversation\.getOutputByteFrequencyData\}/)
+  assert.match(source, /getOutputVolume=\{cloneFailed \? conversation\.getOutputVolume : clonedVoice\.getOutputVolume\}/)
+  assert.match(source, /getOutputFrequencyData=\{cloneFailed \? conversation\.getOutputByteFrequencyData : clonedVoice\.getOutputByteFrequencyData\}/)
   assert.match(source, /visualMode/)
   assert.match(face, /outputRef\.current\(\)/)
   assert.match(face, /frequencyRef\.current\(\)/)

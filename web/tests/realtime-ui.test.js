@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { splitSpeakableText } from '../src/voiceText.ts'
 
 const source = readFileSync(new URL('../src/VoiceRoom.tsx', import.meta.url), 'utf8')
 const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
@@ -43,7 +44,20 @@ test('cloned voice replaces only TTS while preserving the realtime agent transpo
   assert.match(clonedVoice, /decodeAudioData/)
   assert.match(clonedVoice, /AbortController/)
   assert.match(clonedVoice, /getByteFrequencyData/)
+  assert.match(clonedVoice, /remapAnalyserSpectrum/)
   assert.doesNotMatch(clonedVoice, /speechSynthesis|SpeechRecognition|MediaRecorder/)
+})
+
+test('streamed replies become speakable before a full long sentence is complete', () => {
+  const comma = splitSpeakableText('Je comprends exactement votre demande, et je commence la correction maintenant')
+  assert.deepEqual(comma.segments, ['Je comprends exactement votre demande,'])
+
+  const unpunctuated = splitSpeakableText('Cette réponse sans aucune ponctuation contient assez de mots pour que la voix commence sans attendre une phrase entière beaucoup trop longue')
+  assert.equal(unpunctuated.segments.length, 1)
+  assert.ok(unpunctuated.segments[0].length < 100)
+  assert.ok(unpunctuated.remainder.length > 0)
+
+  assert.deepEqual(splitSpeakableText('Réponse courte', true).segments, ['Réponse courte'])
 })
 
 test('3D holographic face mesh follows real assistant output audio', () => {

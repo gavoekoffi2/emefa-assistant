@@ -8,6 +8,7 @@ import { PipelinePanel } from './PipelinePanel'
 import { DeliverablesPanel } from './DeliverablesPanel'
 import type { DeliverableRecord, SourceFileRecord } from './DeliverablesPanel'
 import { useClonedVoice } from './useClonedVoice'
+import { splitSpeakableText } from './voiceText.ts'
 
 // three.js is heavy. Both 3D surfaces load as their own chunks so the
 // activation shell never downloads a renderer it will not use — splitting only
@@ -65,32 +66,6 @@ const agentErrorCopy: Record<string, string> = {
   tool_execution_failed: 'L’outil n’a pas pu terminer l’action. Rien n’a été confirmé comme exécuté. Réessayez dans un instant.',
   turn_budget_exhausted: 'Cette demande est trop complexe pour un seul échange. Découpez-la ou reformulez.',
   invalid_brain_step: 'Le moteur a renvoyé une réponse invalide. Réessayez.',
-}
-
-function splitSpeakableText(text: string, force = false) {
-  const segments: string[] = []
-  let remainder = text
-  while (remainder.length > 0) {
-    const sentence = remainder.match(/^([\s\S]{18,}?[.!?…;:])(?:\s+|$)/)
-    if (sentence) {
-      segments.push(sentence[1].trim())
-      remainder = remainder.slice(sentence[0].length)
-      continue
-    }
-    if (remainder.length > 220) {
-      const boundary = remainder.lastIndexOf(' ', 200)
-      const cut = boundary > 80 ? boundary : 200
-      segments.push(remainder.slice(0, cut).trim())
-      remainder = remainder.slice(cut).trimStart()
-      continue
-    }
-    break
-  }
-  if (force && remainder.trim()) {
-    segments.push(remainder.trim())
-    remainder = ''
-  }
-  return { segments, remainder }
 }
 
 async function getVoiceTicket(): Promise<SignedSession> {

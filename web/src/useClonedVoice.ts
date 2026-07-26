@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { remapAnalyserSpectrum } from './face/audioSpectrum.ts'
 
 type QueuedAudio = {
   generation: number
@@ -33,8 +34,10 @@ export function useClonedVoice({ onFailure }: ClonedVoiceOptions) {
       context = new AudioContext()
       const analyser = context.createAnalyser()
       const gain = context.createGain()
-      analyser.fftSize = 256
-      analyser.smoothingTimeConstant = 0.62
+      analyser.fftSize = 512
+      // Keep enough temporal detail for consonants; the viseme solver performs
+      // its own short attack/release smoothing after frequency classification.
+      analyser.smoothingTimeConstant = 0.18
       analyser.connect(gain)
       gain.connect(context.destination)
       contextRef.current = context
@@ -176,7 +179,10 @@ export function useClonedVoice({ onFailure }: ClonedVoiceOptions) {
     if (!analyser || !sourceRef.current) return EMPTY_FREQUENCIES
     const frequencies = new Uint8Array(analyser.frequencyBinCount)
     analyser.getByteFrequencyData(frequencies)
-    return frequencies
+    const context = contextRef.current
+    return context
+      ? remapAnalyserSpectrum(frequencies, context.sampleRate, EMPTY_FREQUENCIES.length)
+      : EMPTY_FREQUENCIES
   }, [])
 
   useEffect(() => () => {

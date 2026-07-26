@@ -2,6 +2,7 @@ import httpx
 import pytest
 
 from emefa.config import Settings
+from emefa.infrastructure.realtime import RealtimeGateway
 from emefa.main import create_app
 
 
@@ -20,6 +21,35 @@ class FakeRealtimeGateway:
     async def synthesize(self, text: str) -> bytes:
         self.speech_calls.append(text)
         return b"ID3-test-audio"
+
+
+@pytest.mark.asyncio
+async def test_cloned_speech_uses_the_low_latency_french_tts_model():
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["params"] = dict(request.url.params)
+        captured["payload"] = __import__("json").loads(request.content)
+        return httpx.Response(200, content=b"ID3-fast-audio")
+
+    gateway = RealtimeGateway(
+        "secret",
+        "agent_test",
+        "voice_test",
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        assert await gateway.synthesize("Bonsoir Claude.") == b"ID3-fast-audio"
+    finally:
+        await gateway.close()
+
+    payload = captured["payload"]
+    params = captured["params"]
+    assert isinstance(payload, dict)
+    assert isinstance(params, dict)
+    assert payload["model_id"] == "eleven_turbo_v2_5"
+    assert payload["language_code"] == "fr"
+    assert params["optimize_streaming_latency"] == "3"
 
 
 @pytest.mark.asyncio

@@ -285,7 +285,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
         setState('thinking')
       } else {
         // Older provider sessions may omit progressive response events.
-        if (!streamedResponseRef.current) clonedVoice.enqueue(text)
+        if (!streamedResponseRef.current) splitSpeakableText(text, true).segments.forEach(clonedVoice.enqueue)
         setAnswer(text)
         setHistory((current) => [...current.slice(-7), { id: crypto.randomUUID(), role: 'assistant', text }])
         setActiveNodes([0, 1 + Math.floor(Math.random() * (graphNodes.length - 1))])
@@ -303,8 +303,8 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
         bargeInFramesRef.current = 0
         return
       }
-      bargeInFramesRef.current = vadScore >= 0.78 ? bargeInFramesRef.current + 1 : 0
-      if (bargeInFramesRef.current >= 2) {
+      bargeInFramesRef.current = vadScore >= 0.9 ? bargeInFramesRef.current + 1 : 0
+      if (bargeInFramesRef.current >= 6) {
         clonedVoice.interrupt()
         bargeInFramesRef.current = 0
         responseBufferRef.current = ''
@@ -399,6 +399,27 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
               return 'Action terminée sans résultat.'
             } catch (error) {
               return `Erreur réseau: ${error instanceof Error ? error.message : 'Impossible de contacter le serveur EMEFA.'}`
+            }
+          },
+          emefa_send_email: async ({ to, subject, body }: { to: string; subject: string; body: string }) => {
+            try {
+              const run = await api<AgentRun>('/v1/agent/actions/email-send', {
+                method: 'POST',
+                body: JSON.stringify({ to, subject, body }),
+                credentials: 'include',
+              })
+              if (run.status === 'confirmation_required' && run.action_id) {
+                setApproval({
+                  action_id: run.action_id,
+                  name: 'email_send',
+                  arguments: { to, subject, body },
+                })
+                return run.answer || 'L’e-mail est prêt. Demandez à Claude de valider la carte d’approbation.'
+              }
+              if (run.error) return `Erreur: ${agentErrorCopy[run.error] || run.error}`
+              return run.answer || 'L’e-mail n’a pas pu être préparé.'
+            } catch (error) {
+              return `Erreur réseau: ${error instanceof Error ? error.message : 'Impossible de préparer l’e-mail.'}`
             }
           },
         },

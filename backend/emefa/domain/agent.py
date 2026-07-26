@@ -139,6 +139,11 @@ class AgentEngine:
         except Exception:
             return AgentReply(status="failed", error="tool_execution_failed", turns=0)
         history: list[dict[str, Any]] = [*previous, entry]
+        if action.name == "email_send":
+            answer = self._execution_receipt(action)
+            history.append({"role": "assistant", "content": answer})
+            self._persist(conversation_id, history, len(previous))
+            return AgentReply(status="completed", answer=answer, turns=0)
         reply = await self._advance(history, len(previous), conversation_id)
         if reply.status == "failed" and reply.error in {
             "brain_unavailable",

@@ -60,6 +60,16 @@ test('streamed replies become speakable before a full long sentence is complete'
   assert.deepEqual(splitSpeakableText('Réponse courte', true).segments, ['Réponse courte'])
 })
 
+test('non-progressive provider replies are also chunked before cloned TTS', () => {
+  assert.match(source, /splitSpeakableText\(text, true\)\.segments\.forEach\(clonedVoice\.enqueue\)/)
+  assert.doesNotMatch(source, /if \(!streamedResponseRef\.current\) clonedVoice\.enqueue\(text\)/)
+})
+
+test('local acoustic barge-in requires sustained high-confidence speech', () => {
+  assert.match(source, /vadScore >= 0\.9/)
+  assert.match(source, /bargeInFramesRef\.current >= 6/)
+})
+
 test('3D holographic face mesh follows real assistant output audio', () => {
   assert.match(source, /EMEFAFace/)
   assert.match(source, /getOutputVolume=\{cloneFailed \? conversation\.getOutputVolume : clonedVoice\.getOutputVolume\}/)
@@ -166,6 +176,13 @@ test('live voice can execute governed EMEFA actions through the authenticated cl
   assert.match(source, /credentials: 'include'/)
   assert.match(source, /setApproval\(\{[\s\S]*action_id: run\.action_id/)
   assert.match(source, /conversation\.sendContextualUpdate\(run\.answer\)/)
+})
+
+test('live voice has a deterministic structured email-send tool', () => {
+  assert.match(source, /emefa_send_email:/)
+  assert.match(source, /\/v1\/agent\/actions\/email-send/)
+  assert.match(source, /JSON\.stringify\(\{ to, subject, body \}\)/)
+  assert.match(source, /setApproval\(\{[\s\S]*name: 'email_send'/)
 })
 
 test('HUD telemetry reflects real system state instead of decorative numbers', () => {

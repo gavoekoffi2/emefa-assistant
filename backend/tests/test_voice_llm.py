@@ -184,6 +184,44 @@ async def test_streamed_voice_answer_relays_provider_sse_and_client_tools(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_incomplete_speculative_stream_is_not_persisted(tmp_path):
+    class InterruptedProviderStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'data: {"choices":[{"index":0,"delta":{"content":"Je vais"},"finish_reason":null}]}\n\n'
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=InterruptedProviderStream(),
+        )
+
+    app = voice_app(tmp_path, ScriptedBrain([]))
+    app.state.voice_llm = VoiceLLMProxy(
+        api_key="provider-secret",
+        model="deepseek-chat",
+        base_url="https://provider.test",
+        context_provider=lambda: "Contexte EMEFA partagé",
+        transport=httpx.MockTransport(handler),
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as web:
+        response = await web.post(
+            "/v1/voice-llm/chat/completions",
+            json={
+                "stream": True,
+                "messages": [{"role": "user", "content": "Demande spéculative interrompue"}],
+            },
+            headers=VOICE_HEADERS,
+        )
+
+    assert response.status_code == 200
+    assert "Je vais" in response.text
+    assert "Demande spéculative interrompue" not in app.state.compose_text_context()
+    await app.state.voice_llm.close()
+
+
+@pytest.mark.asyncio
 async def test_voice_email_prepare_approve_send_and_announce(tmp_path):
     brain = ScriptedBrain(
         [
@@ -222,12 +260,15 @@ async def test_voice_email_prepare_approve_send_and_announce(tmp_path):
         )
         pending = (await web.get("/v1/agent/approvals")).json()
         assert len(pending) == 1 and pending[0]["name"] == "email_send"
-        # 3. Approval executes the send and concludes with the brain.
+        # 3. Approval executes the send and returns the server-verified receipt.
         decision = await web.post(
             f"/v1/agent/approvals/{pending[0]['action_id']}/decision",
             json={"approve": True},
         )
         assert decision.json()["status"] == "completed"
+        assert decision.json()["answer"] == (
+            "L’e-mail « Relance devis » a bien été envoyé à ama@mensah.tg."
+        )
         assert len(provider.sent) == 1
         assert provider.sent[0]["to"] == "ama@mensah.tg"
         # 4. The next voice turn knows the result and can announce it orally.
@@ -236,7 +277,7 @@ async def test_voice_email_prepare_approve_send_and_announce(tmp_path):
             json={"messages": [{"role": "user", "content": "C’est parti ?"}]},
             headers=VOICE_HEADERS,
         )
-    assert "est parti" in followup.json()["choices"][0]["message"]["content"]
+    assert "envoyé" in followup.json()["choices"][0]["message"]["content"]
     last_history = brain.histories[-1]
     tool_entries = [item for item in last_history if item.get("role") == "tool"]
     assert tool_entries and tool_entries[0]["name"] == "email_send"

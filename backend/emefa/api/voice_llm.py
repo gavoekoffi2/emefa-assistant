@@ -18,7 +18,7 @@ from starlette.background import BackgroundTask
 
 from emefa.domain.agent import AgentReply, RequestedAction
 from emefa.domain.conversations import VOICE_CONVERSATION_ID
-from emefa.observability import audit
+from emefa.observability import audit, monotonic_ms
 
 router = APIRouter(prefix="/v1/voice-llm", tags=["voice-llm"])
 
@@ -195,6 +195,7 @@ async def _proxy_completion(request: Request, payload: dict[str, Any]):
     )
 
     if payload.get("stream"):
+        started = monotonic_ms()
         upstream_request = proxy.client.build_request(
             "POST", "/chat/completions", json=upstream_payload
         )
@@ -212,14 +213,29 @@ async def _proxy_completion(request: Request, payload: dict[str, Any]):
 
         async def relay():
             raw = bytearray()
+            first_chunk_seen = False
+            completed = False
             try:
                 async for chunk in upstream.aiter_raw():
+                    if not first_chunk_seen:
+                        first_chunk_seen = True
+                        audit(
+                            "voice_llm_first_chunk",
+                            duration_ms=round(monotonic_ms() - started, 1),
+                        )
                     raw.extend(chunk)
                     yield chunk
+                completed = b"data: [DONE]" in raw
             finally:
-                _persist_voice_exchange(
-                    request, payload, _collect_sse_answer(bytes(raw))
+                audit(
+                    "voice_llm_stream_finished",
+                    completed=completed,
+                    duration_ms=round(monotonic_ms() - started, 1),
                 )
+                if completed:
+                    _persist_voice_exchange(
+                        request, payload, _collect_sse_answer(bytes(raw))
+                    )
 
         return StreamingResponse(
             relay(),

@@ -28,24 +28,37 @@ Les nouvelles capacités doivent être ajoutées sous forme d'adaptateurs derri�
 
 ## 3. Référence vidéo JARVIS / TARS analysée
 
-Référence fournie le 2026-07-26 : vidéo Google Drive de 26 min 13 s, examinée sur 80 captures globales puis 180 captures ciblées.
+Référence fournie le 2026-07-26 : vidéo Google Drive de 26 min 13 s, examinée sur 80 captures globales puis 180 captures ciblées. La synthèse horodatée complémentaire fournie par Claude confirme que **TARS utilise ElevenLabs pour la conversation vocale**.
 
-### Ce que la vidéo prouve visuellement
+### Chronologie fonctionnelle observée
 
-- Une mission de construction d'application est formulée en langage naturel.
-- Un environnement nommé TARS travaille sur un serveur `localhost`.
-- Une calculatrice de pourboire apparaît et fonctionne réellement.
-- La saisie d'un montant d'environ 152,69 et la sélection de plusieurs pourcentages modifient le pourboire et le total.
-- La vidéo démontre donc un chemin « instruction -> travail logiciel -> application locale testable ».
+- **00:00-00:21 — personnalité réglable :** TARS règle son humour à 90 %, ce qui illustre un profil de personnalité ajustable.
+- **00:21-01:33 — vision et critique :** l'utilisateur partage sa chaîne YouTube ; TARS critique la bannière et les miniatures puis accepte une mission de refonte.
+- **01:17-04:20 — missions :** l'interface montre un tableau de travaux avec états et tâches terminées.
+- **04:20-05:01 — mémoire JARVIS :** JARVIS est présenté comme l'assistant personnel conservant le contexte des interactions passées.
+- **05:01-10:27 — délégation :** TARS examine un espace de formation, délègue des améliorations visuelles à CASE et prépare une campagne Meta Ads pendant que la conversation continue.
+- **10:27-12:49 — orchestration parallèle :** TARS consulte l'avancement de CASE, rend compte oralement et confie d'autres travaux à KIPP.
+- **11:07-14:20 — construction vérifiable :** une mission de calculatrice de pourboire est formulée en langage naturel ; une application locale apparaît et plusieurs montants/pourcentages modifient réellement le résultat.
+- **14:20-15:30 — itération créative :** une landing page est construite puis modifiée à partir du retour utilisateur.
+- **15:30-25:37 — vision produit :** la vidéo présente ces assistants comme des employés IA dotés de voix, personnalité, mémoire, missions et sous-agents.
 
-### Ce que la vidéo affirme sans le démontrer
+### Ce que la vidéo permet de retenir
 
-La page marketing annonce que TARS peut voir l'écran, prendre la souris, remplir des formulaires, cliquer, réserver, lancer une équipe de sous-agents, travailler la nuit, se connecter à Gmail/Notion/Canva et rendre compte oralement. Dans les passages ciblés 18:30-21:58, aucune séquence ne montre effectivement un curseur piloté par l'agent, un formulaire externe rempli ou une réservation confirmée. Ces éléments sont des exigences produit, pas des preuves techniques.
+- Le chemin « instruction vocale -> mission suivie -> délégation -> livrable testable -> compte rendu vocal » constitue la référence d'expérience.
+- ElevenLabs fournit la couche de conversation vocale ; il ne remplace pas à lui seul la mémoire, l'orchestration, les outils, le tableau des missions ou l'exécution sur ordinateur.
+- La personnalité réglable doit être un paramètre de comportement explicite — humour, franchise, concision et proactivité — sans modifier les règles de sécurité.
+- La mémoire JARVIS et les agents CASE/KIPP doivent être adaptés comme des composants gouvernés d'EMEFA, et non comme des identités indépendantes ayant des accès illimités.
+
+### Limite de preuve conservée
+
+La vidéo présente une prise en charge d'opérations à l'écran, mais l'analyse image par image ne permet pas d'attribuer techniquement chaque clic ou saisie à un exécuteur autonome ni de prouver une réservation ou un paiement externe confirmé. Le contrôle exact souris/clavier, les formulaires externes et les actions sensibles restent donc des exigences à valider avec journaux, captures avant/après et état final vérifié.
 
 ### Adaptation retenue pour EMEFA
 
-- **JARVIS devient le rôle cerveau d'EMEFA** : conversation, contexte métier, mémoire, planification, politiques et décisions.
+- **JARVIS devient le rôle cerveau d'EMEFA** : conversation ElevenLabs, contexte métier, mémoire, personnalité, planification, politiques et décisions.
 - **TARS devient le rôle exécuteur** : travaux longs, navigateur isolé et futur agent local sur ordinateur.
+- **CASE/KIPP deviennent des rôles spécialisés** : création visuelle, développement, recherche ou campagnes, chacun avec outils et permissions bornés.
+- **Le tableau des missions devient la source de vérité visible** : responsable, état, progression, preuve et livrable de chaque travail.
 - Le cerveau ne reçoit jamais un accès brut illimité à la machine. Il produit une intention structurée ; la politique autorise, demande confirmation ou refuse ; l'exécuteur retourne une preuve vérifiable.
 - EMEFA n'annonce une capacité de contrôle que lorsqu'une exécution réelle a été observée et auditée.
 

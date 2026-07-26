@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     livekit_api_secret: SecretStr | None = None
     livekit_agent_name: str = "emefa"
     livekit_token_ttl_seconds: int = 300
+    livekit_worker_token: SecretStr | None = None
     voice_transport: Literal["elevenlabs", "livekit"] = "elevenlabs"
     email_account: str | None = None
     himalaya_binary: str = "himalaya"

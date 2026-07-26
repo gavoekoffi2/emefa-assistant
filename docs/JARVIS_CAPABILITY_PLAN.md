@@ -26,7 +26,30 @@ Les nouvelles capacités doivent être ajoutées sous forme d'adaptateurs derri�
 - Extraction de texte depuis PDF, DOCX et formats texte.
 - Analyse visuelle d'images envoyées via OpenRouter — ajoutée et prouvée le 2026-07-26.
 
-## 3. Architecture cible
+## 3. Référence vidéo JARVIS / TARS analysée
+
+Référence fournie le 2026-07-26 : vidéo Google Drive de 26 min 13 s, examinée sur 80 captures globales puis 180 captures ciblées.
+
+### Ce que la vidéo prouve visuellement
+
+- Une mission de construction d'application est formulée en langage naturel.
+- Un environnement nommé TARS travaille sur un serveur `localhost`.
+- Une calculatrice de pourboire apparaît et fonctionne réellement.
+- La saisie d'un montant d'environ 152,69 et la sélection de plusieurs pourcentages modifient le pourboire et le total.
+- La vidéo démontre donc un chemin « instruction -> travail logiciel -> application locale testable ».
+
+### Ce que la vidéo affirme sans le démontrer
+
+La page marketing annonce que TARS peut voir l'écran, prendre la souris, remplir des formulaires, cliquer, réserver, lancer une équipe de sous-agents, travailler la nuit, se connecter à Gmail/Notion/Canva et rendre compte oralement. Dans les passages ciblés 18:30-21:58, aucune séquence ne montre effectivement un curseur piloté par l'agent, un formulaire externe rempli ou une réservation confirmée. Ces éléments sont des exigences produit, pas des preuves techniques.
+
+### Adaptation retenue pour EMEFA
+
+- **JARVIS devient le rôle cerveau d'EMEFA** : conversation, contexte métier, mémoire, planification, politiques et décisions.
+- **TARS devient le rôle exécuteur** : travaux longs, navigateur isolé et futur agent local sur ordinateur.
+- Le cerveau ne reçoit jamais un accès brut illimité à la machine. Il produit une intention structurée ; la politique autorise, demande confirmation ou refuse ; l'exécuteur retourne une preuve vérifiable.
+- EMEFA n'annonce une capacité de contrôle que lorsqu'une exécution réelle a été observée et auditée.
+
+## 4. Architecture cible
 
 ```text
 Micro / texte / caméra / écran / fichiers
@@ -57,7 +80,9 @@ Documents   Caméra/écran  Calendar/Web       Notifications
 - Les tâches longues sortent de la boucle vocale et possèdent un identifiant, un état et un livrable.
 - La mémoire reste inspectable, modifiable et effaçable.
 
-## 4. Choix d'outils issus de la recherche
+Le contrôle d'ordinateur suivra obligatoirement le protocole [`LOCAL_EXECUTOR_PROTOCOL.md`](./LOCAL_EXECUTOR_PROTOCOL.md).
+
+## 5. Choix d'outils issus de la recherche
 
 Les dépôts ci-dessous ont été vérifiés sur GitHub le 2026-07-26. Les chiffres de popularité évoluent ; l'activité, la licence et l'adéquation technique comptent davantage que le nombre d'étoiles.
 
@@ -132,7 +157,7 @@ Décision : ne pas remplacer l'avatar actuel. Le photoréalisme implique GPU, la
 
 Décision : commencer par OpenTelemetry et les audits existants ; ajouter Langfuse si l'on a besoin d'évaluations de prompts, coûts, traces de modèles et jeux de tests.
 
-## 5. Matrice de décision
+## 6. Matrice de décision
 
 ### Disponible maintenant
 
@@ -173,7 +198,7 @@ Décision : commencer par OpenTelemetry et les audits existants ; ajouter Langfu
 - Paiements autonomes.
 - Actions physiques sans capteurs/actionneurs réels.
 
-## 6. Ordre d'implémentation recommandé
+## 7. Ordre d'implémentation recommandé
 
 ### Phase 0 — Vision sur image envoyée — réalisée localement
 
@@ -183,15 +208,15 @@ Décision : commencer par OpenTelemetry et les audits existants ; ajouter Langfu
 - Tests unitaires et d'intégration.
 - Preuve réelle : lecture de `EMEFA 42` et détection d'un rectangle bleu sarcelle.
 
-### Phase 1 — Caméra et écran contrôlés
+### Phase 1 — Caméra et écran contrôlés — écran implémenté, caméra en attente
 
-- Ajouter des contrôles visibles `Ouvrir la caméra` et `Partager l'écran`.
-- Modifier `Permissions-Policy` de `camera=()` vers `camera=(self)`.
-- Capturer une seule image compressée sur demande.
-- Ajouter un client tool qui transmet la capture au backend visuel.
-- Afficher un indicateur permanent pendant toute capture.
-- Arrêter les pistes immédiatement à la fermeture ou déconnexion.
-- Tests sur permissions refusées, arrêt des pistes, taille et format.
+- [x] Ajouter le contrôle visible `Partager mon écran`.
+- [x] Garder le flux vidéo dans le navigateur et n'envoyer qu'une capture ponctuelle JPEG sur demande.
+- [x] Relier la capture au backend visuel avec son `file_id` réel.
+- [x] Afficher un aperçu et l'indicateur permanent `PARTAGE D'ÉCRAN ACTIF`.
+- [x] Fournir deux arrêts visibles et arrêter les pistes à la fin native ou au démontage.
+- [x] Tester le consentement explicite, l'absence de capture périodique, l'arrêt et le format.
+- [ ] Ajouter la caméra après une revue séparée de son usage et modifier `Permissions-Policy` de `camera=()` vers `camera=(self)` seulement à ce moment-là.
 
 ### Phase 2 — Recherche Web et calendrier
 
@@ -231,7 +256,7 @@ Décision : commencer par OpenTelemetry et les audits existants ; ajouter Langfu
 - Capture d'écran et fichiers uniquement sur demande.
 - Confirmation locale pour commandes à fort impact.
 
-## 7. Critères de validation de chaque capacité
+## 8. Critères de validation de chaque capacité
 
 Une capacité n'est terminée que si :
 
@@ -244,6 +269,6 @@ Une capacité n'est terminée que si :
 7. le résultat est accessible depuis la voix et le texte ;
 8. la documentation vivante est mise à jour.
 
-## 8. Prochaine livraison conseillée
+## 9. Prochaine livraison conseillée
 
-Déployer d'abord la vision sur images envoyées, puis implémenter la caméra et le partage d'écran sur le même adaptateur. Cette séquence donne rapidement à EMEFA la capacité de « voir » sans fragiliser sa voix, sa mémoire ou sa sécurité.
+Après validation humaine du partage d'écran sur le téléphone et l'ordinateur de l'utilisateur, construire le **TARS Local Executor niveau 1** : appairage révocable, indicateur Windows permanent, capture ponctuelle et lecture de l'arbre d'accessibilité, sans clic ni saisie. Le contrôle navigateur assisté ne sera ajouté qu'après validation du bouton d'arrêt local et du journal de preuves.

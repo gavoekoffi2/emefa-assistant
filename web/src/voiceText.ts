@@ -42,7 +42,11 @@ export function splitSpeakableText(text: string, force = false) {
     break
   }
   if (force && remainder.trim()) {
-    segments.push(remainder.trim())
+    const tail = remainder.trim()
+    // Streaming providers can emit punctuation as a final standalone delta.
+    // Sending "." or "…" to TTS wastes a request and can produce unusable
+    // audio, so only enqueue tails containing actual speech characters.
+    if (/[\p{L}\p{N}]/u.test(tail)) segments.push(tail)
     remainder = ''
   }
   return { segments, remainder }

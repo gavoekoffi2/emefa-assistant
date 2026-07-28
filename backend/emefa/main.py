@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from emefa import __version__
 from emefa.api.agent import router as agent_router
+from emefa.api.auth import router as auth_router
 from emefa.api.briefings import router as briefings_router
 from emefa.api.demo import router as demo_router
 from emefa.api.devices import router as devices_router
@@ -23,6 +24,7 @@ from emefa.api.tasks import router as tasks_router
 from emefa.api.voice_llm import router as voice_llm_router
 from emefa.api.web_session import router as web_session_router
 from emefa.config import Settings
+from emefa.domain.accounts import AccountRepository
 from emefa.domain.agent import AgentEngine, AgentStep, Brain
 from emefa.domain.approvals import ApprovalRepository
 from emefa.domain.briefings import BriefingRepository
@@ -249,6 +251,7 @@ def create_app(
     )
     application.state.settings = active_settings
     application.state.devices = DeviceRepository(active_settings.database_path)
+    application.state.accounts = AccountRepository(active_settings.database_path)
     application.state.profiles = profiles
     application.state.tasks = tasks
     application.state.memories = memories
@@ -362,6 +365,7 @@ def create_app(
             "version": __version__,
         }
 
+    application.include_router(auth_router)
     application.include_router(devices_router)
     application.include_router(documents_router)
     application.include_router(files_router)

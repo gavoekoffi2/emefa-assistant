@@ -66,26 +66,76 @@ const graphLinks: GraphLink[] = [
 
 export function BrandMark() { return <span className="brand-mark" aria-hidden="true">E</span> }
 
-function Activation({ onActivated }: { onActivated: (session: Session) => void }) {
-  const [name, setName] = useState('Navigateur de Claude')
+export type AuthStatus = { registered: boolean; authenticated: boolean; account: { account_id: string; email: string; display_name: string; role: string } | null }
+
+const MIN_PASSWORD = 10
+
+/**
+ * Sign-in gate.
+ *
+ * Two screens, chosen by whether this instance already has an owner. Before
+ * it does, the activation code creates that owner; afterwards the code is
+ * refused by the backend and only credentials get in (ADR-002).
+ */
+function Activation({ registered, onSignedIn }: { registered: boolean; onSignedIn: (session: Session) => void }) {
+  const [name, setName] = useState('Ce navigateur')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [displayName, setDisplayName] = useState('')
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+
   const submit = async (event: React.FormEvent) => {
     event.preventDefault(); setBusy(true); setError('')
     try {
-      onActivated(await api<Session>('/v1/web/session', { method: 'POST', body: JSON.stringify({ name: name.trim(), enrollment_code: code }) }))
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Activation impossible.') }
+      const path = registered ? '/v1/auth/login' : '/v1/auth/register'
+      const body = registered
+        ? { email: email.trim(), password, device_name: name.trim() }
+        : { email: email.trim(), password, display_name: displayName.trim(), device_name: name.trim(), enrollment_code: code }
+      await api<unknown>(path, { method: 'POST', body: JSON.stringify(body) })
+      // The session cookie is set by the call above; this reads back the
+      // device the rest of the app is addressed by.
+      onSignedIn(await api<Session>('/v1/web/session'))
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Connexion impossible.') }
     finally { setBusy(false) }
   }
+
+  const incomplete = !email.trim() || password.length < (registered ? 1 : MIN_PASSWORD) || (!registered && !code)
+
   return (
     <main className="activation-page">
       <section className="activation-intro">
         <div className="brand-row"><BrandMark /><strong>EMEFA</strong></div>
         <div className="intro-copy"><span className="eyebrow">Assistante personnelle vocale</span><h1>Une conversation.<br />Pas un chatbot.</h1><p>Parlez naturellement à EMEFA. Elle vous écoute, répond à voix haute et garde le fil de la conversation.</p></div>
-        <div className="privacy-note"><span className="privacy-dot" /><div><strong>Accès privé</strong><small>Votre espace reste lié à ce navigateur.</small></div></div>
+        <div className="privacy-note"><span className="privacy-dot" /><div><strong>Accès privé</strong><small>{registered ? 'Votre mémoire et vos documents restent liés à votre compte.' : 'Le code d’activation ne sert qu’une fois, pour créer votre compte.'}</small></div></div>
       </section>
-      <section className="activation-panel" aria-labelledby="activation-title"><div className="activation-card"><BrandMark /><h2 id="activation-title">Activer EMEFA</h2><p>Entrez votre code privé pour ouvrir l’interface vocale.</p><form onSubmit={submit}><label htmlFor="browser-name">Nom de ce navigateur</label><input id="browser-name" value={name} onChange={(event) => setName(event.target.value)} required /><label htmlFor="activation-code">Code d’activation</label><input id="activation-code" type="password" value={code} onChange={(event) => setCode(event.target.value)} required placeholder="Votre code privé" />{error && <div className="form-error" role="alert">{error}</div>}<button className="primary-button" disabled={busy || !name.trim() || !code}>{busy ? 'Activation…' : 'Entrer dans EMEFA'}</button></form></div></section>
+      <section className="activation-panel" aria-labelledby="activation-title">
+        <div className="activation-card">
+          <BrandMark />
+          <h2 id="activation-title">{registered ? 'Se connecter' : 'Créer votre compte'}</h2>
+          <p>{registered ? 'Entrez vos identifiants pour retrouver EMEFA.' : 'Ce compte sera propriétaire de cette instance EMEFA.'}</p>
+          <form onSubmit={submit}>
+            {!registered && (<>
+              <label htmlFor="display-name">Votre nom</label>
+              <input id="display-name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} autoComplete="name" />
+            </>)}
+            <label htmlFor="account-email">Adresse e-mail</label>
+            <input id="account-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="username" />
+            <label htmlFor="account-password">Mot de passe</label>
+            <input id="account-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} required minLength={registered ? undefined : MIN_PASSWORD} autoComplete={registered ? 'current-password' : 'new-password'} />
+            {!registered && <small className="field-hint">{MIN_PASSWORD} caractères minimum.</small>}
+            {!registered && (<>
+              <label htmlFor="activation-code">Code d’activation</label>
+              <input id="activation-code" type="password" value={code} onChange={(event) => setCode(event.target.value)} required placeholder="Votre code privé" />
+            </>)}
+            <label htmlFor="browser-name">Nom de ce navigateur</label>
+            <input id="browser-name" value={name} onChange={(event) => setName(event.target.value)} required />
+            {error && <div className="form-error" role="alert">{error}</div>}
+            <button className="primary-button" disabled={busy || !name.trim() || incomplete}>{busy ? 'Connexion…' : registered ? 'Entrer dans EMEFA' : 'Créer le compte'}</button>
+          </form>
+        </div>
+      </section>
     </main>
   )
 }
@@ -147,11 +197,24 @@ export function VoiceOrb({ state, onClick }: { state: VoiceState; onClick: () =>
 
 function App() {
   const [session, setSession] = useState<Session | null>(null)
+  const [registered, setRegistered] = useState(false)
   const [checking, setChecking] = useState(true)
-  useEffect(() => { api<Session>('/v1/web/session').then(setSession).catch(() => setSession(null)).finally(() => setChecking(false)) }, [])
-  const logout = async () => { try { await api<void>('/v1/web/session', { method: 'DELETE' }) } finally { setSession(null) } }
+  useEffect(() => {
+    // Two questions, one round trip each: does this instance have an owner,
+    // and is this browser already signed in? The session lookup also covers
+    // browsers enrolled before accounts existed, which stay valid.
+    void (async () => {
+      try {
+        const status = await api<AuthStatus>('/v1/auth/status')
+        setRegistered(status.registered)
+      } catch { setRegistered(false) }
+      try { setSession(await api<Session>('/v1/web/session')) } catch { setSession(null) }
+      setChecking(false)
+    })()
+  }, [])
+  const logout = async () => { try { await api<void>('/v1/auth/logout', { method: 'POST' }) } finally { setSession(null); setRegistered(true) } }
   if (checking) return <div className="splash"><BrandMark /><span>EMEFA</span><i className="spinner" /></div>
-  return session ? <ConversationProvider><VoiceRoom session={session} onLogout={() => void logout()} /></ConversationProvider> : <Activation onActivated={setSession} />
+  return session ? <ConversationProvider><VoiceRoom session={session} onLogout={() => void logout()} /></ConversationProvider> : <Activation registered={registered} onSignedIn={setSession} />
 }
 
 export default App

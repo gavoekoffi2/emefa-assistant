@@ -289,6 +289,31 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         """,
         "ALTER TABLE memories RENAME TO memories_v1_archive",
     ),
+    # 11 — real accounts behind the device layer (ADR-002).
+    #
+    # Devices stay the transport credential; what they now carry is an
+    # identity. Existing devices are bound to the seeded user by the default,
+    # so an upgrade logs nobody out.
+    (
+        f"""
+        CREATE TABLE accounts (
+            account_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}'
+                REFERENCES tenants(tenant_id),
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}'
+                REFERENCES users(user_id),
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            display_name TEXT NOT NULL DEFAULT '',
+            role TEXT NOT NULL DEFAULT 'owner',
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_login_at TEXT
+        )
+        """,
+        "CREATE INDEX idx_accounts_tenant ON accounts(tenant_id, status)",
+        "ALTER TABLE devices ADD COLUMN account_id TEXT REFERENCES accounts(account_id)",
+    ),
 )
 
 

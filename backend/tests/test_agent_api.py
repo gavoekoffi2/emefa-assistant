@@ -41,6 +41,8 @@ async def test_agent_run_requires_device_and_returns_structured_reply(tmp_path):
         "pending_action": None,
         "action_id": None,
         "error": None,
+        # A reply with nothing worth looking at carries no cards.
+        "cards": [],
     }
 
 

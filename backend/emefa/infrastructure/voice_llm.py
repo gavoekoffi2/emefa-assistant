@@ -13,6 +13,8 @@ from typing import Any
 
 import httpx
 
+from emefa.domain.agent import latest_user_message as _latest_user_message
+
 
 # Keep the provider request intentionally bounded. ElevenLabs may add
 # transport-specific fields that an OpenAI-compatible provider does not know.
@@ -40,7 +42,7 @@ class VoiceLLMProxy:
         api_key: str | None,
         model: str,
         base_url: str,
-        context_provider: Callable[[], str] | None = None,
+        context_provider: Callable[[str], str] | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.configured = bool((api_key or "").strip())
@@ -57,7 +59,7 @@ class VoiceLLMProxy:
         messages = list(payload.get("messages") or [])
         context = ""
         if self.context_provider is not None:
-            context = self.context_provider().strip()
+            context = self.context_provider(_latest_user_message(messages)).strip()
         if context:
             messages = [{"role": "system", "content": context}, *messages]
         forwarded = {

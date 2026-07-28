@@ -78,6 +78,10 @@ def enroll(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Device enrollment is not configured",
         )
+    # Same rule as the browser session (ADR-002 §3): once an owner exists, the
+    # shared code stops granting access to their instance.
+    if request.app.state.accounts.count() > 0:
+        raise HTTPException(status_code=409, detail="Sign in with your account")
     if not secrets.compare_digest(payload.enrollment_code, settings.enrollment_code):
         request.app.state.activation_limiter.record_failure(source)
         audit("enrollment_rejected", source=source)

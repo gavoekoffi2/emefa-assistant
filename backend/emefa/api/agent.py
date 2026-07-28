@@ -1,5 +1,6 @@
 """Authenticated agent execution and approval API."""
 
+import asyncio
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -9,6 +10,7 @@ from emefa.api.devices import current_device
 from emefa.domain.agent import AgentReply, RequestedAction
 from emefa.domain.conversations import VOICE_CONVERSATION_ID
 from emefa.domain.devices import Device
+from emefa.domain.visuals import CardCollector
 from emefa.observability import audit
 
 router = APIRouter(prefix="/v1/agent", tags=["agent"])
@@ -23,6 +25,13 @@ class PendingActionResponse(BaseModel):
     arguments: dict[str, Any]
 
 
+class VisualCardResponse(BaseModel):
+    kind: str
+    title: str
+    caption: str = ""
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
 class RunResponse(BaseModel):
     status: Literal["completed", "confirmation_required", "blocked", "failed", "rejected"]
     turns: int
@@ -30,6 +39,9 @@ class RunResponse(BaseModel):
     pending_action: PendingActionResponse | None = None
     action_id: str | None = None
     error: str | None = None
+    #: What EMEFA chose to show alongside her answer. The interface stays
+    #: conversational; a card is an addition to the reply, never a replacement.
+    cards: list[VisualCardResponse] = Field(default_factory=list)
 
 
 class ApprovalSummary(BaseModel):
@@ -79,16 +91,43 @@ def _register_pending(request: Request, device: Device, response: RunResponse) -
     return response
 
 
+def schedule_ingestion(request: Request, user_text: str, reply: AgentReply) -> None:
+    """Record the exchange and extract durable facts, off the response path.
+
+    Deliberately fire-and-forget: memory is a background benefit, and making
+    the user wait for an extraction call — or fail their turn because one
+    errored — would trade something they asked for against something they
+    did not. The task set holds a strong reference, because a task with no
+    referent can be collected before it runs.
+    """
+    ingestor = getattr(request.app.state, "memory_ingestor", None)
+    if ingestor is None or not getattr(request.app.state, "live_extraction", False):
+        return
+    if reply.status != "completed" or not reply.answer:
+        return
+
+    transcript = f"[utilisateur] {user_text}\n[EMEFA] {reply.answer}"
+    tasks: set[asyncio.Task[Any]] = request.app.state.background_tasks
+    task = asyncio.create_task(ingestor.ingest(transcript, source="chat"))
+    tasks.add(task)
+    task.add_done_callback(tasks.discard)
+
+
 @router.post("/runs", response_model=RunResponse)
 async def run_agent(
     payload: RunRequest,
     request: Request,
     device: Annotated[Device, Depends(current_device)],
 ) -> RunResponse:
-    reply = await request.app.state.agent.run(
-        payload.message,
-        conversation_id=device.device_id,
-    )
+    # One collector per request: the tool shelf is shared across concurrent
+    # requests, so a list on it would hand one user's chart to another.
+    with CardCollector() as collector:
+        reply = await request.app.state.agent.run(
+            payload.message,
+            conversation_id=device.device_id,
+        )
+        cards = collector.summaries()
+    schedule_ingestion(request, payload.message, reply)
     audit(
         "agent_run",
         device_id=device.device_id,
@@ -97,7 +136,9 @@ async def run_agent(
         error=reply.error,
         pending_action=reply.pending_action.name if reply.pending_action else None,
     )
-    return _register_pending(request, device, serialize_reply(reply))
+    response = _register_pending(request, device, serialize_reply(reply))
+    response.cards = [VisualCardResponse(**card) for card in cards]
+    return response
 
 
 @router.delete("/conversation", status_code=204)
@@ -152,6 +193,23 @@ async def decide_approval(
     ):
         raise HTTPException(status_code=404, detail="approval_not_found")
 
+    if payload.approve:
+        # ADR-005: once a face factor is enrolled, approving a consequential
+        # action requires a fresh step-up. Checked before the approval is
+        # claimed, so a refusal here leaves it pending rather than consuming it.
+        factors = request.app.state.second_factor
+        if (
+            device.account_id
+            and factors.enrolled(device.account_id)
+            and not factors.verified_recently(device.device_id)
+        ):
+            audit(
+                "approval_needs_second_factor",
+                device_id=device.device_id,
+                action_id=action_id,
+            )
+            raise HTTPException(status_code=403, detail="second_factor_required")
+
     if not approvals.claim(action_id):
         raise HTTPException(status_code=404, detail="approval_not_found")
 
@@ -169,10 +227,12 @@ async def decide_approval(
             answer="Action annulée. Rien n’a été exécuté.",
         )
 
-    reply = await request.app.state.agent.execute_approved(
-        pending.to_requested_action(),
-        conversation_id=pending.conversation_id,
-    )
+    with CardCollector() as collector:
+        reply = await request.app.state.agent.execute_approved(
+            pending.to_requested_action(),
+            conversation_id=pending.conversation_id,
+        )
+        cards = collector.summaries()
     approvals.resolve(
         action_id, "executed" if reply.status == "completed" else reply.status
     )
@@ -183,4 +243,6 @@ async def decide_approval(
         tool=pending.tool_name,
         result=reply.status,
     )
-    return _register_pending(request, device, serialize_reply(reply))
+    response = _register_pending(request, device, serialize_reply(reply))
+    response.cards = [VisualCardResponse(**card) for card in cards]
+    return response

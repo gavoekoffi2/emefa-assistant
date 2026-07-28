@@ -18,6 +18,9 @@ class Device:
     device_id: str
     name: str
     token_hash: str
+    #: The account this browser is signed in as. None on devices enrolled
+    #: before accounts existed, or during instance bootstrap.
+    account_id: str | None = None
 
 
 class DeviceRepository:
@@ -40,17 +43,19 @@ class DeviceRepository:
             row = connection.execute("SELECT COUNT(*) FROM devices").fetchone()
         return int(row[0]) if row is not None else 0
 
-    def enroll(self, name: str) -> tuple[Device, str]:
+    def enroll(self, name: str, account_id: str | None = None) -> tuple[Device, str]:
         token = secrets.token_urlsafe(32)
         device = Device(
             device_id=str(uuid.uuid4()),
             name=name,
             token_hash=self._hash_token(token),
+            account_id=account_id,
         )
         with self._connect() as connection:
             connection.execute(
-                "INSERT INTO devices (device_id, name, token_hash) VALUES (?, ?, ?)",
-                (device.device_id, device.name, device.token_hash),
+                "INSERT INTO devices (device_id, name, token_hash, account_id) "
+                "VALUES (?, ?, ?, ?)",
+                (device.device_id, device.name, device.token_hash, device.account_id),
             )
         return device, token
 
@@ -61,7 +66,7 @@ class DeviceRepository:
     def find_by_id(self, device_id: str) -> Device | None:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT device_id, name, token_hash FROM devices WHERE device_id = ?",
+                "SELECT device_id, name, token_hash, account_id FROM devices WHERE device_id = ?",
                 (device_id,),
             ).fetchone()
         return self._from_row(row)
@@ -70,7 +75,8 @@ class DeviceRepository:
         token_hash = self._hash_token(token)
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT device_id, name, token_hash, created_at FROM devices WHERE token_hash = ?",
+                "SELECT device_id, name, token_hash, account_id, created_at "
+                "FROM devices WHERE token_hash = ?",
                 (token_hash,),
             ).fetchone()
         if row is None:
@@ -98,4 +104,5 @@ class DeviceRepository:
             device_id=row["device_id"],
             name=row["name"],
             token_hash=row["token_hash"],
+            account_id=row["account_id"],
         )

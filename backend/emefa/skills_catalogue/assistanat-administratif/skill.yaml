@@ -1,0 +1,22 @@
+name: assistanat-administratif
+schema_version: "1.0"
+version: 1.0.0
+author: EMEFA
+description: Traitement de la boîte de réception, des tâches et du brief quotidien.
+tags: [administratif, email, taches, brief]
+type: conversational
+triggers: []
+platforms: [linux, mac, windows]
+requires_env: []
+# Hard requirements only. E-mail tools appear once a mailbox is connected;
+# the skill degrades to tasks and brief without them rather than being
+# switched off entirely.
+requires_tools: [get_daily_brief, list_tasks, create_task, complete_task]
+requires_oauth: []
+requires_apps: []
+risk: local_write
+capabilities:
+  - "Trie la boîte de réception et signale ce qui exige une réponse"
+  - "Transforme un e-mail ou une conversation en tâche datée"
+  - "Prépare un brouillon de réponse sans jamais l'envoyer seule"
+  - "Restitue le brief du jour en retards, échéances et relances"

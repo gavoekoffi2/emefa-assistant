@@ -1,0 +1,19 @@
+name: prospection-commerciale
+schema_version: "1.0"
+version: 1.0.0
+author: EMEFA
+description: Qualification des prospects, suivi du pipeline et préparation des relances.
+tags: [commercial, prospection, pipeline]
+type: conversational
+triggers: []
+platforms: [linux, mac, windows]
+requires_env: []
+requires_tools: [add_prospect, list_pipeline, update_prospect, get_profiles]
+requires_oauth: []
+requires_apps: []
+risk: local_write
+capabilities:
+  - "Qualifie un prospect contre l'offre et la cible de l'entreprise"
+  - "Tient le pipeline à jour avec une prochaine action datée"
+  - "Prépare une relance personnalisée à partir de l'historique"
+  - "Signale les opportunités qui dorment"

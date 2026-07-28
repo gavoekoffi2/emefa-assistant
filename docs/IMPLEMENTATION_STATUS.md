@@ -594,3 +594,132 @@ Phase 1 exit gate (roadmap §17) is now satisfied: app starts, UI untouched and 
 3. Conversational onboarding flow reusing the existing conversation UI; persisted summary the user can correct.
 4. Wire profile context into `DeepSeekBrain` system prompt composition.
 Exit gate: create/configure assistant, minimum onboarding persisted, reload without losing setup (roadmap §22).
+
+---
+
+# Phase 9 — Capability adoption from jarvis-OS / jarvis-skills (2026-07-28)
+
+Audit of both referenced repositories, then six implementation slices. Full
+mapping and verdicts in `docs/JARVIS_OS_GAP_ANALYSIS.md`.
+
+## Decisions recorded first
+
+- **ADR-004** — jarvis-OS is AGPL-3.0; EMEFA ships no licence. Copying its
+  source would put EMEFA under AGPL including the network clause. Designs are
+  adopted, implementations written fresh. Safe under either licence the owner
+  later chooses. `jarvis-skills` is MIT and is reused directly with its notice.
+- **ADR-002** — jarvis-OS's authentication (one static bearer token, `/admin`
+  and all WebSockets exempt) is **weaker** than EMEFA's and is rejected. What
+  EMEFA lacked was identity, so real accounts land behind the device layer.
+- **ADR-003** — memory becomes a fact store, replacing the flat
+  twelve-most-recent list.
+
+## Delivered
+
+| Slice | Content |
+|---|---|
+| Memory kernel | `memory_events` / `memory_facts` / `memory_fact_observations` / `memory_fact_relations` + FTS5. Reinforcement by observation, supersession instead of deletion, salience = importance × recency(decay by category) × relevance(BM25) × confidence. Existing rows migrated keeping their ids; old table archived. User surface: search, correction, history ("why do you believe that"). |
+| Ingestion | Live extraction after each substantial exchange (fire-and-forget, off the response path) plus a bounded nightly consolidation pass with a watermark. Extraction has no tool shelf — a hostile transcript can at worst produce a visible, deletable false memory. |
+| Accounts | scrypt password hashing with self-describing parameters, login/logout/password change, sessions bound to an account, non-enumerating login. The enrolment code becomes bootstrap-only and stops working once an owner exists. |
+| Skills | jarvis-skills manifest schema 1.0. `skill.py` is read with `ast`, **never imported**. A skill contributes method, not authority; unmet `requires_tools` / `requires_env` make it unusable rather than injecting a prompt EMEFA cannot honour. Four skills ship. |
+| Budget & events | Token accounting from the provider's own usage field; money only once the owner sets real prices. Daily ceilings on autonomous scopes, checked before the call. In-process typed event bus. |
+| Proactive | Initiatives with autonomy 0–5, deterministic collectors, database-enforced deduplication, deadline expiry, five per pass. Level 5 always requires a human. Command centre + nightly curator. |
+| Missions | Durable plan → execute → verify → resume. State written after every step; a step the risk policy asks about waits without holding anything open; `completed` requires every step verified, otherwise `partially_completed` or `failed`. |
+
+Schema migrations 10 → 15.
+
+## Not done, deliberately
+
+- **Semantic (model-based) step verification** — the interface exists and is
+  injectable; no verifier is configured, so steps without a deterministic
+  check pass on structure alone. The verdict records which method was used, so
+  a report never overstates what was checked.
+- **LLM mission planner** — missions are created from an explicit plan through
+  the API. Turning a sentence into a plan is a further slice.
+- **Password reset** — needs a verified delivery channel; operator recovery is
+  documented in `docs/SECURITY.md`.
+- **Biometric identification** — jarvis-OS's face scan gates nothing and would
+  add heavy native dependencies. Reasoning in the gap analysis §3.
+- **Telegram channel, vision/YOLO, hardware, full-screen views** — inventoried
+  in the gap analysis with verdicts; none is a blocker.
+
+## Tests
+
+`cd backend && python -m pytest` → 186 pass.
+`cd web && npm run lint && npx tsc --noEmit && npm test && npm run build` → all pass (50 web tests).
+
+Voice and the holographic face are untouched.
+
+---
+
+# Phase 10 — Assistant capabilities (2026-07-28)
+
+Seven priorities, delivered as five slices. Schema migrations 16 → 18.
+
+| Priority | Delivered |
+|---|---|
+| 1 — Mission planner | Chain of strategies (templates → model → nothing). Deterministic recipes for meeting prep, travel and proposal+follow-up; model planning for the rest, validated against the real tool shelf. Per-step success criteria. Ambiguous requests return a question, and the orchestrator refuses to execute a plan with open questions. Reachable from the conversation via `plan_mission` / `advance_mission` / `mission_status`, which are excluded from what a plan may contain. |
+| 2–4 — Project, company and relational memory | One entity graph: typed nodes (project, company, person, quote, invoice, contract, meeting), each with memory scoped to it, plus typed directed relations. Personal and business memory separated in storage, not by convention. Supersession now also depends on category, so a project keeps one objective but every decision. |
+| 5 — Timeline | Milestones per entity, stories assembled in order including related entities, gaps measured, milestones never reached named explicitly, next expected step derived from the standard arc. |
+| 6 — Face second factor | WebAuthn platform authenticator, `userVerification: required` — see ADR-005. |
+| 7 — Visual cards | Eight card kinds, sent as typed data and never as markup, collected per request, at most three per turn. |
+
+## ADR-005 in one paragraph
+
+Face authentication was asked for as a real second factor. The obvious build —
+an in-browser face embedding compared server-side — was rejected: the embedding
+is computed on a device the attacker controls, JavaScript liveness is checked by
+that same code, and storing a face template creates a permanent GDPR Article 9
+liability for a control that does not hold. What ships instead is WebAuthn with
+a platform authenticator, which is the OS face unlock (Face ID, Windows Hello)
+used as a cryptographic factor: liveness enforced in hardware, nothing biometric
+ever transmitted or stored, revocable, and complementary to the password.
+**Limitation stated plainly: WebAuthn cannot demand a specific modality.** On a
+device whose only sensor is a fingerprint reader, the same flow uses the
+fingerprint.
+
+## Not done, deliberately
+
+- **Semantic (model-based) step verification** — interface exists, nothing
+  configured; verdicts record which method was used so no report overstates.
+- **WebAuthn signature verification is not covered by the test suite** — it
+  needs a real secure enclave, and asserting against a fabricated signature
+  would test the stub rather than the security property. Delegated to
+  `py_webauthn` and its own suite; the verifier is injected so everything the
+  server owns (challenge single-use and expiry, account binding, clone
+  detection, step-up lifetime, revocation, enforcement) *is* covered.
+- **Model prices** — still zero by default. Token counters work; cost is
+  reported as unconfigured rather than as a confident 0.00.
+- **Voice-channel visual cards** — the HUD receives cards on the text channel
+  only; the realtime bridge has no card path yet.
+
+## Tests
+
+`cd backend && python -m pytest` → 264 pass.
+`cd web && npm run lint && npx tsc --noEmit && npm test && npm run build` → all pass (50 web tests).
+
+Voice and the holographic face remain untouched.
+
+
+---
+
+# Phase 11 — Suite bureautique (2026-07-28)
+
+Première tranche de la vision « assistante exécutive » — la feuille de route
+complète et son ordonnancement sont dans `docs/EXECUTIVE_ASSISTANT_ROADMAP.md`.
+
+Word, Excel et PowerPoint derrière l'interface de capacité demandée par
+`CLAUDE.md` §19 (spécification → fournisseur → moteur de rendu). Le fournisseur
+natif s'appuie sur python-docx, openpyxl et python-pptx ; rien dans le domaine
+ne les connaît, donc le moteur est remplaçable sans toucher un appelant.
+
+**OfficeCLI :** aucun paquet de ce nom sur PyPI. Aucun adaptateur écrit contre
+une dépendance invérifiable ; la couture existe et brancher un fournisseur est
+une ligne dans le point de composition.
+
+Le magasin d'artefacts accepte désormais classeurs et présentations à côté des
+documents, et la route de téléchargement sert le type réel de chaque fichier.
+
+## Tests
+
+`cd backend && python -m pytest` → 290 pass.

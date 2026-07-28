@@ -1446,3 +1446,37 @@ A secure EMEFA is one that can do increasingly powerful work while users remain 
 - how to stop or revoke it.
 
 Security is part of the assistant experience itself.
+
+## Account recovery (ADR-002 limitation)
+
+There is deliberately **no self-service password reset** in the current
+implementation. Adding one requires a verified delivery channel (e-mail with a
+signed, expiring token), and a half-built reset flow is a larger risk than not
+having one: it is the most commonly abused path into an account.
+
+Until it exists, recovery is an instance-operator action. With filesystem
+access to the deployment:
+
+```bash
+python - <<'PY'
+from emefa.domain.accounts import AccountRepository, hash_password
+from emefa.domain import storage
+from pathlib import Path
+
+database = Path("emefa.db")            # EMEFA_DATABASE_PATH
+with storage.connect(database) as connection:
+    connection.execute(
+        "UPDATE accounts SET password_hash = ? WHERE email = ?",
+        (hash_password("un-nouveau-mot-de-passe"), "proprietaire@example.com"),
+    )
+PY
+```
+
+Sessions are not invalidated by this. Revoke them as well if the account is
+believed compromised:
+
+```sql
+DELETE FROM devices WHERE account_id = 'acc_...';
+```
+
+A verified-channel reset flow is tracked in `docs/BACKLOG.md`.

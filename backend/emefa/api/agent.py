@@ -193,6 +193,23 @@ async def decide_approval(
     ):
         raise HTTPException(status_code=404, detail="approval_not_found")
 
+    if payload.approve:
+        # ADR-005: once a face factor is enrolled, approving a consequential
+        # action requires a fresh step-up. Checked before the approval is
+        # claimed, so a refusal here leaves it pending rather than consuming it.
+        factors = request.app.state.second_factor
+        if (
+            device.account_id
+            and factors.enrolled(device.account_id)
+            and not factors.verified_recently(device.device_id)
+        ):
+            audit(
+                "approval_needs_second_factor",
+                device_id=device.device_id,
+                action_id=action_id,
+            )
+            raise HTTPException(status_code=403, detail="second_factor_required")
+
     if not approvals.claim(action_id):
         raise HTTPException(status_code=404, detail="approval_not_found")
 

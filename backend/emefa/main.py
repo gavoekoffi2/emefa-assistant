@@ -20,6 +20,7 @@ from emefa.api.profile import router as profile_router
 from emefa.api.prospects import router as prospects_router
 from emefa.api.initiatives import router as initiatives_router
 from emefa.api.realtime import router as realtime_router
+from emefa.api.secondfactor import router as second_factor_router
 from emefa.api.skills import router as skills_router
 from emefa.api.files import router as files_router
 from emefa.api.memories import router as memories_router
@@ -62,6 +63,7 @@ from emefa.domain.missions import (
 from emefa.domain.prospects import ProspectRepository
 from emefa.domain.uploaded_files import UploadedFileStore
 from emefa.domain.ratelimit import FailureLimiter
+from emefa.domain.secondfactor import SecondFactorRepository
 from emefa.domain.skills import SkillRegistry
 from emefa.domain.tasks import TaskRepository
 from emefa.infrastructure.deepseek import DeepSeekBrain
@@ -71,6 +73,7 @@ from emefa.infrastructure.planner import LLMPlanner
 from emefa.infrastructure.realtime import RealtimeGateway
 from emefa.infrastructure.voice_llm import VoiceLLMProxy
 from emefa.infrastructure.website_profile import WebsiteProfileImporter
+from emefa.infrastructure.webauthn_verifier import LibraryVerifier
 from emefa.observability import (
     configure_logging,
     monotonic_ms,
@@ -406,6 +409,14 @@ def create_app(
     application.state.settings = active_settings
     application.state.devices = DeviceRepository(active_settings.database_path)
     application.state.accounts = AccountRepository(active_settings.database_path)
+    application.state.second_factor = SecondFactorRepository(
+        active_settings.database_path
+    )
+    application.state.webauthn = LibraryVerifier(
+        active_settings.webauthn_rp_id,
+        active_settings.webauthn_rp_name,
+        active_settings.webauthn_origin,
+    )
     application.state.profiles = profiles
     application.state.tasks = tasks
     application.state.memories = memories
@@ -510,6 +521,7 @@ def create_app(
         }
 
     application.include_router(auth_router)
+    application.include_router(second_factor_router)
     application.include_router(devices_router)
     application.include_router(documents_router)
     application.include_router(entities_router)

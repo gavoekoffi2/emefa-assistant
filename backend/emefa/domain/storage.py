@@ -503,6 +503,41 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         "ALTER TABLE memory_facts ADD COLUMN entity_id TEXT REFERENCES entities(entity_id)",
         "CREATE INDEX idx_memory_facts_entity ON memory_facts(entity_id, status)",
     ),
+    # 18 — WebAuthn second factor (ADR-005).
+    #
+    # No biometric data is stored here, and none ever reaches the server: a
+    # credential is a public key. The face (or fingerprint) stays in the
+    # device's secure enclave, which is precisely why this factor holds where
+    # an in-browser embedding would not.
+    (
+        f"""
+        CREATE TABLE webauthn_credentials (
+            credential_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            account_id TEXT NOT NULL REFERENCES accounts(account_id),
+            public_key TEXT NOT NULL,
+            label TEXT NOT NULL DEFAULT '',
+            sign_count INTEGER NOT NULL DEFAULT 0,
+            transports TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_used_at TEXT
+        )
+        """,
+        "CREATE INDEX idx_webauthn_account ON webauthn_credentials(account_id)",
+        # Challenges are single-use and short-lived; a replayed assertion must
+        # not verify. Rows are consumed on use and swept by age.
+        """
+        CREATE TABLE webauthn_challenges (
+            challenge TEXT PRIMARY KEY,
+            account_id TEXT,
+            purpose TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """,
+        # When the account's step-up happened on this browser. NULL means the
+        # session has never presented the second factor.
+        "ALTER TABLE devices ADD COLUMN second_factor_at TEXT",
+    ),
 )
 
 

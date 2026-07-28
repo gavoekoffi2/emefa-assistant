@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     #: Instance ceiling on unprompted autonomy (see AutonomyLevel). Default 2
     #: = PREPARE: EMEFA may draft on her own, never deliver.
     max_autonomy_level: int = 2
+    #: WebAuthn relying party (ADR-005). The id must be the site's domain and
+    #: the origin its exact https URL; a mismatch is what makes WebAuthn
+    #: phishing-resistant, so neither is guessed at runtime.
+    webauthn_rp_id: str = "localhost"
+    webauthn_rp_name: str = "EMEFA"
+    webauthn_origin: str = "http://localhost:5173"
     #: Skill catalogue directory. Defaults to the one shipped with the
     #: package; point it elsewhere to add skills without a redeploy.
     skills_catalogue_path: Path | None = None

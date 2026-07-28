@@ -649,3 +649,53 @@ Schema migrations 10 → 15.
 `cd web && npm run lint && npx tsc --noEmit && npm test && npm run build` → all pass (50 web tests).
 
 Voice and the holographic face are untouched.
+
+---
+
+# Phase 10 — Assistant capabilities (2026-07-28)
+
+Seven priorities, delivered as five slices. Schema migrations 16 → 18.
+
+| Priority | Delivered |
+|---|---|
+| 1 — Mission planner | Chain of strategies (templates → model → nothing). Deterministic recipes for meeting prep, travel and proposal+follow-up; model planning for the rest, validated against the real tool shelf. Per-step success criteria. Ambiguous requests return a question, and the orchestrator refuses to execute a plan with open questions. Reachable from the conversation via `plan_mission` / `advance_mission` / `mission_status`, which are excluded from what a plan may contain. |
+| 2–4 — Project, company and relational memory | One entity graph: typed nodes (project, company, person, quote, invoice, contract, meeting), each with memory scoped to it, plus typed directed relations. Personal and business memory separated in storage, not by convention. Supersession now also depends on category, so a project keeps one objective but every decision. |
+| 5 — Timeline | Milestones per entity, stories assembled in order including related entities, gaps measured, milestones never reached named explicitly, next expected step derived from the standard arc. |
+| 6 — Face second factor | WebAuthn platform authenticator, `userVerification: required` — see ADR-005. |
+| 7 — Visual cards | Eight card kinds, sent as typed data and never as markup, collected per request, at most three per turn. |
+
+## ADR-005 in one paragraph
+
+Face authentication was asked for as a real second factor. The obvious build —
+an in-browser face embedding compared server-side — was rejected: the embedding
+is computed on a device the attacker controls, JavaScript liveness is checked by
+that same code, and storing a face template creates a permanent GDPR Article 9
+liability for a control that does not hold. What ships instead is WebAuthn with
+a platform authenticator, which is the OS face unlock (Face ID, Windows Hello)
+used as a cryptographic factor: liveness enforced in hardware, nothing biometric
+ever transmitted or stored, revocable, and complementary to the password.
+**Limitation stated plainly: WebAuthn cannot demand a specific modality.** On a
+device whose only sensor is a fingerprint reader, the same flow uses the
+fingerprint.
+
+## Not done, deliberately
+
+- **Semantic (model-based) step verification** — interface exists, nothing
+  configured; verdicts record which method was used so no report overstates.
+- **WebAuthn signature verification is not covered by the test suite** — it
+  needs a real secure enclave, and asserting against a fabricated signature
+  would test the stub rather than the security property. Delegated to
+  `py_webauthn` and its own suite; the verifier is injected so everything the
+  server owns (challenge single-use and expiry, account binding, clone
+  detection, step-up lifetime, revocation, enforcement) *is* covered.
+- **Model prices** — still zero by default. Token counters work; cost is
+  reported as unconfigured rather than as a confident 0.00.
+- **Voice-channel visual cards** — the HUD receives cards on the text channel
+  only; the realtime bridge has no card path yet.
+
+## Tests
+
+`cd backend && python -m pytest` → 264 pass.
+`cd web && npm run lint && npx tsc --noEmit && npm test && npm run build` → all pass (50 web tests).
+
+Voice and the holographic face remain untouched.

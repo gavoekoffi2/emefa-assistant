@@ -8,6 +8,7 @@ import { PipelinePanel } from './PipelinePanel'
 import { SkillsPanel } from './SkillsPanel'
 import { CommandCenterPanel } from './CommandCenterPanel'
 import { VisualCards, type VisualCardData } from './VisualCard'
+import { SecurityPanel } from './SecurityPanel'
 import { DeliverablesPanel } from './DeliverablesPanel'
 import type { DeliverableRecord, SourceFileRecord } from './DeliverablesPanel'
 
@@ -93,6 +94,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   const [pipelineOpen, setPipelineOpen] = useState(false)
   const [skillsOpen, setSkillsOpen] = useState(false)
   const [commandOpen, setCommandOpen] = useState(false)
+  const [securityOpen, setSecurityOpen] = useState(false)
   const [deliverablesOpen, setDeliverablesOpen] = useState(false)
   const [firstRun, setFirstRun] = useState(false)
   const [approval, setApproval] = useState<PendingApproval | null>(null)
@@ -125,7 +127,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   }, [])
 
   const closeWorkspacePanels = () => {
-    setProfileOpen(false); setTasksOpen(false); setMemoryOpen(false); setPipelineOpen(false); setDeliverablesOpen(false); setSkillsOpen(false); setCommandOpen(false)
+    setProfileOpen(false); setTasksOpen(false); setMemoryOpen(false); setPipelineOpen(false); setDeliverablesOpen(false); setSkillsOpen(false); setCommandOpen(false); setSecurityOpen(false)
   }
 
   const openDeliverables = () => {
@@ -432,7 +434,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       <div className="space-vignette" />
       <header className="jarvis-header">
         <div className="brand-row"><BrandMark /><div><strong>EMEFA</strong><small>INTELLIGENCE COGNITIVE</small></div></div>
-        <nav><button className={profileOpen || tasksOpen || memoryOpen || pipelineOpen || deliverablesOpen || skillsOpen || commandOpen ? '' : 'nav-active'} onClick={closeWorkspacePanels}>Univers</button><button className={deliverablesOpen ? 'nav-active' : ''} onClick={openDeliverables}>Livrables{deliverableCount > 0 ? ` (${deliverableCount})` : ''}</button><button className={tasksOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setTasksOpen(true) }}>Tâches</button><button className={pipelineOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setPipelineOpen(true) }}>Pipeline</button><button className={memoryOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setMemoryOpen(true) }}>Mémoire</button><button className={commandOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setCommandOpen(true) }}>Initiatives</button><button className={skillsOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setSkillsOpen(true) }}>Compétences</button><button className={profileOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setProfileOpen(true) }}>Profil</button></nav>
+        <nav><button className={profileOpen || tasksOpen || memoryOpen || pipelineOpen || deliverablesOpen || skillsOpen || commandOpen || securityOpen ? '' : 'nav-active'} onClick={closeWorkspacePanels}>Univers</button><button className={deliverablesOpen ? 'nav-active' : ''} onClick={openDeliverables}>Livrables{deliverableCount > 0 ? ` (${deliverableCount})` : ''}</button><button className={tasksOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setTasksOpen(true) }}>Tâches</button><button className={pipelineOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setPipelineOpen(true) }}>Pipeline</button><button className={memoryOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setMemoryOpen(true) }}>Mémoire</button><button className={commandOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setCommandOpen(true) }}>Initiatives</button><button className={skillsOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setSkillsOpen(true) }}>Compétences</button><button className={profileOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setProfileOpen(true) }}>Profil</button><button className={securityOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setSecurityOpen(true) }}>Sécurité</button></nav>
         <div className="header-right"><span className="system-clock"><b>SYS</b> EN LIGNE</span><span className="privacy-status"><i /> {window.location.protocol === 'https:' ? 'CHIFFREMENT ACTIF' : 'CONNEXION LOCALE'}</span><button className="profile-button" onClick={onLogout} title={`Déconnecter ${session.name}`}>CG</button></div>
       </header>
       <aside className="space-sidebar">
@@ -525,6 +527,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       <PipelinePanel open={pipelineOpen} onClose={() => setPipelineOpen(false)} />
       <SkillsPanel open={skillsOpen} onClose={() => setSkillsOpen(false)} />
       <CommandCenterPanel open={commandOpen} onClose={() => setCommandOpen(false)} />
+      <SecurityPanel open={securityOpen} onClose={() => setSecurityOpen(false)} />
       <DeliverablesPanel open={deliverablesOpen} refreshToken={deliverablesRefresh} onClose={() => setDeliverablesOpen(false)} onCounts={handleDeliverableCounts} />
     </div>
   )

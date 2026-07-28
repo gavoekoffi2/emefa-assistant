@@ -314,6 +314,23 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         "CREATE INDEX idx_accounts_tenant ON accounts(tenant_id, status)",
         "ALTER TABLE devices ADD COLUMN account_id TEXT REFERENCES accounts(account_id)",
     ),
+    # 12 — per-assistant skill enablement.
+    #
+    # The catalogue itself is files on disk, versioned with the deployment. It
+    # is deliberately not a table: what belongs in the database is the user's
+    # decision about a skill, not the skill.
+    (
+        f"""
+        CREATE TABLE enabled_skills (
+            skill_name TEXT NOT NULL,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            assistant_id TEXT NOT NULL DEFAULT '{DEFAULT_ASSISTANT_ID}',
+            enabled_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (assistant_id, skill_name)
+        )
+        """,
+    ),
 )
 
 

@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     himalaya_binary: str = "himalaya"
     himalaya_config: Path | None = None
     web_dist_path: Path | None = None
+    #: Skill catalogue directory. Defaults to the one shipped with the
+    #: package; point it elsewhere to add skills without a redeploy.
+    skills_catalogue_path: Path | None = None
 
     model_config = SettingsConfigDict(
         env_prefix="EMEFA_",

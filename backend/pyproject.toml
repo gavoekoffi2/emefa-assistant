@@ -15,6 +15,7 @@ dependencies = [
   "python-docx>=1.1,<2",
   "python-multipart>=0.0.20,<1",
   "pymupdf>=1.24,<2",
+  "pyyaml>=6,<7",
 ]
 
 [project.optional-dependencies]
@@ -31,3 +32,9 @@ testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 include = ["emefa*"]
+
+# The skill catalogue is data, not code, so setuptools would not ship it
+# without being told. An installed EMEFA with no catalogue would report
+# "no skills available" and look like a bug.
+[tool.setuptools.package-data]
+emefa = ["skills_catalogue/**/*"]

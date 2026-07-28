@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from pathlib import Path
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
@@ -17,6 +18,7 @@ from emefa.api.documents import router as documents_router
 from emefa.api.profile import router as profile_router
 from emefa.api.prospects import router as prospects_router
 from emefa.api.realtime import router as realtime_router
+from emefa.api.skills import router as skills_router
 from emefa.api.files import router as files_router
 from emefa.api.memories import router as memories_router
 from emefa.api.system import router as system_router
@@ -39,6 +41,7 @@ from emefa.domain.memory.ingest import MemoryIngestor
 from emefa.domain.prospects import ProspectRepository
 from emefa.domain.uploaded_files import UploadedFileStore
 from emefa.domain.ratelimit import FailureLimiter
+from emefa.domain.skills import SkillRegistry
 from emefa.domain.tasks import TaskRepository
 from emefa.infrastructure.deepseek import DeepSeekBrain
 from emefa.infrastructure.email import HimalayaEmailProvider
@@ -77,6 +80,7 @@ def create_app(
     uploaded_files = UploadedFileStore(active_settings.database_path)
     briefings = BriefingRepository(active_settings.database_path)
     conversations = ConversationStore(active_settings.database_path)
+    documents = DocumentStore(active_settings.database_path)
     active_email_provider = email_provider
     if active_email_provider is None and active_settings.email_account:
         active_email_provider = HimalayaEmailProvider(
@@ -84,6 +88,29 @@ def create_app(
             binary=active_settings.himalaya_binary,
             config=active_settings.himalaya_config,
         )
+
+    def make_shelf(include_mailbox_read: bool = True):
+        return build_tool_shelf(
+            profiles,
+            tasks,
+            memories,
+            active_email_provider,
+            documents,
+            prospects,
+            uploaded_files=uploaded_files,
+            include_mailbox_read=include_mailbox_read,
+        )
+
+    tool_shelf = make_shelf()
+    # The registry checks each skill's `requires_tools` against what this
+    # deployment actually ships, so a skill needing a tool EMEFA does not have
+    # is reported unusable instead of injecting a prompt she cannot honour.
+    skills = SkillRegistry(
+        active_settings.database_path,
+        active_settings.skills_catalogue_path
+        or Path(__file__).resolve().parent / "skills_catalogue",
+        frozenset(tool["name"] for tool in tool_shelf.describe()),
+    )
 
     def compose_context(query: str = "") -> str:
         """Profile context plus the bounded durable-memory block.
@@ -106,6 +133,9 @@ def create_app(
         memory_block = memories.context_block(query=query)
         if memory_block:
             parts.append(memory_block)
+        skill_block = skills.system_context()
+        if skill_block:
+            parts.append(skill_block)
         files = uploaded_files.list(limit=8)
         if files:
             lines = [
@@ -264,43 +294,21 @@ def create_app(
     application.state.prospects = prospects
     application.state.briefings = briefings
     application.state.conversations = conversations
-    application.state.documents = DocumentStore(active_settings.database_path)
+    application.state.documents = documents
     application.state.uploaded_files = uploaded_files
+    application.state.skills = skills
     application.state.website_importer = WebsiteProfileImporter()
     application.state.compose_context = compose_context
     application.state.compose_text_context = compose_text_context
     application.state.voice_llm = voice_llm_proxy
-    application.state.agent = AgentEngine(
-        selected_brain,
-        build_tool_shelf(
-            profiles,
-            tasks,
-            memories,
-            active_email_provider,
-            application.state.documents,
-            prospects,
-            uploaded_files=uploaded_files,
-        ),
-        memory=conversations,
-    )
+    application.state.agent = AgentEngine(selected_brain, tool_shelf, memory=conversations)
     # The voice channel's bearer secret is shared with the third-party
     # ElevenLabs bridge, so it runs a reduced shelf without live-mailbox
     # reads (email_search/email_read). Approval-gated actions (email_send,
     # document edits) remain available and execute via the full-shelf engine
     # after the user approves in the HUD.
     application.state.voice_agent = AgentEngine(
-        selected_brain,
-        build_tool_shelf(
-            profiles,
-            tasks,
-            memories,
-            active_email_provider,
-            application.state.documents,
-            prospects,
-            uploaded_files=uploaded_files,
-            include_mailbox_read=False,
-        ),
-        memory=conversations,
+        selected_brain, make_shelf(include_mailbox_read=False), memory=conversations
     )
     application.state.approvals = ApprovalRepository(active_settings.database_path)
     application.state.brain_configured = brain_configured
@@ -376,6 +384,7 @@ def create_app(
     application.include_router(demo_router)
     application.include_router(memories_router)
     application.include_router(prospects_router)
+    application.include_router(skills_router)
     application.include_router(system_router)
     application.include_router(tasks_router)
     application.include_router(voice_llm_router)

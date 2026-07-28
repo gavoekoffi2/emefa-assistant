@@ -244,27 +244,86 @@ test('consequential actions surface an explicit approval card', () => {
   assert.match(holographicCss, /approval-card/)
 })
 
-test('profile panel lets the user view and edit assistant and business context', () => {
-  const panel = readFileSync(new URL('../src/ProfilePanel.tsx', import.meta.url), 'utf8')
+test('the configuration centre shows and lets the user correct everything EMEFA knows', () => {
+  const panel = readFileSync(new URL('../src/ConfigPanel.tsx', import.meta.url), 'utf8')
   assert.match(panel, /\/v1\/assistant\/profile/)
   assert.match(panel, /\/v1\/assistant\/business/)
+  // Field groups come from the backend schema, so the centre cannot drift
+  // from what the welcome interview actually captures.
+  assert.match(panel, /\/v1\/assistant\/business\/schema/)
   assert.match(panel, /method: 'PATCH'/)
-  assert.match(panel, /isBusinessEmpty/)
-  assert.match(source, /ProfilePanel/)
-  assert.match(source, /firstRun/)
+  // Nothing is read-only: every group can be cleared and memories forgotten.
+  assert.match(panel, /clearGroup/)
+  assert.match(panel, /\/v1\/memories\//)
+  assert.match(panel, /Oublier/)
+  assert.match(source, /ConfigPanel/)
   assert.match(holographicCss, /profile-panel/)
 })
 
-test('personalization is conversational or imported from one website URL', () => {
-  const panel = readFileSync(new URL('../src/ProfilePanel.tsx', import.meta.url), 'utf8')
-  assert.match(panel, /Parler avec EMEFA/)
+test('onboarding is a conversation the interface only reflects', () => {
+  const card = readFileSync(new URL('../src/OnboardingCard.tsx', import.meta.url), 'utf8')
+  assert.match(card, /\/v1\/onboarding\/status/)
+  assert.match(card, /\/v1\/onboarding\/start/)
+  assert.match(card, /\/v1\/onboarding\/skip/)
+  // The card offers the next question and hands the answer to the assistant;
+  // it never collects the answer itself in a form.
+  assert.match(card, /next_question/)
+  assert.match(card, /onAsk/)
+  assert.ok(!/method: 'PATCH'/.test(card), 'the welcome card must not write the profile directly')
+  assert.match(source, /OnboardingCard/)
+  assert.match(source, /startProfileInterview/)
+  assert.match(source, /onboarding_plan/)
+})
+
+test('personalization can also be imported from one website URL', () => {
+  const panel = readFileSync(new URL('../src/ConfigPanel.tsx', import.meta.url), 'utf8')
   assert.match(panel, /Importer votre site/)
   assert.match(panel, /\/v1\/assistant\/business\/import/)
   assert.match(panel, /onStartInterview/)
   assert.match(panel, /profile-advanced/)
-  assert.match(source, /startProfileInterview/)
-  assert.match(source, /Pose une seule question courte à la fois/)
+  assert.match(source, /une seule question courte à la fois/)
   assert.match(source, /appelle emefa_execute/)
+})
+
+test('the workspace is one assistant: a single panel at a time, every space reachable', () => {
+  assert.match(source, /const anyPanelOpen =/)
+  assert.match(source, /const openPanel =/)
+  // Every work surface is reachable from the shell.
+  for (const label of ['Journée', 'Clients', 'Réunions', 'Configuration']) {
+    assert.match(source, new RegExp(label))
+  }
+  for (const space of ['Livrables', 'Tâches', 'Pilotage', 'Prospection', 'Mémoire']) {
+    assert.match(source, new RegExp(`label: '${space}'`))
+  }
+  // Panels ask EMEFA rather than duplicating her reasoning.
+  assert.match(source, /onAsk=\{\(prompt\) => void sendMessage\(prompt\)\}/)
+})
+
+test('the daily surface renders both reports and lets the executive tune sections', () => {
+  const panel = readFileSync(new URL('../src/DayPanel.tsx', import.meta.url), 'utf8')
+  assert.match(panel, /\/v1\/briefings\/\$\{which\}/)
+  assert.match(panel, /\/v1\/briefings\/preferences/)
+  assert.match(panel, /Briefing du matin/)
+  assert.match(panel, /Rapport du soir/)
+  assert.match(panel, /method: 'PUT'/)
+})
+
+test('the client space answers the four executive questions and stays editable', () => {
+  const panel = readFileSync(new URL('../src/ClientsPanel.tsx', import.meta.url), 'utf8')
+  assert.match(panel, /\/v1\/crm\/overview/)
+  assert.match(panel, /Clients à relancer/)
+  assert.match(panel, /Devis en attente de réponse/)
+  assert.match(panel, /Contrats à échéance/)
+  assert.match(panel, /Projets bloqués ou en retard/)
+  assert.match(panel, /method: 'DELETE'/)
+})
+
+test('meeting notes are turned into follow-through by EMEFA, not by a form', () => {
+  const panel = readFileSync(new URL('../src/MeetingsPanel.tsx', import.meta.url), 'utf8')
+  assert.match(panel, /\/v1\/meetings/)
+  assert.match(panel, /Transformer en compte rendu/)
+  assert.match(panel, /identifie les décisions/)
+  assert.match(panel, /Actions attendues d’autres personnes/)
 })
 
 test('interface renders a state-reactive WebGL holographic HUD', () => {

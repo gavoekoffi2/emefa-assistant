@@ -1,7 +1,11 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useConversation } from '@elevenlabs/react'
 import { api, BrandMark, graphNodes, palette, statusCopy, VoiceOrb } from './App'
-import { isBusinessEmpty, ProfilePanel } from './ProfilePanel'
+import { ConfigPanel } from './ConfigPanel'
+import { ClientsPanel } from './ClientsPanel'
+import { DayPanel } from './DayPanel'
+import { MeetingsPanel } from './MeetingsPanel'
+import { OnboardingCard } from './OnboardingCard'
 import { TasksPanel } from './TasksPanel'
 import { MemoryPanel } from './MemoryPanel'
 import { PipelinePanel } from './PipelinePanel'
@@ -22,7 +26,6 @@ const HolographicUniverse = lazy(() =>
 const EMEFAFace = lazy(() =>
   import('./EMEFAFace').then((module) => ({ default: module.EMEFAFace })),
 )
-import type { BusinessProfile } from './ProfilePanel'
 import type { Session, VoiceState } from './App'
 
 type ConversationTurn = { id: string; role: 'user' | 'assistant'; text: string }
@@ -98,13 +101,15 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   const [history, setHistory] = useState<ConversationTurn[]>([])
   const [activeNodes, setActiveNodes] = useState<number[]>([0])
   const [typed, setTyped] = useState('')
-  const [profileOpen, setProfileOpen] = useState(false)
+  const [configOpen, setConfigOpen] = useState(false)
+  const [dayOpen, setDayOpen] = useState(false)
+  const [clientsOpen, setClientsOpen] = useState(false)
+  const [meetingsOpen, setMeetingsOpen] = useState(false)
   const [tasksOpen, setTasksOpen] = useState(false)
   const [memoryOpen, setMemoryOpen] = useState(false)
   const [pipelineOpen, setPipelineOpen] = useState(false)
   const [deliverablesOpen, setDeliverablesOpen] = useState(false)
   const [commandCenterOpen, setCommandCenterOpen] = useState(false)
-  const [firstRun, setFirstRun] = useState(false)
   const [approval, setApproval] = useState<PendingApproval | null>(null)
   const [deciding, setDeciding] = useState(false)
   const [system, setSystem] = useState<SystemStatus | null>(null)
@@ -179,7 +184,17 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   }, [])
 
   const closeWorkspacePanels = () => {
-    setProfileOpen(false); setTasksOpen(false); setMemoryOpen(false); setPipelineOpen(false); setDeliverablesOpen(false); setCommandCenterOpen(false)
+    setConfigOpen(false); setTasksOpen(false); setMemoryOpen(false); setPipelineOpen(false)
+    setDeliverablesOpen(false); setCommandCenterOpen(false); setDayOpen(false)
+    setClientsOpen(false); setMeetingsOpen(false)
+  }
+
+  // One opener for every work surface: exactly one panel is ever open, so
+  // the workspace reads as a single assistant rather than stacked modules.
+  const openPanel = (open: (value: boolean) => void) => () => {
+    closeWorkspacePanels()
+    setFileStripOpen(false)
+    open(true)
   }
 
   const openCommandCenter = () => {
@@ -231,11 +246,6 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   }, [tasksOpen])
 
   useEffect(() => {
-    api<BusinessProfile>('/v1/assistant/business')
-      .then((profile) => {
-        if (isBusinessEmpty(profile)) { setFirstRun(true); setProfileOpen(true) }
-      })
-      .catch(() => undefined)
     api<PendingApproval[]>('/v1/agent/approvals')
       .then((pending) => { if (pending.length > 0) setApproval(pending[0]) })
       .catch(() => undefined)
@@ -501,15 +511,23 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   }
 
   const startProfileInterview = async () => {
-    setProfileOpen(false)
-    setFirstRun(false)
+    setConfigOpen(false)
+    // Spoken interview when the voice link can be established; otherwise the
+    // same interview continues in writing rather than failing silently.
     if (conversation.status !== 'connected') {
       const connected = await startRealtime()
-      if (!connected) return
+      if (!connected) {
+        void sendMessage(
+          'Reprenons notre entretien d’accueil. Consulte onboarding_plan puis pose-moi '
+          + 'une seule question à la fois pour compléter ce que tu ne sais pas encore.',
+        )
+        return
+      }
     }
     conversation.sendContextualUpdate(
-      'L’utilisateur choisit un entretien de personnalisation. Pose une seule question courte à la fois. '
-      + 'Commence par son nom et son rôle, puis son activité, ses clients, ses objectifs et ses préférences de travail. '
+      'L’utilisateur choisit un entretien de personnalisation. Consulte d’abord onboarding_plan '
+      + 'pour savoir ce qui est déjà connu, puis pose une seule question courte à la fois sans jamais '
+      + 'redemander une information connue. '
       + 'Après chaque réponse, appelle emefa_execute pour enregistrer uniquement les informations confirmées dans le profil professionnel. '
       + 'Ne dis jamais qu’une information est enregistrée si le résultat de l’outil ne le confirme pas.',
     )
@@ -653,12 +671,23 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   }
 
   const askBrief = () => void sendMessage('Qu’est-ce qui mérite mon attention aujourd’hui ?')
+  const openDay = openPanel(setDayOpen)
 
   const runScenario = (scenario: DemoScenario) => {
     setScenariosOpen(false)
     void sendMessage(scenario.prompt)
   }
   const latestUser = useMemo(() => [...history].reverse().find((turn) => turn.role === 'user')?.text, [history])
+
+  const anyPanelOpen = configOpen || tasksOpen || memoryOpen || pipelineOpen || deliverablesOpen
+    || commandCenterOpen || dayOpen || clientsOpen || meetingsOpen
+  const secondarySpaces = [
+    { label: 'Livrables', accent: 'Documents', open: deliverablesOpen, count: deliverableCount, onOpen: openDeliverables },
+    { label: 'Tâches', accent: 'Projets', open: tasksOpen, count: system?.open_task_count ?? 0, onOpen: openPanel(setTasksOpen) },
+    { label: 'Pilotage', accent: 'EMEFA', open: commandCenterOpen, count: 0, onOpen: openCommandCenter },
+    { label: 'Prospection', accent: 'Idées', open: pipelineOpen, count: 0, onOpen: openPanel(setPipelineOpen) },
+    { label: 'Mémoire', accent: 'Mémoire', open: memoryOpen, count: 0, onOpen: openPanel(setMemoryOpen) },
+  ]
 
   return (
     <div className={`jarvis-shell state-${state}`}>
@@ -670,12 +699,24 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       <div className="space-vignette" />
       <header className="jarvis-header">
         <div className="brand-row"><BrandMark /><div><strong>EMEFA</strong><small>INTELLIGENCE COGNITIVE</small></div></div>
-        <nav><button className={profileOpen || tasksOpen || memoryOpen || pipelineOpen || deliverablesOpen || commandCenterOpen ? '' : 'nav-active'} onClick={closeWorkspacePanels}>Univers</button><button className={commandCenterOpen ? 'nav-active' : ''} onClick={openCommandCenter}>Pilotage</button><button className={deliverablesOpen ? 'nav-active' : ''} onClick={openDeliverables}>Livrables{deliverableCount > 0 ? ` (${deliverableCount})` : ''}</button><button className={tasksOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setTasksOpen(true) }}>Tâches</button><button className={pipelineOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setPipelineOpen(true) }}>Pipeline</button><button className={memoryOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setMemoryOpen(true) }}>Mémoire</button><button className={profileOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setProfileOpen(true) }}>Profil</button></nav>
+        <nav aria-label="Espaces de travail">
+          <button className={anyPanelOpen ? '' : 'nav-active'} onClick={closeWorkspacePanels}>Univers</button>
+          <button className={dayOpen ? 'nav-active' : ''} onClick={openPanel(setDayOpen)}>Journée</button>
+          <button className={clientsOpen ? 'nav-active' : ''} onClick={openPanel(setClientsOpen)}>Clients</button>
+          <button className={meetingsOpen ? 'nav-active' : ''} onClick={openPanel(setMeetingsOpen)}>Réunions</button>
+          <button className={configOpen ? 'nav-active' : ''} onClick={openPanel(setConfigOpen)}>Configuration</button>
+        </nav>
         <div className="header-right"><span className="system-clock"><b>SYS</b> EN LIGNE</span><span className="privacy-status"><i /> {window.location.protocol === 'https:' ? 'CHIFFREMENT ACTIF' : 'CONNEXION LOCALE'}</span><button className="profile-button" onClick={onLogout} title={`Déconnecter ${session.name}`}>CG</button></div>
       </header>
       <aside className="space-sidebar">
-        <span className="sidebar-label">MATRICE COGNITIVE</span>
-        {['EMEFA', 'Projets', 'Mémoire', 'Outils', 'Documents', 'Idées'].map((group, index) => <button key={group} className={group === 'EMEFA' ? 'selected' : ''} onClick={group === 'Documents' ? openDeliverables : undefined}><span className="module-index">0{index + 1}</span><i style={{ background: palette[group] }} />{group}</button>)}
+        <span className="sidebar-label">ESPACES</span>
+        {secondarySpaces.map((space, index) => (
+          <button key={space.label} className={space.open ? 'selected' : ''} onClick={space.onOpen}>
+            <span className="module-index">0{index + 1}</span>
+            <i style={{ background: palette[space.accent] }} />
+            {space.label}{space.count ? ` (${space.count})` : ''}
+          </button>
+        ))}
         <div className="sidebar-signal"><span /><span /><span /><span /><span /><small>SIGNAL NEURAL</small></div>
         <div className="sidebar-bottom"><span>{system ? system.skills.length : '—'}</span><small>compétences actives</small></div>
       </aside>
@@ -758,10 +799,17 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       <section className="command-dock"><button className="dock-deliverables" onClick={openDeliverables} aria-label={`Ouvrir les livrables${deliverableCount ? `, ${deliverableCount} disponibles` : ''}`} title="Résultats et fichiers"><span aria-hidden="true">▣</span>{deliverableCount > 0 && <b>{deliverableCount > 99 ? '99+' : deliverableCount}</b>}</button><button className={`dock-scenarios${scenariosOpen ? ' active' : ''}`} onClick={() => setScenariosOpen((open) => !open)} disabled={scenarios.length === 0} aria-label="Parcours guidés" title="Parcours guidés">✦</button><button className={`dock-screen${screenSharing ? ' active' : ''}`} onClick={() => screenSharing ? stopScreenShare() : void startScreenShare()} aria-pressed={screenSharing} aria-label={screenSharing ? "Arrêter le partage d'écran" : "Partager mon écran avec EMEFA"} title={screenSharing ? "Arrêter le partage d'écran" : "Partager mon écran"}>▱</button><input ref={fileInputRef} className="sr-only" type="file" multiple onChange={(event) => void uploadFiles(event.currentTarget.files)} aria-label="Envoyer des fichiers à EMEFA" /><button className="dock-upload" onClick={() => fileInputRef.current?.click()} disabled={uploading} aria-label="Envoyer des fichiers à EMEFA" title="Envoyer PDF, Word, images ou autres fichiers">{uploading ? '…' : '📎'}</button><span className="dock-prompt">›</span><input value={typed} onChange={(event) => { setTyped(event.target.value); if (live) conversation.sendUserActivity() }} onKeyDown={(event) => { if (event.key === 'Enter') void submitTyped() }} placeholder="Écrire à EMEFA — avec ou sans la voix…" aria-label="Écrire une demande" /><button className="dock-send" onClick={() => void submitTyped()} disabled={!typed.trim()}>TRANSMETTRE</button></section>
       <div className="model-pill"><span>PROTOCOLE</span><strong>VOICE·LIVE</strong><i>●</i></div>
       {notice && <div className="voice-notice" role="alert">{notice}</div>}
+      {!anyPanelOpen && (
+        <OnboardingCard
+          onAsk={(prompt) => void sendMessage(prompt)}
+          onOpenConfig={openPanel(setConfigOpen)}
+        />
+      )}
       {morningBrief && (
         <div className="brief-strip" role="status">
           <span>☀ Votre brief du jour est prêt.</span>
           <button onClick={showMorningBrief}>L’afficher</button>
+          <button onClick={() => { setMorningBrief(null); openDay() }}>Ouvrir ma journée</button>
           <button className="brief-dismiss" onClick={() => setMorningBrief(null)} aria-label="Ignorer le brief">✕</button>
         </div>
       )}
@@ -779,7 +827,10 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
           </div>
         </div>
       )}
-      <ProfilePanel open={profileOpen} firstRun={firstRun} onClose={() => { setProfileOpen(false); setFirstRun(false) }} onStartInterview={() => void startProfileInterview()} />
+      <ConfigPanel open={configOpen} onClose={() => setConfigOpen(false)} onStartInterview={() => void startProfileInterview()} />
+      <DayPanel open={dayOpen} onClose={() => setDayOpen(false)} onAsk={(prompt) => void sendMessage(prompt)} />
+      <ClientsPanel open={clientsOpen} onClose={() => setClientsOpen(false)} onAsk={(prompt) => void sendMessage(prompt)} />
+      <MeetingsPanel open={meetingsOpen} onClose={() => setMeetingsOpen(false)} onAsk={(prompt) => void sendMessage(prompt)} />
       <TasksPanel open={tasksOpen} onClose={() => setTasksOpen(false)} onAskBrief={askBrief} />
       <MemoryPanel open={memoryOpen} onClose={() => setMemoryOpen(false)} />
       <PipelinePanel open={pipelineOpen} onClose={() => setPipelineOpen(false)} />

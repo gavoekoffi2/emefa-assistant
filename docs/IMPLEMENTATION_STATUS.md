@@ -594,3 +594,58 @@ Phase 1 exit gate (roadmap §17) is now satisfied: app starts, UI untouched and 
 3. Conversational onboarding flow reusing the existing conversation UI; persisted summary the user can correct.
 4. Wire profile context into `DeepSeekBrain` system prompt composition.
 Exit gate: create/configure assistant, minimum onboarding persisted, reload without losing setup (roadmap §22).
+
+---
+
+# Phase 9 — Capability adoption from jarvis-OS / jarvis-skills (2026-07-28)
+
+Audit of both referenced repositories, then six implementation slices. Full
+mapping and verdicts in `docs/JARVIS_OS_GAP_ANALYSIS.md`.
+
+## Decisions recorded first
+
+- **ADR-004** — jarvis-OS is AGPL-3.0; EMEFA ships no licence. Copying its
+  source would put EMEFA under AGPL including the network clause. Designs are
+  adopted, implementations written fresh. Safe under either licence the owner
+  later chooses. `jarvis-skills` is MIT and is reused directly with its notice.
+- **ADR-002** — jarvis-OS's authentication (one static bearer token, `/admin`
+  and all WebSockets exempt) is **weaker** than EMEFA's and is rejected. What
+  EMEFA lacked was identity, so real accounts land behind the device layer.
+- **ADR-003** — memory becomes a fact store, replacing the flat
+  twelve-most-recent list.
+
+## Delivered
+
+| Slice | Content |
+|---|---|
+| Memory kernel | `memory_events` / `memory_facts` / `memory_fact_observations` / `memory_fact_relations` + FTS5. Reinforcement by observation, supersession instead of deletion, salience = importance × recency(decay by category) × relevance(BM25) × confidence. Existing rows migrated keeping their ids; old table archived. User surface: search, correction, history ("why do you believe that"). |
+| Ingestion | Live extraction after each substantial exchange (fire-and-forget, off the response path) plus a bounded nightly consolidation pass with a watermark. Extraction has no tool shelf — a hostile transcript can at worst produce a visible, deletable false memory. |
+| Accounts | scrypt password hashing with self-describing parameters, login/logout/password change, sessions bound to an account, non-enumerating login. The enrolment code becomes bootstrap-only and stops working once an owner exists. |
+| Skills | jarvis-skills manifest schema 1.0. `skill.py` is read with `ast`, **never imported**. A skill contributes method, not authority; unmet `requires_tools` / `requires_env` make it unusable rather than injecting a prompt EMEFA cannot honour. Four skills ship. |
+| Budget & events | Token accounting from the provider's own usage field; money only once the owner sets real prices. Daily ceilings on autonomous scopes, checked before the call. In-process typed event bus. |
+| Proactive | Initiatives with autonomy 0–5, deterministic collectors, database-enforced deduplication, deadline expiry, five per pass. Level 5 always requires a human. Command centre + nightly curator. |
+| Missions | Durable plan → execute → verify → resume. State written after every step; a step the risk policy asks about waits without holding anything open; `completed` requires every step verified, otherwise `partially_completed` or `failed`. |
+
+Schema migrations 10 → 15.
+
+## Not done, deliberately
+
+- **Semantic (model-based) step verification** — the interface exists and is
+  injectable; no verifier is configured, so steps without a deterministic
+  check pass on structure alone. The verdict records which method was used, so
+  a report never overstates what was checked.
+- **LLM mission planner** — missions are created from an explicit plan through
+  the API. Turning a sentence into a plan is a further slice.
+- **Password reset** — needs a verified delivery channel; operator recovery is
+  documented in `docs/SECURITY.md`.
+- **Biometric identification** — jarvis-OS's face scan gates nothing and would
+  add heavy native dependencies. Reasoning in the gap analysis §3.
+- **Telegram channel, vision/YOLO, hardware, full-screen views** — inventoried
+  in the gap analysis with verdicts; none is a blocker.
+
+## Tests
+
+`cd backend && python -m pytest` → 186 pass.
+`cd web && npm run lint && npx tsc --noEmit && npm test && npm run build` → all pass (50 web tests).
+
+Voice and the holographic face are untouched.

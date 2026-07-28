@@ -194,7 +194,7 @@ def test_legacy_memories_are_migrated_into_facts(tmp_path):
 
     repository = MemoryRepository(database)
 
-    assert storage.schema_version(database) == 14
+    assert storage.schema_version(database) == 15
     migrated = repository.get("mem_ancien")
     assert migrated is not None, "existing memory ids must keep resolving"
     assert migrated.content == "Réunions le matin"

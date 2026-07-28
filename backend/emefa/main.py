@@ -22,6 +22,7 @@ from emefa.api.realtime import router as realtime_router
 from emefa.api.skills import router as skills_router
 from emefa.api.files import router as files_router
 from emefa.api.memories import router as memories_router
+from emefa.api.missions import router as missions_router
 from emefa.api.system import router as system_router
 from emefa.api.tasks import router as tasks_router
 from emefa.api.voice_llm import router as voice_llm_router
@@ -48,6 +49,12 @@ from emefa.domain.email import EmailProvider
 from emefa.domain.memories import MemoryRepository
 from emefa.domain.memory.consolidation import ConsolidationPass
 from emefa.domain.memory.ingest import MemoryIngestor
+from emefa.domain.missions import (
+    MissionOrchestrator,
+    MissionRepository,
+    StepVerifier,
+    default_checks,
+)
 from emefa.domain.prospects import ProspectRepository
 from emefa.domain.uploaded_files import UploadedFileStore
 from emefa.domain.ratelimit import FailureLimiter
@@ -152,6 +159,15 @@ def create_app(
         ),
     )
     curator = Curator(memories, initiatives, budget, skills)
+    missions = MissionRepository(active_settings.database_path)
+    mission_orchestrator = MissionOrchestrator(
+        missions,
+        tool_shelf,
+        # Deterministic checks where EMEFA can read the effect back. No
+        # semantic verifier is configured, so steps without a check pass on
+        # structure alone and the report says which method was used.
+        StepVerifier(default_checks(documents=documents, tasks=tasks)),
+    )
 
     def compose_context(query: str = "") -> str:
         """Profile context plus the bounded durable-memory block.
@@ -358,6 +374,8 @@ def create_app(
     application.state.initiatives = initiatives
     application.state.proactive = proactive
     application.state.curator = curator
+    application.state.missions = missions
+    application.state.mission_orchestrator = mission_orchestrator
     application.state.website_importer = WebsiteProfileImporter()
     application.state.compose_context = compose_context
     application.state.compose_text_context = compose_text_context
@@ -444,6 +462,7 @@ def create_app(
     application.include_router(briefings_router)
     application.include_router(demo_router)
     application.include_router(memories_router)
+    application.include_router(missions_router)
     application.include_router(prospects_router)
     application.include_router(initiatives_router)
     application.include_router(skills_router)

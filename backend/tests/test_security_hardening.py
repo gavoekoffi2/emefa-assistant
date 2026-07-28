@@ -99,9 +99,9 @@ def test_token_stays_valid_without_max_age(tmp_path):
 
 def test_schema_migrations_are_tracked(tmp_path):
     repository = DeviceRepository(tmp_path / "migrated.db")
-    assert repository.schema_version() == 14
+    assert repository.schema_version() == 15
     again = DeviceRepository(tmp_path / "migrated.db")
-    assert again.schema_version() == 14
+    assert again.schema_version() == 15
 
 
 @pytest.mark.asyncio

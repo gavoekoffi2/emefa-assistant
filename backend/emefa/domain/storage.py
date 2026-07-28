@@ -388,6 +388,46 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         """,
         "CREATE INDEX idx_initiatives_status ON initiatives(user_id, status, created_at)",
     ),
+    # 15 — durable missions.
+    #
+    # State is written after every step, which is the entire point: a mission
+    # that only exists in a request's memory cannot survive a deploy, and a
+    # step awaiting approval would hold a connection open until it timed out.
+    (
+        f"""
+        CREATE TABLE missions (
+            mission_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            goal TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'planned',
+            conversation_id TEXT NOT NULL DEFAULT '',
+            error TEXT NOT NULL DEFAULT '',
+            max_tokens INTEGER,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE INDEX idx_missions_status ON missions(user_id, status, created_at)",
+        """
+        CREATE TABLE mission_steps (
+            step_id TEXT PRIMARY KEY,
+            mission_id TEXT NOT NULL REFERENCES missions(mission_id),
+            position INTEGER NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            tool_name TEXT NOT NULL,
+            arguments TEXT NOT NULL DEFAULT '{{}}',
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            result TEXT,
+            verification TEXT NOT NULL DEFAULT '',
+            error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE UNIQUE INDEX idx_mission_steps_order ON mission_steps(mission_id, position)",
+    ),
 )
 
 

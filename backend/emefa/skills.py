@@ -779,7 +779,11 @@ def _add_memory_skills(shelf: ToolShelf, memories: MemoryRepository) -> None:
     shelf.add(
         AgentTool(
             name="list_memories",
-            description="Liste les souvenirs durables enregistrés, avec leur identifiant.",
+            description=(
+                "Liste les souvenirs durables enregistrés, avec leur identifiant et leur "
+                "catégorie. À utiliser quand l'utilisateur demande ce qu'EMEFA a retenu, "
+                "ou avant d'en effacer un."
+            ),
             risk=ActionRisk.PERSONAL_READ,
             handler=list_memories,
         )
@@ -921,7 +925,11 @@ def _add_task_skills(
     shelf.add(
         AgentTool(
             name="complete_task",
-            description="Marque une tâche comme terminée à partir de son task_id.",
+            description=(
+                "Marque une tâche comme terminée à partir de son task_id, obtenu via "
+                "list_tasks ou le brief du jour. À utiliser dès que l'utilisateur dit "
+                "avoir fait quelque chose qu'EMEFA suivait."
+            ),
             risk=ActionRisk.LOCAL_WRITE,
             parameters={
                 "type": "object",

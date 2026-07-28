@@ -737,3 +737,34 @@ workflow. Neither was possible without a place to hold appointments.
 
 Tests: backend **175 passed** (9 new in `tests/test_agenda.py`); web **68 passed**, lint
 clean, build successful.
+
+## Completed — tool-shelf measurement, before any routing change (2026-07-28)
+
+The V1 report named the flat ~44-skill shelf as the main risk to selection quality, and
+ADR-002 proposed progressive disclosure as the fix. `CLAUDE.md` §37 forbids calling such a
+change "better" on impression, so this slice builds the measurement rather than the change.
+
+**Measured, not assumed.** The shelf is **44 skills / 28.6k characters ≈ 8.2k tokens of
+schema, sent on every turn** — the biggest single fixed cost per request. Breakdown: 23
+`local_write`, 17 `personal_read`, 4 `destructive`; the largest single schema is
+`update_business_profile` (2.5k characters, 31 executive fields).
+
+- **`tests/test_tool_shelf.py`** — deterministic guards that need no provider:
+  distinct and non-trivial descriptions, well-formed closed parameter schemas, the risk
+  policy actually gating every destructive and communicating skill, and a **per-request
+  payload budget** (34k characters) that fails the build with a pointer to ADR-002 rather
+  than letting the cost creep silently into every request.
+- **`evals/tool_selection.py`** — 24 French cases covering the executive questions, capture,
+  production, memory, and one honesty case where the *correct* behaviour is to select no
+  tool at all (there is no prospect-discovery skill). Run on demand against a real provider:
+  `EMEFA_DEEPSEEK_API_KEY=... python -m evals.tool_selection`. The runner takes an injectable
+  brain, and a test proves the harness scores correctly using deliberately wrong and
+  deliberately honest stub brains — an unverified evaluator measures nothing.
+- The guards immediately found and fixed two under-described skills (`complete_task`,
+  `list_memories`) whose one-line descriptions gave a model too little to route on.
+
+**No routing change shipped.** Whether progressive disclosure improves selection is now a
+question the owner can answer with a number, on their own provider, against their own data.
+That measurement has to come first.
+
+Tests: backend **181 passed**; web **68 passed**, lint clean, build successful.

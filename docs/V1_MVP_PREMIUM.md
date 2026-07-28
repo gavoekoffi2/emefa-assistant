@@ -151,7 +151,7 @@ client. Rien n'est envoyé : l'envoi reste une action soumise à approbation exp
 
 | Vérification | Commande | Résultat |
 |---|---|---|
-| Tests backend | `python -m pytest -q` | **175 passés** |
+| Tests backend | `python -m pytest -q` | **181 passés** |
 | Lint web | `npm run lint` | propre |
 | Tests web | `npm test` | **68 passés** |
 | Build production | `npm run build` | réussi |
@@ -164,7 +164,7 @@ la migre, et vérifie que profil, tâches, souvenirs et prospects sont intacts, 
 nouvelles colonnes arrivent vides plutôt que de casser la ligne, et que les documents écrits
 avant le catalogue sont adoptés au lieu de disparaître.
 
-46 tests backend ont été ajoutés pendant cette phase, et 7 tests web (dont 2 remplacent
+52 tests backend ont été ajoutés pendant cette phase, et 7 tests web (dont 2 remplacent
 celles de l’ancien panneau de profil). Ils vérifient des
 effets réels, pas des intentions : formules Excel réellement stockées comme formules,
 structure Word réellement présente, réunion créant réellement une tâche et déplaçant
@@ -191,8 +191,12 @@ Honnêtement listées, par ordre d'impact pour le premier utilisateur.
 2. **Pas de lecture proactive de la boîte mail.** EMEFA peut chercher, lire, rédiger et
    envoyer (sous approbation) quand la boîte est connectée, mais rien ne remonte
    automatiquement dans le briefing.
-3. **~40 outils sur une seule étagère plate.** Cela peut dégrader la sélection d'outil sur les
-   modèles plus petits. C'est le premier chantier V2.
+3. **44 outils sur une seule étagère plate, soit ~8 200 jetons de schéma à chaque tour.**
+   C'est désormais **mesuré**, plus supposé : un garde-fou fait échouer la construction si ce
+   budget est dépassé, et une suite d'évaluation (`python -m evals.tool_selection`, 24 cas
+   français) permet de mesurer la qualité de sélection sur votre propre fournisseur. Le
+   regroupement progressif des compétences n'a délibérément **pas** été livré : il faut
+   d'abord la mesure de référence.
 4. **Résolution de noms tolérante mais silencieuse.** « Horizon » trouve le premier Horizon.
    S'il en existe deux, l'ambiguïté n'est pas signalée.
 5. **Canal vocal légèrement plus restreint.** Le pont ElevenLabs partage son secret ; il tourne
@@ -219,13 +223,15 @@ Par ordre de valeur décroissante pour un dirigeant.
    manque la synchronisation. `AgendaRepository.sync()` attend un `CalendarProvider` : c'est
    un adaptateur et des identifiants OAuth, pas une refonte. Relier ensuite le compte rendu
    de réunion à l'événement d'agenda correspondant.
-2. **Groupement progressif des compétences.** Exposer des groupes (`crm`, `bureautique`,
-   `réunions`, `workflows`) et ne détailler les outils qu'après sélection. Mesurer avant/après
-   avec des évaluations de choix d'outil — ne pas décider « c'est mieux » à l'impression.
-3. **Évaluations d'agent.** Cas de test sur : sélection d'outil, respect des permissions,
-   résistance à l'injection via contenus externes, honnêteté (ne pas annoncer une action non
-   exécutée), qualité multilingue. C'est ce qui permettra d'améliorer les prompts sans
-   régression invisible.
+2. **Groupement progressif des compétences — après mesure.** Lancez d'abord
+   `python -m evals.tool_selection` avec votre clé pour obtenir la précision de référence.
+   Si elle est bonne, ne touchez à rien : 8 200 jetons par tour restent le vrai coût à
+   surveiller, et la mise en cache de préfixe du fournisseur peut suffire. Si elle est
+   mauvaise, exposez des groupes (`crm`, `bureautique`, `réunions`, `workflows`) et ne
+   détaillez les outils qu'après sélection, puis **remesurez**.
+3. **Étendre les évaluations.** La suite couvre aujourd'hui le choix d'outil. À ajouter :
+   respect des permissions, résistance à l'injection via contenus externes, honnêteté (ne pas
+   annoncer une action non exécutée) et qualité multilingue.
 4. **Boîte mail proactive.** Faire remonter dans le briefing les messages nécessitant une
    réponse, en respectant strictement la frontière « contenu externe = données, jamais
    instructions ».

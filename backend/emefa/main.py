@@ -11,12 +11,15 @@ from emefa import __version__
 from emefa.api.agent import router as agent_router
 from emefa.api.briefings import router as briefings_router
 from emefa.api.command_center import router as command_center_router
+from emefa.api.crm import router as crm_router
 from emefa.api.demo import router as demo_router
 from emefa.api.devices import router as devices_router
 from emefa.api.documents import router as documents_router
 from emefa.api.files import router as files_router
 from emefa.api.livekit import router as livekit_router
+from emefa.api.meetings import router as meetings_router
 from emefa.api.memories import router as memories_router
+from emefa.api.onboarding import router as onboarding_router
 from emefa.api.profile import router as profile_router
 from emefa.api.prospects import router as prospects_router
 from emefa.api.realtime import router as realtime_router
@@ -463,6 +466,9 @@ def create_app(
     application.include_router(profile_router)
     application.include_router(briefings_router)
     application.include_router(command_center_router)
+    application.include_router(crm_router)
+    application.include_router(meetings_router)
+    application.include_router(onboarding_router)
     application.include_router(demo_router)
     application.include_router(memories_router)
     application.include_router(prospects_router)

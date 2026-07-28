@@ -33,6 +33,29 @@ At the time this specification was updated, the repository contains an existing 
 
 **The repository itself is the source of truth for actual implementation state.**
 
+### Shipped as of V1 (MVP Premium, 2026-07-28)
+
+The baseline above has since been built out. What is implemented and tested today:
+
+- **Conversational welcome interview** — five topics, 31 executive profile fields, progress
+  derived from the profile itself so a known fact is never asked for twice.
+- **Configuration centre** — everything EMEFA stores is visible, editable, erasable, including
+  durable memories.
+- **Executive CRM** — contacts, projects, quotations, contracts and interaction history, with
+  deterministic read models for "who to chase", "which quotations are unanswered", "which
+  contracts expire", "which projects are blocked" and "where does project X stand".
+- **Morning briefing and evening report** — computed from stored facts only, sections
+  selectable per user, both schedulable with approval-gated e-mail delivery.
+- **Meetings** — notes become minutes, decisions, owned actions, real tasks, a project update
+  and a chronology entry, in one verified operation.
+- **Office suite** — Word, Excel (live formulas) and PowerPoint behind a provider boundary;
+  files stay editable.
+- **Executive workflows** — the commercial-proposal and follow-up chains run end to end and
+  stop at the approval gate.
+
+Full report: `docs/V1_MVP_PREMIUM.md` · rationale: `docs/adr/ADR-002-executive-domain-model.md`
+· running log: `docs/IMPLEMENTATION_STATUS.md`.
+
 Before major engineering work, Claude must inspect the current code and produce/update:
 
 `docs/CURRENT_STATE_ASSESSMENT.md`

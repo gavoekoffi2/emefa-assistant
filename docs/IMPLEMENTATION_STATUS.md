@@ -609,3 +609,91 @@ Nothing mid-flight.
 4. Add sourced Web research and Google Calendar OAuth.
 5. Add isolated Playwright browser execution, then an allowlisted MCP gateway.
 6. Add phone, WhatsApp, Home Assistant and local-computer control only when their real accounts/devices are available.
+
+---
+
+# V1 — MVP Premium for the first real user (2026-07-28)
+
+> Phase objective: stop adding capabilities, make the existing ones *one* assistant, and
+> make that assistant usable every day by a single real entrepreneur. Full delivery report:
+> `docs/V1_MVP_PREMIUM.md`. Architectural rationale: `docs/adr/ADR-002-executive-domain-model.md`.
+
+## Completed — executive domain core (migrations 11–15)
+
+- **Executive profile depth** (`domain/profiles.py`, migration 11): the ten-field business
+  profile becomes 31 fields in five named groups — personal (preferred name, role, country,
+  city, timezone, working hours), company (products, services, organization, collaborators),
+  activity (clients, suppliers, partners), objectives (annual, quarterly, current priorities,
+  challenges) and preferences (autonomy level, communication style, report frequency,
+  organisation preferences). `FIELD_LABELS` is the single source of labels for the interview,
+  the configuration centre and the system-context block.
+- **Conversational welcome interview** (`domain/onboarding.py`, `api/onboarding.py`):
+  five topics whose progress is **derived from the profile itself**; only skips and
+  completion are stored. While the interview is unfinished, `compose_context()` injects a
+  briefing telling the brain what is already known and what remains — so a known field is
+  never asked for twice. Skills: `onboarding_plan`, `onboarding_finish`.
+- **Executive CRM** (`domain/crm.py`, `api/crm.py`, migration 12): `contacts`, `projects`,
+  `deals`, `contracts`, `interactions`. Read models answer the questions the mission brief
+  asks out loud — `follow_ups`, `awaiting_deals`, `expiring_contracts`, `blocked_projects`,
+  `overview`, and `lookup` which walks the relationship graph for « où en est le projet X ? ».
+  Writes are upserts and accept names as well as ids, so the assistant never guesses an id.
+  Seven governed skills; full CRUD API so every record stays correctable by its owner.
+- **Meetings engine** (`domain/meetings.py`, `api/meetings.py`, migration 13): one capture
+  performs six verified effects — Word minutes, decisions, actions with owner and deadline,
+  a task for every action the executive owns, the linked project's next step refreshed, and a
+  chronology entry on the client relationship. Unresolved links are reported, never dropped.
+- **Office suite** (`domain/office.py`, rebuilt `domain/documents.py`, migration 14):
+  spec → `OfficeProvider` → `PythonOfficeProvider` (python-docx / openpyxl / python-pptx).
+  Word documents gain headings, bullets, numbered lists, tables and a footer from a forgiving
+  markdown-ish syntax, and can be re-read for revision (`document_read`). Excel keeps
+  **formulas live** and generates real `SUM` total rows. PowerPoint carries bullets and
+  speaker notes. One catalogue (`artifacts`) indexes all three formats; artifacts written
+  before the catalogue existed are adopted on boot.
+- **Morning briefing and evening report** (`domain/reports.py`, migration 15): both entirely
+  deterministic. The brief covers priorities, tasks by bucket, meeting actions owed by others,
+  clients to chase, quotations awaiting an answer, contracts near term, blocked projects,
+  opportunities, risks and recommendations. The evening report covers what was completed,
+  what remains, blockers, recommendations and tomorrow's priorities. Sections are individually
+  selectable per user (`report_preferences`), and a second scheduler job (`EMEFA_EVENING_HOUR`)
+  mirrors the morning one, including its once-a-day e-mail rule.
+- **Executive workflows** (`domain/workflows.py`): `commercial_proposal` runs the whole chain
+  — find the client, recall history and past quotations, generate the document, register the
+  quotation, create the follow-up task, draft the e-mail — and stops, returning a
+  `proposed_action`. It never invokes a COMMUNICATE-risk tool itself. `follow_up` does the
+  same for a chase.
+
+## Completed — one workspace instead of several modules
+
+- **Configuration centre** (`web/src/ConfigPanel.tsx`) replaces the profile form: every field
+  group (rendered from the backend schema, so it cannot drift), the assistant's identity,
+  durable memories with per-item deletion, per-group erasure, website import, and the
+  interview's progress with a resume button.
+- **New surfaces:** `DayPanel` (both reports + section tuning), `ClientsPanel` (the four
+  executive questions plus editable contacts/projects/deals/contracts), `MeetingsPanel`
+  (notes in, follow-through out), `OnboardingCard` (shows the next question, hands the
+  answering to the ordinary conversation — never a form).
+- **Navigation:** the decorative "matrice cognitive" sidebar becomes real navigation
+  (Livrables, Tâches, Pilotage, Prospection, Mémoire); the header carries the five primary
+  spaces; exactly one panel is open at a time. Every panel's primary action asks EMEFA rather
+  than duplicating her reasoning. `ProfilePanel.tsx` removed (superseded).
+- **Demo scenarios** refreshed so the guided tour reports the capabilities that now really
+  exist (CRM point, project status, meeting minutes, commercial proposal, Excel/PowerPoint),
+  still deriving each status from the live tool shelf.
+
+## Tests
+
+- Backend: `python -m pytest -q` → **164 passed** (was 129 before this phase; 35 new across
+  `test_crm.py`, `test_office.py`, `test_onboarding.py`, `test_meetings.py`, `test_reports.py`,
+  `test_workflows.py`).
+- Web: `npm run lint` clean · `npm test` → **67 passed** · `npm run build` successful.
+- Two pre-existing test expectations were updated deliberately, not silenced: the Word
+  document assertions (documents now carry a dated subtitle line) and the schema-version
+  assertions (10 → 15). One pre-existing date-dependent routine test was made
+  time-independent.
+
+## Known limitations after V1
+
+See `docs/V1_MVP_PREMIUM.md` §"Limites restantes" for the full list. The most important:
+no calendar or mailbox-driven agenda, ~40 tools on one flat shelf, fuzzy name resolution
+without ambiguity reporting, and voice-path capabilities still bounded by the ElevenLabs
+bridge's reduced shelf.

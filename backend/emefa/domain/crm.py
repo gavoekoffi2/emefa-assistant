@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import asdict, dataclass
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 from typing import Any
 

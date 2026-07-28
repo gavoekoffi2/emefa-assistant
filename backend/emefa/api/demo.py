@@ -33,8 +33,11 @@ def scenarios(
 ) -> list[Scenario]:
     skills = {tool["name"] for tool in request.app.state.agent.tools.describe()}
     has_email = "email_send" in skills
-    has_pipeline = "list_pipeline" in skills
     has_documents = "document_create" in skills
+    has_crm = "crm_overview" in skills
+    has_meetings = "meeting_capture" in skills
+    has_proposal = "workflow_commercial_proposal" in skills
+    has_office = "spreadsheet_create" in skills
 
     email_note = (
         "Réel : EMEFA peut préparer un e-mail ; l'envoi passe par votre approbation."
@@ -47,26 +50,83 @@ def scenarios(
             title="Briefing exécutif",
             prompt="Bonjour EMEFA, qu'est-ce qui mérite mon attention aujourd'hui ?",
             status="live",
-            note="Réel : compose le brief du jour (tâches, relances, objectifs) à partir de vos données.",
+            note=(
+                "Réel : priorités, tâches, relances, devis en attente, contrats à "
+                "échéance, projets bloqués et recommandations, lus dans vos données."
+            ),
         ),
         Scenario(
-            id="meeting_prep",
-            title="Préparation de réunion",
-            prompt="Prépare ma réunion avec Horizon.",
-            status="assisted" if has_pipeline else "preview",
+            id="evening_report",
+            title="Rapport du soir",
+            prompt="Fais le point sur ma journée et dis-moi par quoi commencer demain.",
+            status="live",
             note=(
-                "Assisté : EMEFA rassemble ce qu'elle sait déjà (profil, pipeline, "
-                "tâches, e-mails si connectés). Pas d'accès agenda dédié pour l'instant."
+                "Réel : tâches terminées, tâches restantes, blocages et priorités du "
+                "lendemain, calculés — jamais inventés."
+            ),
+        ),
+        Scenario(
+            id="crm_review",
+            title="Point commercial",
+            prompt="Quels clients dois-je relancer, et quels devis attendent une réponse ?",
+            status="live" if has_crm else "preview",
+            note=(
+                "Réel : EMEFA lit sa mémoire relationnelle (clients, projets, devis, "
+                "contrats, historique des échanges)."
+                if has_crm
+                else "Aperçu : la mémoire relationnelle n'est pas disponible."
+            ),
+        ),
+        Scenario(
+            id="project_status",
+            title="État d'un projet",
+            prompt="Où en est le projet Refonte ?",
+            status="live" if has_crm else "preview",
+            note=(
+                "Réel : EMEFA remonte le client, les devis liés, les contrats liés, "
+                "l'historique et les signaux d'alerte du projet."
+                if has_crm
+                else "Aperçu : nécessite la mémoire relationnelle."
+            ),
+        ),
+        Scenario(
+            id="meeting_followup",
+            title="Compte rendu de réunion",
+            prompt=(
+                "Voici mes notes de réunion : rédige le compte rendu, liste les "
+                "décisions et crée les tâches."
+            ),
+            status="live" if has_meetings else "preview",
+            note=(
+                "Réel : compte rendu Word, décisions, actions avec responsable et "
+                "échéance, tâches créées et projet mis à jour."
+                if has_meetings
+                else "Aperçu : la capture de réunion n'est pas disponible."
+            ),
+        ),
+        Scenario(
+            id="commercial_proposal",
+            title="Proposition commerciale",
+            prompt="Prépare une proposition commerciale pour Horizon.",
+            status="live" if has_proposal else "preview",
+            note=(
+                "Réel : client retrouvé, historique et anciens devis récupérés, "
+                "document généré, devis enregistré, tâche de relance créée et e-mail "
+                "préparé. Rien n'est envoyé sans votre approbation."
+                if has_proposal
+                else "Aperçu : le scénario complet n'est pas disponible."
             ),
         ),
         Scenario(
             id="document",
-            title="Création de document",
-            prompt="Prépare la proposition.",
+            title="Bureautique professionnelle",
+            prompt="Prépare un tableau de budget pour ce projet.",
             status="live" if has_documents else "preview",
             note=(
-                "Réel : EMEFA génère un document Word (DOCX) persistant et renvoie "
-                "son lien de téléchargement."
+                "Réel : Word, Excel (formules vivantes) et PowerPoint, tous "
+                "modifiables et téléchargeables."
+                if has_office
+                else "Réel : EMEFA génère un document Word (DOCX) persistant."
                 if has_documents
                 else "Aperçu : la génération de document n'est pas encore disponible."
             ),
@@ -79,7 +139,7 @@ def scenarios(
             note=(
                 "Aperçu : la découverte automatique de prospects n'est pas disponible "
                 "(nécessite des fournisseurs vérifiés, pas de prospection non contrôlée). "
-                "EMEFA suit dans le pipeline les prospects que vous lui donnez."
+                "EMEFA suit en revanche les prospects et clients que vous lui confiez."
             ),
         ),
         Scenario(
@@ -91,8 +151,8 @@ def scenarios(
             ),
             status="assisted",
             note=(
-                "Partiel : le brief récurrent existe (planifié) et tout envoi reste "
-                "soumis à votre approbation. " + email_note
+                "Partiel : briefing du matin et rapport du soir sont planifiés, et "
+                "tout envoi reste soumis à votre approbation. " + email_note
             ),
         ),
     ]

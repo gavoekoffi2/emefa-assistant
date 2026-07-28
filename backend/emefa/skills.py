@@ -21,7 +21,8 @@ from emefa.domain.profiles import ASSISTANT_FIELDS, BUSINESS_FIELDS, ProfileRepo
 from emefa.domain.prospects import STAGES, ProspectRepository
 from emefa.domain.uploaded_files import UploadedFileNotFoundError, UploadedFileStore
 from emefa.domain.tasks import TaskRepository
-from emefa.domain import visuals
+from emefa.domain import office, visuals
+from emefa.domain.office import schemas as office_schemas
 from emefa.observability import audit
 
 
@@ -1503,5 +1504,409 @@ def add_visual_skills(shelf: ToolShelf, documents: DocumentStore, uploaded_files
                 "additionalProperties": False,
             },
             handler=show_location,
+        )
+    )
+
+
+def _brand_from(profiles: ProfileRepository) -> office.Brand:
+    """The company's own identity on its own documents.
+
+    Taken from the profile the user filled in rather than invented: a quote
+    headed "Votre Entreprise" is a quote nobody sends.
+    """
+    business = profiles.get_business()
+    return office.Brand(
+        company_name=business.company_name,
+        contact=business.website_url,
+        footer_note=business.company_name,
+    )
+
+
+def _blocks_from(payload: Any) -> tuple[office.Block, ...]:
+    """Turn the model's block list into validated blocks.
+
+    Unknown block kinds become paragraphs rather than being dropped: losing a
+    clause of a contract because its type was misspelled is the worse failure.
+    """
+    if not isinstance(payload, list):
+        return ()
+    blocks: list[office.Block] = []
+    for item in payload[: office_schemas.MAX_BLOCKS]:
+        if not isinstance(item, dict):
+            continue
+        try:
+            kind = office.BlockKind(str(item.get("kind", "paragraph")).strip().lower())
+        except ValueError:
+            kind = office.BlockKind.PARAGRAPH
+        rows = item.get("rows")
+        fields = item.get("fields")
+        blocks.append(
+            office.Block(
+                kind=kind,
+                text=str(item.get("text", ""))[:20_000],
+                level=int(item.get("level", 1) or 1),
+                items=tuple(str(entry) for entry in item.get("items", []) if str(entry).strip())
+                if isinstance(item.get("items"), list)
+                else (),
+                columns=tuple(str(name) for name in item.get("columns", []))
+                if isinstance(item.get("columns"), list)
+                else (),
+                rows=tuple(
+                    tuple(str(cell) for cell in row)
+                    for row in (rows if isinstance(rows, list) else [])
+                    if isinstance(row, (list, tuple))
+                ),
+                fields=tuple(
+                    (str(pair.get("label", "")), str(pair.get("value", "")))
+                    for pair in (fields if isinstance(fields, list) else [])
+                    if isinstance(pair, dict)
+                ),
+                numeric_last_column=bool(item.get("numeric_last_column")),
+            )
+        )
+    return tuple(blocks)
+
+
+def add_office_skills(
+    shelf: ToolShelf, provider, documents: DocumentStore, profiles: ProfileRepository
+) -> None:
+    """Word, Excel and PowerPoint, as an executive assistant would use them."""
+
+    def _store(built, title: str, kind: str) -> dict[str, Any]:
+        record = documents.save_artifact(built.data, built.extension, title, kind)
+        audit("skill_office_artifact", document_id=record["document_id"], kind=kind)
+        result: dict[str, Any] = {"document": record}
+        if built.computed:
+            result["computed"] = {key: round(value, 2) for key, value in built.computed.items()}
+        if built.warnings:
+            result["notes"] = list(built.warnings)
+        return result
+
+    def office_document(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        title = str(arguments.get("title", "")).strip()
+        if len(title) < 3:
+            return {"error": "title_required"}
+        try:
+            kind = office.DocumentKind(str(arguments.get("kind", "report")).strip().lower())
+        except ValueError:
+            kind = office.DocumentKind.REPORT
+        spec = office.DocumentSpec(
+            kind=kind,
+            title=title,
+            subtitle=str(arguments.get("subtitle", "")),
+            reference=str(arguments.get("reference", "")),
+            recipient=str(arguments.get("recipient", "")),
+            blocks=_blocks_from(arguments.get("blocks")),
+            brand=_brand_from(profiles),
+            table_of_contents=bool(arguments.get("table_of_contents")),
+        )
+        if not spec.blocks:
+            return {"error": "blocks_required"}
+        try:
+            built = provider.build_document(spec)
+        except office.OfficeError as error:
+            return {"error": str(error)}
+        return _store(built, title, kind.value)
+
+    def office_spreadsheet(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        title = str(arguments.get("title", "")).strip()
+        if len(title) < 3:
+            return {"error": "title_required"}
+        sheets: list[office.Sheet] = []
+        for item in arguments.get("sheets", [])[:8] if isinstance(arguments.get("sheets"), list) else []:
+            if not isinstance(item, dict):
+                continue
+            columns: list[office.Column] = []
+            for column in item.get("columns", []) if isinstance(item.get("columns"), list) else []:
+                if not isinstance(column, dict) or not str(column.get("header", "")).strip():
+                    continue
+                try:
+                    column_format = office.ColumnFormat(
+                        str(column.get("format", "text")).strip().lower()
+                    )
+                except ValueError:
+                    column_format = office.ColumnFormat.TEXT
+                columns.append(
+                    office.Column(
+                        header=str(column["header"])[:60],
+                        format=column_format,
+                        formula=str(column.get("formula", ""))[:200],
+                        total=bool(column.get("total")),
+                    )
+                )
+            if not columns:
+                continue
+            chart_payload = item.get("chart") if isinstance(item.get("chart"), dict) else {}
+            try:
+                chart_kind = office.ChartKind(str(chart_payload.get("kind", "none")).strip().lower())
+            except ValueError:
+                chart_kind = office.ChartKind.NONE
+            sheets.append(
+                office.Sheet(
+                    name=str(item.get("name", "Feuille"))[:31],
+                    caption=str(item.get("caption", ""))[:200],
+                    columns=tuple(columns),
+                    rows=tuple(
+                        tuple(row)
+                        for row in (item.get("rows") if isinstance(item.get("rows"), list) else [])
+                        if isinstance(row, (list, tuple))
+                    ),
+                    chart=office.Chart(
+                        kind=chart_kind,
+                        title=str(chart_payload.get("title", "")),
+                        label_column=str(chart_payload.get("label_column", "")),
+                        value_columns=tuple(
+                            str(name) for name in chart_payload.get("value_columns", [])
+                        )
+                        if isinstance(chart_payload.get("value_columns"), list)
+                        else (),
+                    ),
+                )
+            )
+        if not sheets:
+            return {"error": "sheets_required"}
+        try:
+            built = provider.build_workbook(
+                office.WorkbookSpec(title=title, sheets=tuple(sheets), brand=_brand_from(profiles))
+            )
+        except office.OfficeError as error:
+            return {"error": str(error)}
+        return _store(built, title, "workbook")
+
+    def office_deck(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        title = str(arguments.get("title", "")).strip()
+        if len(title) < 3:
+            return {"error": "title_required"}
+        slides: list[office.Slide] = []
+        raw = arguments.get("slides")
+        for item in (raw if isinstance(raw, list) else [])[:60]:
+            if not isinstance(item, dict):
+                continue
+            try:
+                layout = office.SlideLayout(str(item.get("layout", "bullets")).strip().lower())
+            except ValueError:
+                layout = office.SlideLayout.BULLETS
+            points = item.get("points")
+            slides.append(
+                office.Slide(
+                    layout=layout,
+                    title=str(item.get("title", ""))[:200],
+                    subtitle=str(item.get("subtitle", ""))[:400],
+                    bullets=tuple(
+                        str(bullet) for bullet in item.get("bullets", [])
+                        if str(bullet).strip()
+                    )
+                    if isinstance(item.get("bullets"), list)
+                    else (),
+                    columns=tuple(str(name) for name in item.get("columns", []))
+                    if isinstance(item.get("columns"), list)
+                    else (),
+                    rows=tuple(
+                        tuple(str(cell) for cell in row)
+                        for row in (item.get("rows") if isinstance(item.get("rows"), list) else [])
+                        if isinstance(row, (list, tuple))
+                    ),
+                    points=tuple(
+                        (str(point.get("label", "")), float(point.get("value", 0)))
+                        for point in (points if isinstance(points, list) else [])
+                        if isinstance(point, dict)
+                    ),
+                    chart=office.Chart(kind=office.ChartKind.BAR, title=str(item.get("title", ""))),
+                    notes=str(item.get("notes", ""))[:2_000],
+                )
+            )
+        if not slides:
+            return {"error": "slides_required"}
+        try:
+            built = provider.build_deck(
+                office.DeckSpec(
+                    title=title,
+                    subtitle=str(arguments.get("subtitle", "")),
+                    slides=tuple(slides),
+                    brand=_brand_from(profiles),
+                )
+            )
+        except office.OfficeError as error:
+            return {"error": str(error)}
+        return _store(built, title, "deck")
+
+    _BLOCK_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "kind": {
+                "type": "string",
+                "enum": [kind.value for kind in office.BlockKind],
+            },
+            "text": {"type": "string"},
+            "level": {"type": "integer"},
+            "items": {"type": "array", "items": {"type": "string"}},
+            "columns": {"type": "array", "items": {"type": "string"}},
+            "rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
+            "fields": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"label": {"type": "string"}, "value": {"type": "string"}},
+                },
+            },
+            "numeric_last_column": {"type": "boolean"},
+        },
+        "required": ["kind"],
+    }
+
+    shelf.add(
+        AgentTool(
+            name="office_document",
+            description=(
+                "Produit un document Word professionnel et structuré : lettre, "
+                "contrat, devis, facture, rapport, compte rendu, procès-verbal, "
+                "proposition, cahier des charges, procédure, politique interne, CV, "
+                "manuel, formulaire. En-tête et pied de page, numérotation, styles "
+                "de titre, tableaux, blocs de signature, sommaire optionnel. "
+                "L'identité de l'entreprise vient du profil : ne l'invente pas. "
+                "Ne mets aucun montant que l'utilisateur ne t'a pas donné — laisse "
+                "un blanc et dis-le."
+            ),
+            risk=ActionRisk.LOCAL_WRITE,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "enum": [kind.value for kind in office.DocumentKind],
+                    },
+                    "title": {"type": "string"},
+                    "subtitle": {"type": "string"},
+                    "reference": {"type": "string", "description": "Numéro de devis, de facture…"},
+                    "recipient": {"type": "string"},
+                    "table_of_contents": {"type": "boolean"},
+                    "blocks": {"type": "array", "items": _BLOCK_SCHEMA},
+                },
+                "required": ["kind", "title", "blocks"],
+                "additionalProperties": False,
+            },
+            handler=office_document,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="office_spreadsheet",
+            description=(
+                "Produit un classeur Excel : tableau de bord, budget, devis chiffré, "
+                "suivi des ventes, des dépenses, des stocks, planning, statistiques. "
+                "Utilise `formula` pour les colonnes calculées (par exemple "
+                "\"=B{row}*C{row}\") et `total: true` pour une somme en bas de "
+                "colonne — le fichier reste un vrai classeur qui se recalcule. "
+                "Le total réel t'est renvoyé dans `computed` : cite celui-là, jamais "
+                "un chiffre que tu aurais estimé."
+            ),
+            risk=ActionRisk.LOCAL_WRITE,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "sheets": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "caption": {"type": "string"},
+                                "columns": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "header": {"type": "string"},
+                                            "format": {
+                                                "type": "string",
+                                                "enum": [f.value for f in office.ColumnFormat],
+                                            },
+                                            "formula": {"type": "string"},
+                                            "total": {"type": "boolean"},
+                                        },
+                                        "required": ["header"],
+                                    },
+                                },
+                                "rows": {"type": "array", "items": {"type": "array"}},
+                                "chart": {
+                                    "type": "object",
+                                    "properties": {
+                                        "kind": {
+                                            "type": "string",
+                                            "enum": [k.value for k in office.ChartKind],
+                                        },
+                                        "title": {"type": "string"},
+                                        "label_column": {"type": "string"},
+                                        "value_columns": {
+                                            "type": "array",
+                                            "items": {"type": "string"},
+                                        },
+                                    },
+                                },
+                            },
+                            "required": ["name", "columns"],
+                        },
+                    },
+                },
+                "required": ["title", "sheets"],
+                "additionalProperties": False,
+            },
+            handler=office_spreadsheet,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="office_deck",
+            description=(
+                "Produit une présentation PowerPoint : comité de direction, "
+                "présentation commerciale, support de formation. Diapositives de "
+                "titre, de section, à puces, tableaux, graphiques, citation, "
+                "conclusion. Six puces maximum par diapositive : au-delà, c'est un "
+                "document, pas une présentation."
+            ),
+            risk=ActionRisk.LOCAL_WRITE,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "subtitle": {"type": "string"},
+                    "slides": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "layout": {
+                                    "type": "string",
+                                    "enum": [layout.value for layout in office.SlideLayout],
+                                },
+                                "title": {"type": "string"},
+                                "subtitle": {"type": "string"},
+                                "bullets": {"type": "array", "items": {"type": "string"}},
+                                "columns": {"type": "array", "items": {"type": "string"}},
+                                "rows": {
+                                    "type": "array",
+                                    "items": {"type": "array", "items": {"type": "string"}},
+                                },
+                                "points": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "label": {"type": "string"},
+                                            "value": {"type": "number"},
+                                        },
+                                    },
+                                },
+                                "notes": {"type": "string"},
+                            },
+                            "required": ["layout"],
+                        },
+                    },
+                },
+                "required": ["title", "slides"],
+                "additionalProperties": False,
+            },
+            handler=office_deck,
         )
     )

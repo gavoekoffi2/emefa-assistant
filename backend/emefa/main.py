@@ -72,6 +72,7 @@ from emefa.infrastructure.extraction import LLMFactExtractor
 from emefa.infrastructure.planner import LLMPlanner
 from emefa.infrastructure.realtime import RealtimeGateway
 from emefa.infrastructure.voice_llm import VoiceLLMProxy
+from emefa.infrastructure.office_native import NativeOfficeProvider
 from emefa.infrastructure.website_profile import WebsiteProfileImporter
 from emefa.infrastructure.webauthn_verifier import LibraryVerifier
 from emefa.observability import (
@@ -87,6 +88,7 @@ from emefa.scheduler import (
 )
 from emefa.skills import (
     add_entity_skills,
+    add_office_skills,
     add_mission_skills,
     add_visual_skills,
     build_tool_shelf,
@@ -116,6 +118,9 @@ def create_app(
     conversations = ConversationStore(active_settings.database_path)
     documents = DocumentStore(active_settings.database_path)
     entities = EntityRepository(active_settings.database_path)
+    # The renderer sits behind the office capability interface, so
+    # swapping it for OfficeCLI or a LibreOffice service is one line.
+    office_provider = NativeOfficeProvider()
     entity_graph = EntityGraph(entities, memories)
     timeline = TimelineBuilder(entity_graph)
     bus = EventBus()
@@ -154,6 +159,7 @@ def create_app(
         )
         add_entity_skills(shelf, entity_graph, timeline)
         add_visual_skills(shelf, documents, uploaded_files)
+        add_office_skills(shelf, office_provider, documents, profiles)
         return shelf
 
     tool_shelf = make_shelf()
@@ -432,6 +438,7 @@ def create_app(
     application.state.documents = documents
     application.state.uploaded_files = uploaded_files
     application.state.entities = entities
+    application.state.office = office_provider
     application.state.entity_graph = entity_graph
     application.state.timeline = timeline
     application.state.skills = skills

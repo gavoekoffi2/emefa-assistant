@@ -35,6 +35,8 @@ def download_document(
         raise HTTPException(status_code=404, detail="document_not_found") from exc
     return FileResponse(
         path=str(path),
-        media_type=request.app.state.documents.mime_type,
+        # The artefact's own type: a workbook served as a Word document
+        # downloads with the wrong icon and opens in the wrong application.
+        media_type=metadata["content_type"],
         filename=metadata["filename"],
     )

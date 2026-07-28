@@ -428,6 +428,18 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         """,
         "CREATE UNIQUE INDEX idx_mission_steps_order ON mission_steps(mission_id, position)",
     ),
+    # 16 — per-step success criteria, and how the plan was produced.
+    #
+    # A step without a stated success criterion can only be verified
+    # structurally: "the call returned something". Writing down what success
+    # means, at planning time, is what makes verification mean anything later.
+    (
+        "ALTER TABLE mission_steps ADD COLUMN success_criteria TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE missions ADD COLUMN strategy TEXT NOT NULL DEFAULT 'manual'",
+        # Questions the planner could not answer from context. A mission with
+        # open questions must not be executed as if it were complete.
+        "ALTER TABLE missions ADD COLUMN missing_information TEXT NOT NULL DEFAULT '[]'",
+    ),
 )
 
 

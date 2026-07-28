@@ -50,9 +50,11 @@ from emefa.domain.memories import MemoryRepository
 from emefa.domain.memory.consolidation import ConsolidationPass
 from emefa.domain.memory.ingest import MemoryIngestor
 from emefa.domain.missions import (
+    CompositePlanner,
     MissionOrchestrator,
     MissionRepository,
     StepVerifier,
+    TemplatePlanner,
     default_checks,
 )
 from emefa.domain.prospects import ProspectRepository
@@ -63,6 +65,7 @@ from emefa.domain.tasks import TaskRepository
 from emefa.infrastructure.deepseek import DeepSeekBrain
 from emefa.infrastructure.email import HimalayaEmailProvider
 from emefa.infrastructure.extraction import LLMFactExtractor
+from emefa.infrastructure.planner import LLMPlanner
 from emefa.infrastructure.realtime import RealtimeGateway
 from emefa.infrastructure.voice_llm import VoiceLLMProxy
 from emefa.infrastructure.website_profile import WebsiteProfileImporter
@@ -77,7 +80,7 @@ from emefa.scheduler import (
     consolidation_scheduler_loop,
     proactive_scheduler_loop,
 )
-from emefa.skills import build_tool_shelf
+from emefa.skills import add_mission_skills, build_tool_shelf
 
 request_logger = logging.getLogger("emefa.request")
 
@@ -286,6 +289,28 @@ def create_app(
         else None
     )
     ingestor = MemoryIngestor(memories, fact_extractor, guard=budget)
+    # Templates first: recurring intents produce the same correct plan every
+    # time, cost nothing and cannot name a tool that does not exist. The model
+    # is for everything else, and only when a provider key is configured.
+    planning_strategies = [TemplatePlanner()]
+    llm_planner = (
+        LLMPlanner(
+            api_key=llm_api_key,
+            model=llm_model,
+            base_url=llm_base_url,
+            on_usage=lambda inp, out: usage.record("mission", inp, out, model=llm_model),
+        )
+        if llm_api_key
+        else None
+    )
+    if llm_planner is not None:
+        planning_strategies.append(llm_planner)
+    planner = CompositePlanner(planning_strategies, tool_shelf)
+    # Planning from the conversation itself is what makes this feel like an
+    # assistant rather than a form: the user says it, she plans it. The tools
+    # are added after the planner exists and are excluded from what a plan may
+    # contain (RESERVED_TOOLS), so a plan can never plan.
+    add_mission_skills(tool_shelf, planner, missions, mission_orchestrator)
     consolidation = ConsolidationPass(memories, ingestor)
 
     realtime_key = (
@@ -341,6 +366,8 @@ def create_app(
             await close()
         if fact_extractor is not None:
             await fact_extractor.close()
+        if llm_planner is not None:
+            await llm_planner.close()
         await voice_llm_proxy.close()
         await realtime_gateway.close()
 
@@ -376,6 +403,7 @@ def create_app(
     application.state.curator = curator
     application.state.missions = missions
     application.state.mission_orchestrator = mission_orchestrator
+    application.state.planner = planner
     application.state.website_importer = WebsiteProfileImporter()
     application.state.compose_context = compose_context
     application.state.compose_text_context = compose_text_context

@@ -86,6 +86,9 @@ class Step:
     description: str
     tool_name: str
     arguments: dict[str, Any] = field(default_factory=dict)
+    #: What "this worked" means, written when the step was planned. A step
+    #: without one can only ever be verified as "the call returned something".
+    success_criteria: str = ""
     status: StepStatus = StepStatus.PENDING
     attempts: int = 0
     result: dict[str, Any] | None = None
@@ -101,6 +104,7 @@ class Step:
             "position": self.position,
             "description": self.description,
             "tool": self.tool_name,
+            "success_criteria": self.success_criteria,
             "status": self.status.value,
             "attempts": self.attempts,
             "verification": self.verification,
@@ -115,6 +119,11 @@ class Mission:
     status: MissionStatus = MissionStatus.PLANNED
     conversation_id: str = ""
     error: str = ""
+    #: Which planning strategy produced this mission.
+    strategy: str = "manual"
+    #: Questions the planner could not answer from context. A mission with
+    #: open questions is not executable: EMEFA asks rather than guessing.
+    missing_information: tuple[str, ...] = ()
     #: Ceiling on model spend for this mission specifically, on top of the
     #: scope budget.
     max_tokens: int | None = None
@@ -130,6 +139,9 @@ class Mission:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "error": self.error,
+            "strategy": self.strategy,
+            "missing_information": list(self.missing_information),
+            "executable": not self.missing_information,
             "steps": [step.summary() for step in self.steps],
             "progress": self.progress(),
         }

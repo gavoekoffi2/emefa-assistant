@@ -24,6 +24,17 @@ class MissionRequest(BaseModel):
     steps: list[PlannedStep] = Field(min_length=1, max_length=MAX_STEPS)
 
 
+class PlanRequestBody(BaseModel):
+    goal: str = Field(min_length=3, max_length=2_000)
+    #: Anything the caller already knows — a client name lifted from the
+    #: conversation, a date. Fills template placeholders so EMEFA does not have
+    #: to ask for what was already said.
+    context: dict[str, str] = Field(default_factory=dict)
+    #: Store the plan as a mission. False returns the plan for review without
+    #: committing to it.
+    save: bool = True
+
+
 @router.get("")
 def list_missions(
     request: Request,
@@ -57,6 +68,43 @@ def create_mission(
     )
     audit("mission_created", device_id=device.device_id, mission_id=mission.mission_id)
     return mission.summary()
+
+
+@router.post("/plan", status_code=201)
+async def plan_mission(
+    payload: PlanRequestBody,
+    request: Request,
+    device: Annotated[Device, Depends(current_device)],
+) -> dict[str, Any]:
+    """Turn a sentence into a plan.
+
+    The plan is stored but never started: planning and executing are separate
+    decisions, and only the second spends anything or touches the user's data.
+
+    A plan may come back with `missing_information` — "de quel client
+    s'agit-il ?". That is the honest outcome for an ambiguous request, and the
+    orchestrator refuses to run such a mission, so EMEFA asks instead of
+    guessing.
+    """
+    plan = await request.app.state.planner.plan(payload.goal, payload.context)
+    audit(
+        "mission_planned",
+        device_id=device.device_id,
+        strategy=plan.strategy,
+        steps=len(plan.steps),
+        executable=plan.executable,
+    )
+    if not payload.save or not plan.steps:
+        return {"plan": plan.summary(), "mission": None}
+
+    mission = request.app.state.missions.create(
+        plan.goal,
+        list(plan.steps),
+        conversation_id=device.device_id,
+        strategy=plan.strategy,
+        missing_information=plan.missing_information,
+    )
+    return {"plan": plan.summary(), "mission": mission.summary()}
 
 
 @router.get("/{mission_id}")

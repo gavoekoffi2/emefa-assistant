@@ -836,3 +836,118 @@ def _add_task_skills(
             handler=complete_task,
         )
     )
+
+
+def add_mission_skills(shelf: ToolShelf, planner, missions, orchestrator) -> None:
+    """Let EMEFA plan and run a mission from the conversation.
+
+    Registered after the planner is built, and named in
+    `missions.planning.RESERVED_TOOLS`, so they never appear in the catalogue a
+    plan is drawn from — a plan whose first step is "make a plan" is a loop.
+    """
+
+    async def plan_mission(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        goal = str(arguments.get("goal", "")).strip()
+        if len(goal) < 5:
+            return {"error": "goal_too_short"}
+        context = arguments.get("context")
+        plan = await planner.plan(goal, context if isinstance(context, dict) else None)
+        if not plan.steps:
+            return {
+                "planned": False,
+                "missing_information": list(plan.missing_information),
+                "notes": list(plan.notes),
+            }
+        mission = missions.create(
+            plan.goal,
+            list(plan.steps),
+            strategy=plan.strategy,
+            missing_information=plan.missing_information,
+        )
+        audit("skill_mission_planned", mission_id=mission.mission_id, strategy=plan.strategy)
+        return {
+            "planned": True,
+            "mission_id": mission.mission_id,
+            "executable": plan.executable,
+            "missing_information": list(plan.missing_information),
+            "notes": list(plan.notes),
+            "steps": [step.summary() for step in plan.steps],
+        }
+
+    async def advance_mission(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        mission_id = str(arguments.get("mission_id", "")).strip()
+        mission = await orchestrator.run_to_completion(mission_id)
+        if mission is None:
+            return {"error": "mission_not_found"}
+        audit("skill_mission_advanced", mission_id=mission_id, status=mission.status.value)
+        return mission.summary()
+
+    def mission_status(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        mission = missions.get(str(arguments.get("mission_id", "")).strip())
+        return mission.summary() if mission is not None else {"error": "mission_not_found"}
+
+    shelf.add(
+        AgentTool(
+            name="plan_mission",
+            description=(
+                "Transforme une demande en plan d'exécution vérifiable (« prépare "
+                "une réunion avec X », « organise mon voyage à Y », « prépare une "
+                "proposition et relance vendredi »). Le plan est enregistré mais "
+                "PAS exécuté. Si le plan revient avec missing_information, pose la "
+                "question à l'utilisateur au lieu de deviner."
+            ),
+            risk=ActionRisk.LOCAL_WRITE,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "goal": {
+                        "type": "string",
+                        "description": "La demande, telle que l'utilisateur l'a formulée",
+                    },
+                    "context": {
+                        "type": "object",
+                        "description": (
+                            "Éléments déjà connus de la conversation, par exemple "
+                            "{\"sujet\": \"Clinique du Lac\", \"date\": \"2026-08-04\"}"
+                        ),
+                        "additionalProperties": {"type": "string"},
+                    },
+                },
+                "required": ["goal"],
+                "additionalProperties": False,
+            },
+            handler=plan_mission,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="advance_mission",
+            description=(
+                "Exécute un plan déjà enregistré, étape par étape, avec vérification. "
+                "Chaque étape reste soumise à la politique de risque : une action "
+                "sensible s'arrête et demande l'accord de l'utilisateur."
+            ),
+            risk=ActionRisk.LOCAL_WRITE,
+            parameters={
+                "type": "object",
+                "properties": {"mission_id": {"type": "string"}},
+                "required": ["mission_id"],
+                "additionalProperties": False,
+            },
+            handler=advance_mission,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="mission_status",
+            description="Donne l'état d'une mission : étapes, vérifications, ce qui reste.",
+            risk=ActionRisk.PERSONAL_READ,
+            parameters={
+                "type": "object",
+                "properties": {"mission_id": {"type": "string"}},
+                "required": ["mission_id"],
+                "additionalProperties": False,
+            },
+            handler=mission_status,
+        )
+    )

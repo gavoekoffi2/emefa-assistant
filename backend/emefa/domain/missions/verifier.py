@@ -69,10 +69,14 @@ class StepVerifier:
     def verify(
         self,
         tool_name: str,
-        description: str,
+        success_criteria: str,
         arguments: Mapping[str, Any],
         result: Mapping[str, Any] | None,
     ) -> Verdict:
+        """`success_criteria` is what the planner said would prove this step
+        worked. Deterministic checks ignore it — they read the world back,
+        which is stronger — but it is what a semantic verifier judges against,
+        and what the user sees when asked to trust the result."""
         structure = structural(result)
         if not structure.ok:
             return structure
@@ -89,7 +93,7 @@ class StepVerifier:
 
         if self.semantic is not None:
             try:
-                ok, reason = self.semantic(description, result or {})
+                ok, reason = self.semantic(success_criteria, result or {})
             except Exception as error:
                 return Verdict(False, f"vérification impossible : {type(error).__name__}", "semantic")
             return Verdict(ok, reason, "semantic")
@@ -101,13 +105,33 @@ class StepVerifier:
         return structure
 
 
+def _identifier(result: Mapping[str, Any], key: str, *wrappers: str) -> str:
+    """Read an id from a tool result whatever shape it arrived in.
+
+    Tools differ: `document_create` returns the document flat,
+    `create_task` nests it under "task". A verifier that assumed one shape
+    silently failed on the other — which is precisely the class of bug this
+    module exists to catch, so it must not contain one itself.
+    """
+    direct = result.get(key)
+    if isinstance(direct, str) and direct:
+        return direct
+    for wrapper in wrappers:
+        nested = result.get(wrapper)
+        if isinstance(nested, Mapping):
+            value = nested.get(key)
+            if isinstance(value, str) and value:
+                return value
+    return ""
+
+
 def default_checks(documents=None, tasks=None) -> dict[str, DeterministicCheck]:
     """Deterministic checks for the tools whose effects EMEFA can read back."""
     checks: dict[str, DeterministicCheck] = {}
 
     if documents is not None:
         def document_exists(_arguments, result):
-            document_id = (result.get("document") or {}).get("document_id")
+            document_id = _identifier(result, "document_id", "document")
             if not document_id:
                 return False, "aucun identifiant de document renvoyé"
             found = documents.get(document_id)
@@ -121,7 +145,7 @@ def default_checks(documents=None, tasks=None) -> dict[str, DeterministicCheck]:
 
     if tasks is not None:
         def task_created(_arguments, result):
-            task_id = (result.get("task") or {}).get("task_id")
+            task_id = _identifier(result, "task_id", "task")
             if not task_id:
                 return False, "aucun identifiant de tâche renvoyé"
             return (

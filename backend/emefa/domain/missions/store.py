@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from emefa.domain import storage
+from emefa.domain.missions.planning import PlanStep
 from emefa.domain.missions.schemas import (
     MAX_STEPS,
     Mission,
@@ -21,11 +22,12 @@ from emefa.domain.missions.schemas import (
 
 _MISSION_COLUMNS = (
     "mission_id, goal, status, conversation_id, error, max_tokens, "
-    "created_at, updated_at"
+    "strategy, missing_information, created_at, updated_at"
 )
 _STEP_COLUMNS = (
-    "step_id, mission_id, position, description, tool_name, arguments, status, "
-    "attempts, result, verification, error, created_at, updated_at"
+    "step_id, mission_id, position, description, tool_name, arguments, "
+    "success_criteria, status, attempts, result, verification, error, "
+    "created_at, updated_at"
 )
 
 
@@ -48,11 +50,16 @@ class MissionRepository:
     def create(
         self,
         goal: str,
-        steps: Sequence[tuple[str, str, dict[str, Any]]],
+        steps: Sequence[PlanStep | tuple[str, str, dict[str, Any]]],
         conversation_id: str = "",
         max_tokens: int | None = None,
+        strategy: str = "manual",
+        missing_information: Sequence[str] = (),
     ) -> Mission:
-        """Persist a plan. `steps` is (description, tool_name, arguments).
+        """Persist a plan.
+
+        `steps` accepts `PlanStep` objects, or `(description, tool, arguments)`
+        tuples for callers that have no planner in hand.
 
         A plan longer than `MAX_STEPS` is truncated rather than refused: the
         useful part of an over-long plan is its beginning, and losing the whole
@@ -60,9 +67,11 @@ class MissionRepository:
         """
         mission_id = new_mission_id()
         now = _now()
+        normalised = [_as_plan_step(item) for item in steps[:MAX_STEPS]]
         with self._connect() as connection:
             connection.execute(
-                f"INSERT INTO missions ({_MISSION_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                f"INSERT INTO missions ({_MISSION_COLUMNS}) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     mission_id,
                     goal.strip()[:2_000],
@@ -70,23 +79,24 @@ class MissionRepository:
                     conversation_id,
                     "",
                     max_tokens,
+                    strategy,
+                    json.dumps(list(missing_information), ensure_ascii=False),
                     now,
                     now,
                 ),
             )
-            for position, (description, tool_name, arguments) in enumerate(
-                steps[:MAX_STEPS]
-            ):
+            for position, step in enumerate(normalised):
                 connection.execute(
                     f"INSERT INTO mission_steps ({_STEP_COLUMNS}) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         f"stp_{uuid.uuid4().hex[:12]}",
                         mission_id,
                         position,
-                        description.strip()[:500],
-                        tool_name,
-                        json.dumps(arguments, ensure_ascii=False),
+                        step.description.strip()[:500],
+                        step.tool,
+                        json.dumps(step.arguments, ensure_ascii=False),
+                        step.success_criteria[:300],
                         StepStatus.PENDING.value,
                         0,
                         None,
@@ -175,6 +185,13 @@ class MissionRepository:
             )
 
 
+def _as_plan_step(item: PlanStep | tuple[str, str, dict[str, Any]]) -> PlanStep:
+    if isinstance(item, PlanStep):
+        return item
+    description, tool, arguments = item
+    return PlanStep(description=description, tool=tool, arguments=arguments)
+
+
 def _mission_from(row: sqlite3.Row, step_rows: Sequence[sqlite3.Row]) -> Mission:
     return Mission(
         mission_id=row["mission_id"],
@@ -182,6 +199,8 @@ def _mission_from(row: sqlite3.Row, step_rows: Sequence[sqlite3.Row]) -> Mission
         status=MissionStatus(row["status"]),
         conversation_id=row["conversation_id"],
         error=row["error"],
+        strategy=row["strategy"],
+        missing_information=tuple(json.loads(row["missing_information"] or "[]")),
         max_tokens=row["max_tokens"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -197,6 +216,7 @@ def _step_from(row: sqlite3.Row) -> Step:
         description=row["description"],
         tool_name=row["tool_name"],
         arguments=json.loads(row["arguments"] or "{}"),
+        success_criteria=row["success_criteria"],
         status=StepStatus(row["status"]),
         attempts=int(row["attempts"]),
         result=json.loads(row["result"]) if row["result"] else None,

@@ -57,6 +57,13 @@ class MissionOrchestrator:
             return None
         if mission.status in {MissionStatus.CANCELLED, MissionStatus.FAILED}:
             return StepOutcome(mission, None, "mission close")
+        if mission.missing_information:
+            # The planner could not answer something the plan depends on.
+            # Executing anyway would mean acting on a guess, which is the one
+            # thing a plan carrying open questions must never do.
+            return StepOutcome(
+                mission, None, "informations manquantes : " + " ".join(mission.missing_information)
+            )
 
         step = mission.next_step()
         if step is None:
@@ -159,7 +166,10 @@ class MissionOrchestrator:
             return self._fail_step(mission_id, step_id, f"échec : {type(error).__name__}")
 
         verdict = self.verifier.verify(
-            step.tool_name, step.description, step.arguments, result
+            step.tool_name,
+            step.success_criteria or step.description,
+            step.arguments,
+            result,
         )
         if verdict.ok:
             self.missions.update_step(

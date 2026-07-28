@@ -53,7 +53,10 @@ _FACT_COLUMNS = (
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    # Microsecond precision, not seconds: the consolidation watermark is a
+    # timestamp comparison, and at second precision a pass would re-read the
+    # events written in the same second it completed.
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _identifier(prefix: str) -> str:

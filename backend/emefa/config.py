@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     voice_llm_token: SecretStr | None = None
     brief_hour: int | None = None
     brief_email_to: str | None = None
+    #: Extract durable facts from each exchange as it happens. Costs one small
+    #: LLM call per substantial turn; set false to rely on consolidation alone.
+    memory_live_extraction: bool = True
+    #: Local hour for the nightly consolidation pass. None disables it.
+    memory_consolidation_hour: int | None = 3
     elevenlabs_api_key: SecretStr | None = None
     elevenlabs_agent_id: str | None = None
     email_account: str | None = None

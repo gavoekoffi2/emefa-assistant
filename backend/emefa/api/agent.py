@@ -1,5 +1,6 @@
 """Authenticated agent execution and approval API."""
 
+import asyncio
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -79,6 +80,28 @@ def _register_pending(request: Request, device: Device, response: RunResponse) -
     return response
 
 
+def schedule_ingestion(request: Request, user_text: str, reply: AgentReply) -> None:
+    """Record the exchange and extract durable facts, off the response path.
+
+    Deliberately fire-and-forget: memory is a background benefit, and making
+    the user wait for an extraction call — or fail their turn because one
+    errored — would trade something they asked for against something they
+    did not. The task set holds a strong reference, because a task with no
+    referent can be collected before it runs.
+    """
+    ingestor = getattr(request.app.state, "memory_ingestor", None)
+    if ingestor is None or not getattr(request.app.state, "live_extraction", False):
+        return
+    if reply.status != "completed" or not reply.answer:
+        return
+
+    transcript = f"[utilisateur] {user_text}\n[EMEFA] {reply.answer}"
+    tasks: set[asyncio.Task[Any]] = request.app.state.background_tasks
+    task = asyncio.create_task(ingestor.ingest(transcript, source="chat"))
+    tasks.add(task)
+    task.add_done_callback(tasks.discard)
+
+
 @router.post("/runs", response_model=RunResponse)
 async def run_agent(
     payload: RunRequest,
@@ -89,6 +112,7 @@ async def run_agent(
         payload.message,
         conversation_id=device.device_id,
     )
+    schedule_ingestion(request, payload.message, reply)
     audit(
         "agent_run",
         device_id=device.device_id,

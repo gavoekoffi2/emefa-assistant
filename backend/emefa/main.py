@@ -32,12 +32,15 @@ from emefa.domain.documents import DocumentStore
 from emefa.domain.profiles import ProfileRepository
 from emefa.domain.email import EmailProvider
 from emefa.domain.memories import MemoryRepository
+from emefa.domain.memory.consolidation import ConsolidationPass
+from emefa.domain.memory.ingest import MemoryIngestor
 from emefa.domain.prospects import ProspectRepository
 from emefa.domain.uploaded_files import UploadedFileStore
 from emefa.domain.ratelimit import FailureLimiter
 from emefa.domain.tasks import TaskRepository
 from emefa.infrastructure.deepseek import DeepSeekBrain
 from emefa.infrastructure.email import HimalayaEmailProvider
+from emefa.infrastructure.extraction import LLMFactExtractor
 from emefa.infrastructure.realtime import RealtimeGateway
 from emefa.infrastructure.voice_llm import VoiceLLMProxy
 from emefa.infrastructure.website_profile import WebsiteProfileImporter
@@ -47,7 +50,7 @@ from emefa.observability import (
     new_request_id,
     request_id_var,
 )
-from emefa.scheduler import brief_scheduler_loop
+from emefa.scheduler import brief_scheduler_loop, consolidation_scheduler_loop
 from emefa.skills import build_tool_shelf
 
 request_logger = logging.getLogger("emefa.request")
@@ -179,6 +182,17 @@ def create_app(
         context_provider=compose_context,
     )
 
+    # Memory ingestion. Without a provider key there is no extractor, and the
+    # ingestor degrades to logging events only — the conversation is still
+    # recorded, it simply yields no facts until a key is configured.
+    fact_extractor = (
+        LLMFactExtractor(api_key=llm_api_key, model=llm_model, base_url=llm_base_url)
+        if llm_api_key
+        else None
+    )
+    ingestor = MemoryIngestor(memories, fact_extractor)
+    consolidation = ConsolidationPass(memories, ingestor)
+
     realtime_key = (
         active_settings.elevenlabs_api_key.get_secret_value().strip()
         if active_settings.elevenlabs_api_key is not None
@@ -191,27 +205,39 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_application: FastAPI):
-        scheduler_task = None
+        background: list[asyncio.Task[None]] = []
         if active_settings.brief_hour is not None:
-            scheduler_task = asyncio.create_task(
-                brief_scheduler_loop(
-                    active_settings.brief_hour,
-                    profiles,
-                    tasks,
-                    prospects,
-                    briefings,
-                    active_email_provider,
-                    active_settings.brief_email_to,
+            background.append(
+                asyncio.create_task(
+                    brief_scheduler_loop(
+                        active_settings.brief_hour,
+                        profiles,
+                        tasks,
+                        prospects,
+                        briefings,
+                        active_email_provider,
+                        active_settings.brief_email_to,
+                    )
+                )
+            )
+        if active_settings.memory_consolidation_hour is not None and fact_extractor:
+            background.append(
+                asyncio.create_task(
+                    consolidation_scheduler_loop(
+                        active_settings.memory_consolidation_hour, consolidation
+                    )
                 )
             )
         yield
-        if scheduler_task is not None:
-            scheduler_task.cancel()
+        for task in background:
+            task.cancel()
             with suppress(asyncio.CancelledError):
-                await scheduler_task
+                await task
         close = getattr(selected_brain, "close", None)
         if close is not None:
             await close()
+        if fact_extractor is not None:
+            await fact_extractor.close()
         await voice_llm_proxy.close()
         await realtime_gateway.close()
 
@@ -226,6 +252,12 @@ def create_app(
     application.state.profiles = profiles
     application.state.tasks = tasks
     application.state.memories = memories
+    application.state.memory_ingestor = ingestor
+    application.state.memory_consolidation = consolidation
+    application.state.live_extraction = active_settings.memory_live_extraction
+    # Fire-and-forget ingestion tasks are held here: without a strong
+    # reference the event loop may garbage-collect a task mid-flight.
+    application.state.background_tasks = set()
     application.state.prospects = prospects
     application.state.briefings = briefings
     application.state.conversations = conversations

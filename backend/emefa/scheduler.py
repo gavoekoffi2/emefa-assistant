@@ -1,10 +1,11 @@
 """Bounded recurring-work scheduler (Phase 8 seed).
 
-One explicit job: the proactive morning brief. The loop sleeps until the
-configured local hour, runs one idempotent job iteration with its own
-error handling, and is cancelled cleanly at shutdown — no unbounded
-autonomous behavior. E-mailing the brief only happens when the owner has
-granted a standing, scoped approval via EMEFA_BRIEF_EMAIL_TO.
+Two explicit jobs: the proactive morning brief, and the nightly memory
+consolidation pass. Each loop sleeps until its configured local hour, runs one
+idempotent iteration with its own error handling, and is cancelled cleanly at
+shutdown — no unbounded autonomous behavior. E-mailing the brief only happens
+when the owner has granted a standing, scoped approval via
+EMEFA_BRIEF_EMAIL_TO.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from typing import Any
 
 from emefa.domain.briefings import BriefingRepository
 from emefa.domain.email import EmailProvider
+from emefa.domain.memory.consolidation import ConsolidationPass
 from emefa.domain.profiles import ProfileRepository
 from emefa.domain.prospects import ProspectRepository
 from emefa.domain.tasks import TaskRepository
@@ -88,4 +90,28 @@ async def brief_scheduler_loop(
         except Exception:  # one failed run must not kill the schedule
             audit("brief_job_failed")
         # Guard against clock edge cases: never loop more than once a minute.
+        await asyncio.sleep(60)
+
+
+async def consolidation_scheduler_loop(
+    hour: int,
+    consolidation: ConsolidationPass,
+) -> None:
+    """Re-read the day's exchanges once a night for facts live extraction
+    missed. Bounded by the pass itself; a failed run never kills the loop."""
+    while True:
+        await asyncio.sleep(seconds_until_hour(hour, datetime.now()))
+        try:
+            report = await consolidation.run()
+        except Exception:
+            audit("memory_consolidation_failed")
+        else:
+            audit(
+                "memory_consolidation_completed",
+                events_read=report.events_read,
+                created=report.created,
+                reinforced=report.reinforced,
+                superseded=report.superseded,
+                error=report.error,
+            )
         await asyncio.sleep(60)

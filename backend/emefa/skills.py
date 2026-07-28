@@ -589,6 +589,30 @@ def _add_memory_skills(shelf: ToolShelf, memories: MemoryRepository) -> None:
         audit("skill_memory_forgotten", memory_id=memory_id)
         return {"forgotten": memory_id}
 
+    def recall(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        query = str(arguments.get("query", "")).strip()
+        if len(query) < 3:
+            return {"error": "query_too_short"}
+        found = memories.search(query, limit=8)
+        return {"count": len(found), "memories": [asdict(entry) for entry in found]}
+
+    def correct_memory(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        memory_id = str(arguments.get("memory_id", "")).strip()
+        content = str(arguments.get("content", "")).strip()
+        if len(content) < 3:
+            return {"error": "content_too_short"}
+        corrected = memories.correct(memory_id, content)
+        if corrected is None:
+            return {"error": "memory_not_found"}
+        audit("skill_memory_corrected", memory_id=memory_id)
+        return {"memory": asdict(corrected)}
+
+    def memory_history(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        history = memories.history(str(arguments.get("memory_id", "")).strip())
+        if history is None:
+            return {"error": "memory_not_found"}
+        return history
+
     shelf.add(
         AgentTool(
             name="remember",
@@ -643,6 +667,70 @@ def _add_memory_skills(shelf: ToolShelf, memories: MemoryRepository) -> None:
                 "additionalProperties": False,
             },
             handler=forget_memory,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="recall",
+            description=(
+                "Cherche dans la mémoire durable les souvenirs pertinents pour une "
+                "question, classés par importance et fraîcheur. À utiliser avant de "
+                "répondre qu'on ne sait pas quelque chose."
+            ),
+            risk=ActionRisk.PERSONAL_READ,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Ce qu'on cherche à retrouver",
+                    }
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+            handler=recall,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="correct_memory",
+            description=(
+                "Corrige un souvenir mal enregistré (erreur de transcription, faute "
+                "de nom). À utiliser quand l'utilisateur dit qu'un souvenir est faux. "
+                "Si l'utilisateur a simplement changé d'avis, utiliser remember : la "
+                "mémoire garde alors la trace de l'ancienne version."
+            ),
+            risk=ActionRisk.LOCAL_WRITE,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "memory_id": {"type": "string", "description": "Identifiant du souvenir"},
+                    "content": {"type": "string", "description": "Le texte corrigé"},
+                },
+                "required": ["memory_id", "content"],
+                "additionalProperties": False,
+            },
+            handler=correct_memory,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="memory_history",
+            description=(
+                "Explique pourquoi un souvenir est retenu : combien de fois il a été "
+                "confirmé, et ce qu'il a remplacé."
+            ),
+            risk=ActionRisk.PERSONAL_READ,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "memory_id": {"type": "string", "description": "Identifiant du souvenir"}
+                },
+                "required": ["memory_id"],
+                "additionalProperties": False,
+            },
+            handler=memory_history,
         )
     )
 

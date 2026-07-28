@@ -190,6 +190,105 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         )
         """,
     ),
+    # 10 — memory kernel: atomic dated sourced facts (ADR-003).
+    #
+    # Replaces the flat `memories` table. The old rows are copied in as
+    # unstructured `note` facts, keeping their identifiers so existing API
+    # callers and stored references still resolve, then the old table is kept
+    # under an archive name as the rollback path rather than dropped.
+    (
+        f"""
+        CREATE TABLE memory_events (
+            event_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            type TEXT NOT NULL,
+            source TEXT NOT NULL,
+            content TEXT NOT NULL,
+            metadata TEXT NOT NULL DEFAULT '{{}}',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE INDEX idx_memory_events_recent ON memory_events(user_id, created_at)",
+        f"""
+        CREATE TABLE memory_facts (
+            fact_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            subject TEXT NOT NULL,
+            predicate TEXT NOT NULL,
+            object TEXT NOT NULL,
+            category TEXT NOT NULL DEFAULT 'other',
+            status TEXT NOT NULL DEFAULT 'active',
+            confidence REAL NOT NULL DEFAULT 0.6,
+            support_count INTEGER NOT NULL DEFAULT 1,
+            importance REAL NOT NULL DEFAULT 0.5,
+            decay_policy TEXT NOT NULL DEFAULT 'medium',
+            source TEXT NOT NULL DEFAULT 'conversation',
+            source_event_id TEXT REFERENCES memory_events(event_id),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        """
+        CREATE INDEX idx_memory_facts_match
+        ON memory_facts(user_id, subject, predicate, category, status)
+        """,
+        """
+        CREATE INDEX idx_memory_facts_active
+        ON memory_facts(user_id, status, last_seen_at)
+        """,
+        """
+        CREATE TABLE memory_fact_observations (
+            observation_id TEXT PRIMARY KEY,
+            fact_id TEXT NOT NULL REFERENCES memory_facts(fact_id),
+            event_id TEXT REFERENCES memory_events(event_id),
+            observation_type TEXT NOT NULL,
+            confidence_delta REAL NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE INDEX idx_memory_observations_fact ON memory_fact_observations(fact_id)",
+        """
+        CREATE TABLE memory_fact_relations (
+            relation_id TEXT PRIMARY KEY,
+            from_fact_id TEXT NOT NULL REFERENCES memory_facts(fact_id),
+            to_fact_id TEXT NOT NULL REFERENCES memory_facts(fact_id),
+            relation_type TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE INDEX idx_memory_relations_from ON memory_fact_relations(from_fact_id)",
+        "CREATE INDEX idx_memory_relations_to ON memory_fact_relations(to_fact_id)",
+        # remove_diacritics 2 is not cosmetic here: without it "Lomé" and
+        # "lome" are different tokens, and French queries silently miss.
+        """
+        CREATE VIRTUAL TABLE memory_facts_fts USING fts5(
+            fact_id UNINDEXED,
+            text,
+            tokenize='unicode61 remove_diacritics 2'
+        )
+        """,
+        """
+        INSERT INTO memory_facts (
+            fact_id, tenant_id, user_id, subject, predicate, object,
+            category, status, confidence, support_count, importance,
+            decay_policy, source, created_at, last_seen_at, updated_at
+        )
+        SELECT
+            memory_id, tenant_id, user_id, 'utilisateur', 'note', content,
+            category, 'active', 0.6, 1, 0.5,
+            'medium', source, created_at, created_at, created_at
+        FROM memories
+        """,
+        """
+        INSERT INTO memory_facts_fts (fact_id, text)
+        SELECT fact_id, subject || ' ' || predicate || ' ' || object || ' ' || category
+        FROM memory_facts
+        """,
+        "ALTER TABLE memories RENAME TO memories_v1_archive",
+    ),
 )
 
 

@@ -104,7 +104,7 @@ async def test_deepseek_brain_injects_profile_context():
     brain = DeepSeekBrain(
         api_key="test-key",
         transport=httpx.MockTransport(handler),
-        context_provider=lambda: "Contexte professionnel : Horizon SARL, transport.",
+        context_provider=lambda _query='': "Contexte professionnel : Horizon SARL, transport.",
     )
     step = await brain.think([{"role": "user", "content": "Bonjour"}], tools=[])
     assert isinstance(step, AgentStep)

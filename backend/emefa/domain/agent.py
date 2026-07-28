@@ -13,6 +13,22 @@ ToolResult = Mapping[str, Any] | None
 ToolHandler = Callable[[Mapping[str, Any]], ToolResult | Awaitable[ToolResult]]
 
 
+def latest_user_message(history: Sequence[Mapping[str, Any]]) -> str:
+    """The most recent thing the user actually said.
+
+    Memory retrieval needs a query, and the only honest one available at the
+    moment the system prompt is composed is the user's last turn. Tool results
+    and assistant text are skipped: they are the assistant's own words, and
+    retrieving against them makes memory self-reinforcing.
+    """
+    for item in reversed(list(history)):
+        if item.get("role") == "user":
+            content = item.get("content")
+            if isinstance(content, str):
+                return content
+    return ""
+
+
 @dataclass(frozen=True, slots=True)
 class RequestedAction:
     name: str

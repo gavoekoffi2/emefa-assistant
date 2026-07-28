@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from emefa.domain.agent import AgentStep, RequestedAction
+from emefa.domain.agent import AgentStep, RequestedAction, latest_user_message as _latest_user_message
 
 SYSTEM_PROMPT = """Tu es l’assistante personnelle privée de ton utilisateur.
 Tu échanges à l’oral en français naturel, chaleureux et précis. Garde le fil des tours précédents.
@@ -27,7 +27,7 @@ class DeepSeekBrain:
         model: str = "deepseek-chat",
         base_url: str = "https://api.deepseek.com",
         transport: httpx.AsyncBaseTransport | None = None,
-        context_provider: Callable[[], str] | None = None,
+        context_provider: Callable[[str], str] | None = None,
     ) -> None:
         self.model = model
         self.context_provider = context_provider
@@ -96,7 +96,7 @@ class DeepSeekBrain:
     ) -> AgentStep:
         system_prompt = SYSTEM_PROMPT
         if self.context_provider is not None:
-            context = self.context_provider().strip()
+            context = self.context_provider(_latest_user_message(history)).strip()
             if context:
                 system_prompt = f"{SYSTEM_PROMPT}\n{context}"
         request_body: dict[str, Any] = {

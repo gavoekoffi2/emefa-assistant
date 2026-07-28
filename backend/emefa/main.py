@@ -17,6 +17,7 @@ from emefa.api.devices import router as devices_router
 from emefa.api.documents import router as documents_router
 from emefa.api.profile import router as profile_router
 from emefa.api.prospects import router as prospects_router
+from emefa.api.initiatives import router as initiatives_router
 from emefa.api.realtime import router as realtime_router
 from emefa.api.skills import router as skills_router
 from emefa.api.files import router as files_router
@@ -35,6 +36,13 @@ from emefa.domain.conversations import VOICE_CONVERSATION_ID, ConversationStore
 from emefa.domain.devices import DeviceRepository
 from emefa.domain.events import EventBus
 from emefa.domain.documents import DocumentStore
+from emefa.domain.proactive import (
+    AutonomyLevel,
+    Curator,
+    InitiativeRepository,
+    ProactiveEngine,
+    default_collectors,
+)
 from emefa.domain.profiles import ProfileRepository
 from emefa.domain.email import EmailProvider
 from emefa.domain.memories import MemoryRepository
@@ -57,7 +65,11 @@ from emefa.observability import (
     new_request_id,
     request_id_var,
 )
-from emefa.scheduler import brief_scheduler_loop, consolidation_scheduler_loop
+from emefa.scheduler import (
+    brief_scheduler_loop,
+    consolidation_scheduler_loop,
+    proactive_scheduler_loop,
+)
 from emefa.skills import build_tool_shelf
 
 request_logger = logging.getLogger("emefa.request")
@@ -128,6 +140,18 @@ def create_app(
         or Path(__file__).resolve().parent / "skills_catalogue",
         frozenset(tool["name"] for tool in tool_shelf.describe()),
     )
+
+    initiatives = InitiativeRepository(active_settings.database_path)
+    proactive = ProactiveEngine(
+        initiatives,
+        default_collectors(tasks, prospects, memories),
+        budget=budget,
+        bus=bus,
+        max_autonomy=AutonomyLevel(
+            min(max(active_settings.max_autonomy_level, 0), int(AutonomyLevel.EXTERNAL_ACTION))
+        ),
+    )
+    curator = Curator(memories, initiatives, budget, skills)
 
     def compose_context(query: str = "") -> str:
         """Profile context plus the bounded durable-memory block.
@@ -275,6 +299,14 @@ def create_app(
                     )
                 )
             )
+        if active_settings.proactive_interval_minutes is not None:
+            background.append(
+                asyncio.create_task(
+                    proactive_scheduler_loop(
+                        active_settings.proactive_interval_minutes, proactive
+                    )
+                )
+            )
         if active_settings.memory_consolidation_hour is not None and fact_extractor:
             background.append(
                 asyncio.create_task(
@@ -323,6 +355,9 @@ def create_app(
     application.state.bus = bus
     application.state.usage = usage
     application.state.budget = budget
+    application.state.initiatives = initiatives
+    application.state.proactive = proactive
+    application.state.curator = curator
     application.state.website_importer = WebsiteProfileImporter()
     application.state.compose_context = compose_context
     application.state.compose_text_context = compose_text_context
@@ -410,6 +445,7 @@ def create_app(
     application.include_router(demo_router)
     application.include_router(memories_router)
     application.include_router(prospects_router)
+    application.include_router(initiatives_router)
     application.include_router(skills_router)
     application.include_router(system_router)
     application.include_router(tasks_router)

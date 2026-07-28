@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     daily_token_limit_extraction: int = 200_000
     daily_token_limit_consolidation: int = 200_000
     daily_token_limit_proactive: int = 100_000
+    #: Minutes between proactive collection passes. None disables them.
+    proactive_interval_minutes: int | None = 60
+    #: Instance ceiling on unprompted autonomy (see AutonomyLevel). Default 2
+    #: = PREPARE: EMEFA may draft on her own, never deliver.
+    max_autonomy_level: int = 2
     #: Skill catalogue directory. Defaults to the one shipped with the
     #: package; point it elsewhere to add skills without a redeploy.
     skills_catalogue_path: Path | None = None

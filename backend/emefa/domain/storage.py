@@ -353,6 +353,41 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         """,
         "CREATE INDEX idx_usage_scope_day ON usage_entries(user_id, created_at, scope)",
     ),
+    # 14 — governed proactive initiatives.
+    #
+    # `dedupe_key` is unique among *open* initiatives only, enforced by a
+    # partial index: a concern that persists for a week must produce one card,
+    # but the same concern next month is a new one, and the closed history has
+    # to survive for the audit.
+    (
+        f"""
+        CREATE TABLE initiatives (
+            initiative_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            assistant_id TEXT NOT NULL DEFAULT '{DEFAULT_ASSISTANT_ID}',
+            type TEXT NOT NULL,
+            title TEXT NOT NULL,
+            reason TEXT NOT NULL DEFAULT '',
+            next_action TEXT NOT NULL DEFAULT '',
+            autonomy_level INTEGER NOT NULL DEFAULT 1,
+            risk TEXT NOT NULL DEFAULT 'observe',
+            status TEXT NOT NULL DEFAULT 'pending',
+            dedupe_key TEXT NOT NULL DEFAULT '',
+            cost_max_tokens INTEGER,
+            deadline TEXT,
+            payload TEXT NOT NULL DEFAULT '{{}}',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            resolved_at TEXT
+        )
+        """,
+        """
+        CREATE UNIQUE INDEX idx_initiatives_open_key
+        ON initiatives(user_id, dedupe_key)
+        WHERE status IN ('pending', 'approved', 'executing') AND dedupe_key <> ''
+        """,
+        "CREATE INDEX idx_initiatives_status ON initiatives(user_id, status, created_at)",
+    ),
 )
 
 

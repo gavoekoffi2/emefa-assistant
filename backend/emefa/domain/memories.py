@@ -104,6 +104,7 @@ class MemoryRepository:
         *,
         source: str = "extraction",
         event_id: str | None = None,
+        entity_id: str | None = None,
     ) -> tuple[Fact, str]:
         """Reconciling write. Returns the resulting fact and what happened:
         `created`, `reinforced` or `superseded`."""
@@ -114,7 +115,7 @@ class MemoryRepository:
         if not cleaned:
             raise ValueError("fact object must not be empty")
 
-        existing = self.kernel.find_active_match(subject, predicate, category)
+        existing = self.kernel.find_active_match(subject, predicate, category, entity_id)
 
         if existing is not None and vocabulary.normalise_term(
             existing.object
@@ -129,13 +130,23 @@ class MemoryRepository:
             category=category,
             source=source,
             source_event_id=event_id,
+            entity_id=entity_id,
         )
 
-        # An unstructured note carries no claim that another note could
-        # contradict — two remarks in the same category simply coexist. A
-        # structured claim is different: the same subject and predicate with a
-        # different object means the earlier one stopped being true.
-        if existing is not None and predicate != vocabulary.NEUTRAL_PREDICATE:
+        # Two conditions must both hold for a claim to replace an earlier one.
+        #
+        # The predicate must be structured: an unstructured note carries no
+        # claim another note could contradict, so two remarks coexist.
+        #
+        # And the category must not be one that accumulates: a project has one
+        # current objective, but many decisions and many open problems, and
+        # erasing a decision because a later one exists destroys the record of
+        # how the project got where it is.
+        if (
+            existing is not None
+            and predicate != vocabulary.NEUTRAL_PREDICATE
+            and category not in vocabulary.ACCUMULATING_CATEGORIES
+        ):
             self.kernel.supersede(existing.fact_id, fact, event_id)
             return fact, "superseded"
         return fact, "created"

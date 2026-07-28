@@ -440,6 +440,69 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         # open questions must not be executed as if it were complete.
         "ALTER TABLE missions ADD COLUMN missing_information TEXT NOT NULL DEFAULT '[]'",
     ),
+    # 17 — the entity graph: projects, companies, people and what links them.
+    #
+    # Facts gain an owning entity, which is what separates business memory
+    # from personal memory and makes "où en est le projet X" answerable by
+    # lookup rather than by full-text luck.
+    (
+        f"""
+        CREATE TABLE entities (
+            entity_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            kind TEXT NOT NULL,
+            name TEXT NOT NULL,
+            slug TEXT NOT NULL,
+            scope TEXT NOT NULL DEFAULT 'business',
+            status TEXT NOT NULL DEFAULT 'active',
+            summary TEXT NOT NULL DEFAULT '',
+            attributes TEXT NOT NULL DEFAULT '{{}}',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        # One entity per (kind, name). Without this, every mention of a client
+        # creates a new node and the graph is worthless within a week.
+        "CREATE UNIQUE INDEX idx_entities_identity ON entities(user_id, kind, slug)",
+        "CREATE INDEX idx_entities_scope ON entities(user_id, scope, status)",
+        """
+        CREATE TABLE entity_relations (
+            relation_id TEXT PRIMARY KEY,
+            from_entity_id TEXT NOT NULL REFERENCES entities(entity_id),
+            to_entity_id TEXT NOT NULL REFERENCES entities(entity_id),
+            kind TEXT NOT NULL,
+            attributes TEXT NOT NULL DEFAULT '{{}}',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        """
+        CREATE UNIQUE INDEX idx_entity_relations_edge
+        ON entity_relations(from_entity_id, to_entity_id, kind)
+        """,
+        "CREATE INDEX idx_entity_relations_to ON entity_relations(to_entity_id, kind)",
+        """
+        CREATE TABLE entity_timeline (
+            entry_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{tenant}',
+            user_id TEXT NOT NULL DEFAULT '{user}',
+            entity_id TEXT NOT NULL REFERENCES entities(entity_id),
+            milestone TEXT NOT NULL DEFAULT 'note',
+            headline TEXT NOT NULL DEFAULT '',
+            occurred_at TEXT NOT NULL,
+            event_id TEXT REFERENCES memory_events(event_id),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """.format(tenant=DEFAULT_TENANT_ID, user=DEFAULT_USER_ID),
+        """
+        CREATE INDEX idx_entity_timeline_entity
+        ON entity_timeline(entity_id, occurred_at)
+        """,
+        # Facts can now belong to an entity. NULL means personal memory, which
+        # is the existing behaviour and stays the default.
+        "ALTER TABLE memory_facts ADD COLUMN entity_id TEXT REFERENCES entities(entity_id)",
+        "CREATE INDEX idx_memory_facts_entity ON memory_facts(entity_id, status)",
+    ),
 )
 
 

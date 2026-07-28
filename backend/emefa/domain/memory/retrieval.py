@@ -58,18 +58,37 @@ class MemoryRetrieval:
         query: str = "",
         limit: int = 8,
         now: datetime | None = None,
+        entity_id: str | None = None,
+        personal_only: bool = False,
     ) -> list[ScoredFact]:
+        """`personal_only` restricts the result to facts about the user
+        themselves — the ones with no owning entity.
+
+        This is what keeps business memory out of the personal prompt block. A
+        project's budget belongs in that project's brief, fetched when asked
+        for; injecting it into every turn is both a leak and a waste.
+        """
         reference = now or datetime.now(timezone.utc)
+
+        def in_scope(fact: Fact) -> bool:
+            if entity_id is not None:
+                return fact.entity_id == entity_id
+            return fact.entity_id is None if personal_only else True
 
         candidates: dict[str, tuple[Fact, float]] = {}
         for fact, bm25 in self.kernel.search(query, limit=limit * 4):
-            if fact.status is FactStatus.ACTIVE:
+            if fact.status is FactStatus.ACTIVE and in_scope(fact):
                 candidates[fact.fact_id] = (fact, _relevance(bm25))
 
         # Always consider the durably important facts alongside the text hits.
         # Identity and offer rarely share words with a question ("prépare le
         # devis") yet are almost always needed to answer it well.
-        for fact in self.kernel.list_facts(FactStatus.ACTIVE, limit=limit * 4):
+        for fact in self.kernel.list_facts(
+            FactStatus.ACTIVE,
+            limit=limit * 4,
+            entity_id=entity_id,
+            personal_only=personal_only,
+        ):
             candidates.setdefault(fact.fact_id, (fact, _NO_MATCH_RELEVANCE))
 
         scored = [
@@ -104,8 +123,12 @@ class MemoryRetrieval:
     ) -> str:
         """Bounded memory block for the system prompt. Empty when nothing is
         remembered — an empty section is worse than no section, because the
-        model reads it as "this user has no history"."""
-        facts = self.retrieve(query, limit=limit, now=now)
+        model reads it as "this user has no history".
+
+        Personal facts only. What is known about a project or a client is
+        reached deliberately, through its brief.
+        """
+        facts = self.retrieve(query, limit=limit, now=now, personal_only=True)
         if not facts:
             return ""
         lines = ["Mémoire durable (l'utilisateur peut la consulter et l'effacer) :"]

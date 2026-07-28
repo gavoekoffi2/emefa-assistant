@@ -15,6 +15,7 @@ from emefa.api.briefings import router as briefings_router
 from emefa.api.demo import router as demo_router
 from emefa.api.devices import router as devices_router
 from emefa.api.documents import router as documents_router
+from emefa.api.entities import router as entities_router
 from emefa.api.profile import router as profile_router
 from emefa.api.prospects import router as prospects_router
 from emefa.api.initiatives import router as initiatives_router
@@ -35,6 +36,7 @@ from emefa.domain.briefings import BriefingRepository
 from emefa.domain.budget import BudgetGuard, UsageTracker
 from emefa.domain.conversations import VOICE_CONVERSATION_ID, ConversationStore
 from emefa.domain.devices import DeviceRepository
+from emefa.domain.entities import EntityGraph, EntityRepository, TimelineBuilder
 from emefa.domain.events import EventBus
 from emefa.domain.documents import DocumentStore
 from emefa.domain.proactive import (
@@ -80,7 +82,7 @@ from emefa.scheduler import (
     consolidation_scheduler_loop,
     proactive_scheduler_loop,
 )
-from emefa.skills import add_mission_skills, build_tool_shelf
+from emefa.skills import add_entity_skills, add_mission_skills, build_tool_shelf
 
 request_logger = logging.getLogger("emefa.request")
 
@@ -105,6 +107,9 @@ def create_app(
     briefings = BriefingRepository(active_settings.database_path)
     conversations = ConversationStore(active_settings.database_path)
     documents = DocumentStore(active_settings.database_path)
+    entities = EntityRepository(active_settings.database_path)
+    entity_graph = EntityGraph(entities, memories)
+    timeline = TimelineBuilder(entity_graph)
     bus = EventBus()
     usage = UsageTracker(
         active_settings.database_path,
@@ -129,7 +134,7 @@ def create_app(
         )
 
     def make_shelf(include_mailbox_read: bool = True):
-        return build_tool_shelf(
+        shelf = build_tool_shelf(
             profiles,
             tasks,
             memories,
@@ -139,6 +144,8 @@ def create_app(
             uploaded_files=uploaded_files,
             include_mailbox_read=include_mailbox_read,
         )
+        add_entity_skills(shelf, entity_graph, timeline)
+        return shelf
 
     tool_shelf = make_shelf()
     # The registry checks each skill's `requires_tools` against what this
@@ -196,6 +203,19 @@ def create_app(
         skill_block = skills.system_context()
         if skill_block:
             parts.append(skill_block)
+        # Naming the live projects and clients is what lets EMEFA answer "où en
+        # est-on" without the user spelling out which project they mean. Names
+        # and statuses only — the substance is fetched with entity_brief when
+        # it is actually needed, rather than paid for on every turn.
+        tracked = entities.list_entities(status="active", limit=10)
+        if tracked:
+            lines = ["Entités suivies (utilise entity_brief / entity_story pour le détail) :"]
+            lines.extend(
+                f"- [{item.kind.value}] {item.name}"
+                + (f" — {item.summary[:100]}" if item.summary else "")
+                for item in tracked
+            )
+            parts.append("\n".join(lines))
         files = uploaded_files.list(limit=8)
         if files:
             lines = [
@@ -394,6 +414,9 @@ def create_app(
     application.state.conversations = conversations
     application.state.documents = documents
     application.state.uploaded_files = uploaded_files
+    application.state.entities = entities
+    application.state.entity_graph = entity_graph
+    application.state.timeline = timeline
     application.state.skills = skills
     application.state.bus = bus
     application.state.usage = usage
@@ -483,6 +506,7 @@ def create_app(
     application.include_router(auth_router)
     application.include_router(devices_router)
     application.include_router(documents_router)
+    application.include_router(entities_router)
     application.include_router(files_router)
     application.include_router(web_session_router)
     application.include_router(agent_router)

@@ -13,6 +13,7 @@ from typing import Any
 
 from emefa.domain.agent import AgentTool, ToolShelf
 from emefa.domain.documents import DocumentNotFoundError, DocumentStore
+from emefa.domain.entities import EntityKind, EntityStatus, Milestone, RelationKind
 from emefa.domain.email import EmailProvider
 from emefa.domain.memories import CATEGORIES, MemoryRepository
 from emefa.domain.policy import ActionRisk
@@ -949,5 +950,295 @@ def add_mission_skills(shelf: ToolShelf, planner, missions, orchestrator) -> Non
                 "additionalProperties": False,
             },
             handler=mission_status,
+        )
+    )
+
+
+def add_entity_skills(shelf: ToolShelf, graph, timeline) -> None:
+    """Projects, companies, people — and the questions the user actually asks.
+
+    Everything here reads or writes the graph; nothing generates. A brief that
+    invents a project status is worse than no brief, because the user cannot
+    tell which is which.
+    """
+    entities = graph.entities
+
+    def _resolve(arguments: Mapping[str, Any]):
+        identifier = str(arguments.get("entity_id", "")).strip()
+        if identifier:
+            return entities.get(identifier)
+        return entities.resolve(
+            str(arguments.get("name", "")).strip(), arguments.get("kind")
+        )
+
+    def entity_upsert(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        try:
+            entity = entities.upsert(
+                arguments.get("kind", "project"),
+                str(arguments.get("name", "")),
+                scope=arguments.get("scope", "business"),
+                status=arguments.get("status"),
+                summary=arguments.get("summary"),
+                attributes=arguments.get("attributes")
+                if isinstance(arguments.get("attributes"), dict)
+                else None,
+            )
+        except ValueError:
+            return {"error": "name_required"}
+        audit("skill_entity_upserted", entity_id=entity.entity_id, kind=entity.kind.value)
+        return {"entity": entity.summary_dict()}
+
+    def entity_link(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        source = entities.resolve(str(arguments.get("from_name", "")), arguments.get("from_kind"))
+        target = entities.resolve(str(arguments.get("to_name", "")), arguments.get("to_kind"))
+        if source is None or target is None:
+            return {"error": "entity_not_found", "hint": "Créez d'abord les deux entités."}
+        relation = entities.link(
+            source.entity_id, target.entity_id, arguments.get("relation", "related_to")
+        )
+        audit("skill_entity_linked", relation=arguments.get("relation"))
+        return {
+            "linked": relation is not None,
+            "already_known": relation is None,
+            "from": source.name,
+            "to": target.name,
+        }
+
+    def entity_note(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        entity = _resolve(arguments)
+        if entity is None:
+            return {"error": "entity_not_found"}
+        content = str(arguments.get("content", "")).strip()
+        if len(content) < 3:
+            return {"error": "content_too_short"}
+        fact_id = graph.note(
+            entity.entity_id, content, category=str(arguments.get("category", "note"))
+        )
+        audit("skill_entity_noted", entity_id=entity.entity_id)
+        return {"entity": entity.name, "memory_id": fact_id}
+
+    def entity_milestone(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        entity = _resolve(arguments)
+        if entity is None:
+            return {"error": "entity_not_found"}
+        headline = str(arguments.get("headline", "")).strip()
+        if len(headline) < 3:
+            return {"error": "headline_too_short"}
+        entry = entities.record_milestone(
+            entity.entity_id,
+            arguments.get("milestone", "note"),
+            headline,
+            occurred_at=arguments.get("occurred_at") or None,
+        )
+        audit("skill_milestone_recorded", entity_id=entity.entity_id)
+        return {"entity": entity.name, "entry": entry.summary()}
+
+    def entity_brief(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        entity = _resolve(arguments)
+        if entity is None:
+            return {
+                "error": "entity_not_found",
+                "known": [item.name for item in entities.list_entities(limit=12)],
+            }
+        brief = graph.brief(entity.entity_id)
+        return {**brief.summary(), "text": brief.as_text()}
+
+    def entity_story(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        entity = _resolve(arguments)
+        if entity is None:
+            return {"error": "entity_not_found"}
+        story = timeline.story(entity.entity_id)
+        return story.summary()
+
+    def entity_list(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        found = entities.list_entities(
+            kind=arguments.get("kind"),
+            scope=arguments.get("scope"),
+            status=arguments.get("status"),
+            limit=50,
+        )
+        return {
+            "count": len(found),
+            "entities": [item.summary_dict() for item in found],
+        }
+
+    _NAME_ARGUMENTS = {
+        "name": {"type": "string", "description": "Nom tel que l'utilisateur l'emploie"},
+        "kind": {
+            "type": "string",
+            "enum": [kind.value for kind in EntityKind],
+            "description": "Type d'entité",
+        },
+    }
+
+    shelf.add(
+        AgentTool(
+            name="entity_upsert",
+            description=(
+                "Enregistre ou met à jour un projet, une entreprise, une personne, "
+                "un devis, une facture, un contrat ou une réunion. Réutilise "
+                "l'entité existante si le nom correspond : ne crée jamais de doublon."
+            ),
+            risk=ActionRisk.LOCAL_WRITE,
+            parameters={
+                "type": "object",
+                "properties": {
+                    **_NAME_ARGUMENTS,
+                    "scope": {
+                        "type": "string",
+                        "enum": ["business", "personal"],
+                        "description": "Mémoire d'entreprise ou mémoire personnelle",
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": [status.value for status in EntityStatus],
+                    },
+                    "summary": {"type": "string", "description": "Résumé en une phrase"},
+                    "attributes": {
+                        "type": "object",
+                        "description": "Champs libres : montant, échéance, rôle…",
+                    },
+                },
+                "required": ["name"],
+                "additionalProperties": False,
+            },
+            handler=entity_upsert,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="entity_link",
+            description=(
+                "Relie deux entités : un client à un projet, un devis à un projet, "
+                "une facture à un devis, une personne à une entreprise. C'est ce qui "
+                "permet de répondre avec du contexte."
+            ),
+            risk=ActionRisk.LOCAL_WRITE,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "from_name": {"type": "string"},
+                    "from_kind": {"type": "string", "enum": [k.value for k in EntityKind]},
+                    "to_name": {"type": "string"},
+                    "to_kind": {"type": "string", "enum": [k.value for k in EntityKind]},
+                    "relation": {
+                        "type": "string",
+                        "enum": [relation.value for relation in RelationKind],
+                    },
+                },
+                "required": ["from_name", "to_name", "relation"],
+                "additionalProperties": False,
+            },
+            handler=entity_link,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="entity_note",
+            description=(
+                "Attache un fait à une entité : un objectif, une décision prise, un "
+                "problème ouvert. Utilise category='decision' pour une décision et "
+                "category='issue' pour un problème — c'est ce qui rend « quelles "
+                "décisions avons-nous prises ? » et « quels problèmes restent "
+                "ouverts ? » répondables."
+            ),
+            risk=ActionRisk.LOCAL_WRITE,
+            parameters={
+                "type": "object",
+                "properties": {
+                    **_NAME_ARGUMENTS,
+                    "content": {"type": "string", "description": "Le fait, en une phrase"},
+                    "category": {
+                        "type": "string",
+                        "enum": ["decision", "issue", "goal", "note", "constraint", "event"],
+                    },
+                },
+                "required": ["name", "content"],
+                "additionalProperties": False,
+            },
+            handler=entity_note,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="entity_milestone",
+            description=(
+                "Inscrit un évènement daté dans l'histoire d'une entité : premier "
+                "contact, réunion, proposition, négociation, signature, livraison, "
+                "facturation, paiement, relance."
+            ),
+            risk=ActionRisk.LOCAL_WRITE,
+            parameters={
+                "type": "object",
+                "properties": {
+                    **_NAME_ARGUMENTS,
+                    "milestone": {
+                        "type": "string",
+                        "enum": [milestone.value for milestone in Milestone],
+                    },
+                    "headline": {"type": "string", "description": "Ce qui s'est passé, en une phrase"},
+                    "occurred_at": {
+                        "type": "string",
+                        "description": "Date ISO (AAAA-MM-JJ). Par défaut : maintenant.",
+                    },
+                },
+                "required": ["name", "milestone", "headline"],
+                "additionalProperties": False,
+            },
+            handler=entity_milestone,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="entity_brief",
+            description=(
+                "Répond à « où en est le projet X ? », « quelles décisions pour Y ? », "
+                "« quels problèmes restent ouverts sur Z ? ». Donne le statut, les "
+                "rattachements, les décisions, les problèmes ouverts et les derniers "
+                "évènements."
+            ),
+            risk=ActionRisk.PERSONAL_READ,
+            parameters={
+                "type": "object",
+                "properties": _NAME_ARGUMENTS,
+                "required": ["name"],
+                "additionalProperties": False,
+            },
+            handler=entity_brief,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="entity_story",
+            description=(
+                "Raconte toute l'histoire d'un client, d'un projet ou d'une "
+                "entreprise, dans l'ordre, avec les étapes jamais franchies et "
+                "l'étape suivante attendue."
+            ),
+            risk=ActionRisk.PERSONAL_READ,
+            parameters={
+                "type": "object",
+                "properties": _NAME_ARGUMENTS,
+                "required": ["name"],
+                "additionalProperties": False,
+            },
+            handler=entity_story,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="entity_list",
+            description="Liste les projets, entreprises, personnes ou documents connus.",
+            risk=ActionRisk.PERSONAL_READ,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string", "enum": [k.value for k in EntityKind]},
+                    "scope": {"type": "string", "enum": ["business", "personal"]},
+                    "status": {"type": "string", "enum": [s.value for s in EntityStatus]},
+                },
+                "additionalProperties": False,
+            },
+            handler=entity_list,
         )
     )

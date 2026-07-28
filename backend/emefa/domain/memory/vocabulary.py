@@ -50,12 +50,26 @@ CATEGORIES: dict[str, tuple[DecayPolicy, float]] = {
     # dated, perishable
     "commitment": (DecayPolicy.FAST, 0.80),
     "event": (DecayPolicy.FAST, 0.50),
+    # what a project is actually made of: what was decided, and what is still
+    # wrong. Decisions barely decay — a decision taken a year ago still binds.
+    "decision": (DecayPolicy.VERY_SLOW, 0.88),
+    "issue": (DecayPolicy.MEDIUM, 0.82),
+    "note": (DecayPolicy.MEDIUM, 0.55),
     # unstructured leftovers
     "fact": (DecayPolicy.SLOW, 0.60),
     "other": (DecayPolicy.MEDIUM, 0.50),
 }
 
 DEFAULT_CATEGORY = "other"
+
+#: Categories where a new claim *adds* to what is known instead of replacing
+#: it. A project has one current objective but many decisions and many open
+#: problems; superseding a decision because a later one exists would erase the
+#: record of how the project got here, which is the main thing a decision log
+#: is for.
+ACCUMULATING_CATEGORIES: frozenset[str] = frozenset(
+    {"decision", "issue", "event", "note"}
+)
 
 # Closed predicate set. French, third person, one meaning each.
 PREDICATES: tuple[str, ...] = (
@@ -99,6 +113,8 @@ _CATEGORY_PREDICATE: dict[str, str] = {
     "constraint": "doit",
     "commitment": "a_pour_echeance",
     "procedure": "utilise",
+    "decision": "a_realise",
+    "issue": "doit",
 }
 
 

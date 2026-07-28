@@ -75,6 +75,9 @@ class Fact:
     decay_policy: DecayPolicy
     source: str
     source_event_id: str | None
+    #: The project, company or person this fact is about. None means it is
+    #: about the user themselves — personal memory.
+    entity_id: str | None
     created_at: str
     last_seen_at: str
     updated_at: str
@@ -83,10 +86,12 @@ class Fact:
         """Human-readable form.
 
         A `note` carries its whole meaning in the object — it is the text the
-        user actually wrote — so it renders bare. Structured claims render as
-        the triple with the predicate's underscores opened back out.
+        user actually wrote — so it renders bare. So does anything attached to
+        an entity: the project *is* the subject, and repeating "projet" in
+        front of every line about it is noise. Everything else renders as the
+        triple with the predicate's underscores opened back out.
         """
-        if self.predicate == "note":
+        if self.predicate == "note" or self.entity_id is not None:
             return self.object
         return f"{self.subject} {self.predicate.replace('_', ' ')} {self.object}"
 

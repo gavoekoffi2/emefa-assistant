@@ -48,7 +48,7 @@ from emefa.domain.memory.schemas import (
 _FACT_COLUMNS = (
     "fact_id, subject, predicate, object, category, status, confidence, "
     "support_count, importance, decay_policy, source, source_event_id, "
-    "created_at, last_seen_at, updated_at"
+    "entity_id, created_at, last_seen_at, updated_at"
 )
 
 
@@ -160,6 +160,7 @@ class MemoryKernel:
         source_event_id: str | None = None,
         confidence: float = INITIAL_CONFIDENCE,
         fact_id: str | None = None,
+        entity_id: str | None = None,
     ) -> Fact:
         category = vocabulary.normalise_category(category)
         fact = Fact(
@@ -175,6 +176,7 @@ class MemoryKernel:
             decay_policy=vocabulary.decay_for(category),
             source=source,
             source_event_id=source_event_id,
+            entity_id=entity_id,
             created_at=_now(),
             last_seen_at=_now(),
             updated_at=_now(),
@@ -182,7 +184,7 @@ class MemoryKernel:
         with self._connect() as connection:
             connection.execute(
                 f"INSERT INTO memory_facts ({_FACT_COLUMNS}) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     fact.fact_id,
                     fact.subject,
@@ -196,6 +198,7 @@ class MemoryKernel:
                     fact.decay_policy.value,
                     fact.source,
                     fact.source_event_id,
+                    fact.entity_id,
                     fact.created_at,
                     fact.last_seen_at,
                     fact.updated_at,
@@ -218,23 +221,34 @@ class MemoryKernel:
             ).fetchone()
         return _row_to_fact(row) if row is not None else None
 
-    def find_active_match(self, subject: str, predicate: str, category: str) -> Fact | None:
+    def find_active_match(
+        self,
+        subject: str,
+        predicate: str,
+        category: str,
+        entity_id: str | None = None,
+    ) -> Fact | None:
         """The fact this claim would be a restatement of, if any.
 
         Matching on `(subject, predicate, category)` and not on the object is
         deliberate: it is exactly what lets a *changed* value be recognised as
         a contradiction of the old one rather than filed as an unrelated fact.
+
+        The entity is part of the key, and must be: without it, the objective
+        of one project would supersede the objective of another the moment
+        both were recorded.
         """
         with self._connect() as connection:
             row = connection.execute(
                 f"SELECT {_FACT_COLUMNS} FROM memory_facts "
                 "WHERE subject = ? AND predicate = ? AND category = ? AND status = ? "
-                "ORDER BY last_seen_at DESC LIMIT 1",
+                "AND entity_id IS ? ORDER BY last_seen_at DESC LIMIT 1",
                 (
                     vocabulary.normalise_term(subject),
                     predicate,
                     vocabulary.normalise_category(category),
                     FactStatus.ACTIVE.value,
+                    entity_id,
                 ),
             ).fetchone()
         return _row_to_fact(row) if row is not None else None
@@ -244,6 +258,8 @@ class MemoryKernel:
         status: FactStatus | None = FactStatus.ACTIVE,
         category: str | None = None,
         limit: int = 100,
+        entity_id: str | None = None,
+        personal_only: bool = False,
     ) -> list[Fact]:
         query = f"SELECT {_FACT_COLUMNS} FROM memory_facts"
         clauses: list[str] = []
@@ -254,6 +270,12 @@ class MemoryKernel:
         if category is not None:
             clauses.append("category = ?")
             parameters.append(vocabulary.normalise_category(category))
+        if entity_id is not None:
+            clauses.append("entity_id = ?")
+            parameters.append(entity_id)
+        elif personal_only:
+            # Business memory must not leak into a personal answer.
+            clauses.append("entity_id IS NULL")
         if clauses:
             query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY last_seen_at DESC, fact_id LIMIT ?"
@@ -541,6 +563,7 @@ def _row_to_fact(row: sqlite3.Row) -> Fact:
         decay_policy=DecayPolicy(row["decay_policy"]),
         source=row["source"],
         source_event_id=row["source_event_id"],
+        entity_id=row["entity_id"],
         created_at=row["created_at"],
         last_seen_at=row["last_seen_at"],
         updated_at=row["updated_at"],

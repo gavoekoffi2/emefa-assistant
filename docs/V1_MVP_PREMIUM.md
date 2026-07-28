@@ -151,12 +151,20 @@ client. Rien n'est envoyé : l'envoi reste une action soumise à approbation exp
 
 | Vérification | Commande | Résultat |
 |---|---|---|
-| Tests backend | `python -m pytest -q` | **164 passés** |
+| Tests backend | `python -m pytest -q` | **166 passés** |
 | Lint web | `npm run lint` | propre |
 | Tests web | `npm test` | **67 passés** |
 | Build production | `npm run build` | réussi |
+| Mise à niveau d'une base existante | test dédié + exécution manuelle | schéma 10 → 15, aucune donnée perdue |
+| Bout en bout sur serveur réel | scénario complet via uvicorn | accueil, CRM, réunion, briefing, rapport du soir |
 
-35 tests backend ont été ajoutés pendant cette phase, et 7 tests web (dont 2 remplacent
+La mise à niveau a été vérifiée dans les deux sens : un test permanent
+(`tests/test_migration_upgrade.py`) construit une base au schéma 10 avec des données réelles,
+la migre, et vérifie que profil, tâches, souvenirs et prospects sont intacts, que les
+nouvelles colonnes arrivent vides plutôt que de casser la ligne, et que les documents écrits
+avant le catalogue sont adoptés au lieu de disparaître.
+
+37 tests backend ont été ajoutés pendant cette phase, et 7 tests web (dont 2 remplacent
 celles de l’ancien panneau de profil). Ils vérifient des
 effets réels, pas des intentions : formules Excel réellement stockées comme formules,
 structure Word réellement présente, réunion créant réellement une tâche et déplaçant

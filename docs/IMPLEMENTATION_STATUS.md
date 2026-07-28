@@ -682,9 +682,9 @@ Nothing mid-flight.
 
 ## Tests
 
-- Backend: `python -m pytest -q` → **164 passed** (was 129 before this phase; 35 new across
+- Backend: `python -m pytest -q` → **166 passed** (was 129 before this phase; 37 new across
   `test_crm.py`, `test_office.py`, `test_onboarding.py`, `test_meetings.py`, `test_reports.py`,
-  `test_workflows.py`).
+  `test_workflows.py`, `test_migration_upgrade.py`).
 - Web: `npm run lint` clean · `npm test` → **67 passed** · `npm run build` successful.
 - Two pre-existing test expectations were updated deliberately, not silenced: the Word
   document assertions (documents now carry a dated subtitle line) and the schema-version

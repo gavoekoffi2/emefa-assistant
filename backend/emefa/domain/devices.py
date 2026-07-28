@@ -9,8 +9,17 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from emefa.domain import storage
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from emefa.domain.credentials import AccountScope
+
+#: A device is always read together with the tenant that owns it, so no caller
+#: can end up holding a device without knowing whose data it may touch.
+_DEVICE_COLUMNS = "d.device_id, d.name, d.token_hash, d.user_id, u.tenant_id"
+_DEVICE_SOURCE = " FROM devices d LEFT JOIN users u ON u.user_id = d.user_id"
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,6 +27,15 @@ class Device:
     device_id: str
     name: str
     token_hash: str
+    #: Owner of this device. Every scoped resource — connected accounts above
+    #: all — is resolved from here, never from anything a client can send.
+    user_id: str = storage.DEFAULT_USER_ID
+    tenant_id: str = storage.DEFAULT_TENANT_ID
+
+    def scope(self) -> "AccountScope":
+        from emefa.domain.credentials import AccountScope
+
+        return AccountScope(tenant_id=self.tenant_id, user_id=self.user_id)
 
 
 class DeviceRepository:
@@ -61,7 +79,7 @@ class DeviceRepository:
     def find_by_id(self, device_id: str) -> Device | None:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT device_id, name, token_hash FROM devices WHERE device_id = ?",
+                "SELECT " + _DEVICE_COLUMNS + _DEVICE_SOURCE + " WHERE d.device_id = ?",
                 (device_id,),
             ).fetchone()
         return self._from_row(row)
@@ -70,7 +88,8 @@ class DeviceRepository:
         token_hash = self._hash_token(token)
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT device_id, name, token_hash, created_at FROM devices WHERE token_hash = ?",
+                "SELECT " + _DEVICE_COLUMNS + ", d.created_at" + _DEVICE_SOURCE
+                + " WHERE d.token_hash = ?",
                 (token_hash,),
             ).fetchone()
         if row is None:
@@ -94,8 +113,14 @@ class DeviceRepository:
     def _from_row(row: sqlite3.Row | None) -> Device | None:
         if row is None:
             return None
+        keys = row.keys()
         return Device(
             device_id=row["device_id"],
             name=row["name"],
             token_hash=row["token_hash"],
+            user_id=row["user_id"] if "user_id" in keys else storage.DEFAULT_USER_ID,
+            tenant_id=(
+                row["tenant_id"] if "tenant_id" in keys and row["tenant_id"]
+                else storage.DEFAULT_TENANT_ID
+            ),
         )

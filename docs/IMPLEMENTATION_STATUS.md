@@ -809,3 +809,39 @@ confident, invisible, and it splits a client relationship in two.
 
 Tests: backend **198 passed** (17 new across `tests/test_ambiguity.py` and
 `tests/test_inbox.py`); web **68 passed**, lint clean.
+
+## Completed — per-tenant connected accounts, encrypted at rest (2026-07-28)
+
+Implements the specified model — `Tenant A · Jean · jean@gmail.com · encrypted token` /
+`Tenant B · Amina · amina@gmail.com · encrypted token` — which the code did not support: the
+mailbox was one instance-wide object shared by every device, and `Device` did not carry its
+owner. Full rationale and rejected alternatives: `docs/adr/ADR-003-connected-account-credentials.md`.
+
+- **Migration 17 `connected_accounts`:** one row per `(tenant_id, user_id, provider)`, unique
+  index enforced by SQLite, secret stored as ciphertext + nonce + `key_version`.
+- **`domain/credentials.py`:** AES-256-GCM, with `tenant|user|provider` as the AEAD associated
+  data. A ciphertext moved between tenants **fails to decrypt** — isolation is cryptographic,
+  not only a `WHERE` clause. Every operation requires an `AccountScope`; there is no method
+  that returns a credential without one. The vault **fails closed** without `EMEFA_SECRET_KEY`.
+- **`Device` carries its owner:** `user_id` and `tenant_id`, joined from `users` on every
+  read, so the scope is always derived server-side. The API has no tenant or user field at
+  all — nothing to spoof.
+- **`infrastructure/mailbox.py`:** `MailboxResolver.for_scope()` replaces "the" mailbox. The
+  legacy instance mailbox is served to the default owner only; another tenant never inherits
+  it; an unreadable credential refuses rather than falling through.
+- **`api/connections.py`:** list, connect, revoke, mailbox status. Secrets are write-only —
+  no endpoint echoes a token, and the audit log records provider and account label only.
+- **Dependency added:** `cryptography` (PyCA, Apache/BSD) — required for authenticated
+  encryption; hand-rolling was not an option.
+
+Tests: backend **217 passed** (19 new in `tests/test_credentials.py`), covering cross-tenant
+ciphertext rejection, no plaintext on disk, wrong-key rejection, fail-closed without a key,
+revocation destroying the secret, resolver isolation, and the API refusing to be told which
+tenant to write to.
+
+### Honest scope limit
+
+This delivers **credential** isolation, not multi-tenancy. CRM, agenda, tasks, memory,
+documents and reports still write the default tenant and **none of them filter by tenant**
+(verified). There is no OAuth flow and no Gmail adapter yet: a stored account resolves to no
+provider and says so. Enrollment is still one shared instance code.

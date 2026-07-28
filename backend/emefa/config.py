@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     livekit_token_ttl_seconds: int = 300
     livekit_worker_token: SecretStr | None = None
     voice_transport: Literal["elevenlabs", "livekit"] = "elevenlabs"
+    #: Encrypts connected-account secrets at rest. Without it the vault
+    #: refuses to store credentials rather than keeping them in clear.
+    secret_key: SecretStr | None = None
     email_account: str | None = None
     himalaya_binary: str = "himalaya"
     himalaya_config: Path | None = None

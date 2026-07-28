@@ -12,6 +12,7 @@ from emefa.api.agenda import router as agenda_router
 from emefa.api.agent import router as agent_router
 from emefa.api.briefings import router as briefings_router
 from emefa.api.command_center import router as command_center_router
+from emefa.api.connections import router as connections_router
 from emefa.api.crm import router as crm_router
 from emefa.api.demo import router as demo_router
 from emefa.api.devices import router as devices_router
@@ -35,6 +36,7 @@ from emefa.domain.approvals import ApprovalRepository
 from emefa.domain.briefings import BriefingRepository
 from emefa.domain.command_center import InitiativeRepository, RoutineRepository
 from emefa.domain.conversations import VOICE_CONVERSATION_ID, ConversationStore
+from emefa.domain.credentials import CredentialVault
 from emefa.domain.crm import CrmRepository
 from emefa.domain.devices import DeviceRepository
 from emefa.domain.documents import DocumentStore
@@ -53,6 +55,7 @@ from emefa.domain.workflows import WorkflowEngine
 from emefa.infrastructure.deepseek import DeepSeekBrain
 from emefa.infrastructure.email import HimalayaEmailProvider
 from emefa.infrastructure.livekit import LiveKitBroker
+from emefa.infrastructure.mailbox import MailboxResolver
 from emefa.infrastructure.realtime import RealtimeGateway
 from emefa.infrastructure.vision import OpenRouterVisionAnalyzer
 from emefa.infrastructure.voice_llm import VoiceLLMProxy
@@ -109,6 +112,15 @@ def create_app(
             binary=active_settings.himalaya_binary,
             config=active_settings.himalaya_config,
         )
+
+    # Connected accounts are stored per tenant and per user, encrypted at
+    # rest. The resolver maps an authenticated device's owner to the mailbox
+    # that owner is allowed to touch — never to "the" mailbox.
+    vault = CredentialVault(
+        active_settings.database_path,
+        active_settings.secret_key.get_secret_value() if active_settings.secret_key else None,
+    )
+    mailboxes = MailboxResolver(vault, instance_provider=active_email_provider)
 
     # Only the full (device-authenticated) shelf reads the mailbox; the voice
     # shelf runs without it, so its brief has no inbox section at all.
@@ -344,6 +356,8 @@ def create_app(
     application.state.crm = crm
     application.state.agenda = agenda
     application.state.inbox = inbox_reader
+    application.state.vault = vault
+    application.state.mailboxes = mailboxes
     application.state.meetings = meetings
     application.state.onboarding = onboarding
     application.state.report_preferences = report_preferences
@@ -485,6 +499,7 @@ def create_app(
     application.include_router(profile_router)
     application.include_router(briefings_router)
     application.include_router(command_center_router)
+    application.include_router(connections_router)
     application.include_router(agenda_router)
     application.include_router(crm_router)
     application.include_router(meetings_router)

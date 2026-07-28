@@ -490,6 +490,36 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         # An external calendar must never create the same event twice.
         "CREATE UNIQUE INDEX idx_events_external ON events(source, external_id)",
     ),
+    # 17 — per-user connected accounts (Gmail, calendars, …).
+    #
+    # The secret is stored encrypted, never in clear, and every row carries the
+    # tenant and user that own it. One connected account per provider per user,
+    # so "Jean's Gmail" and "Amina's Gmail" are structurally distinct rows that
+    # no query can conflate.
+    (
+        f"""
+        CREATE TABLE connected_accounts (
+            account_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            provider TEXT NOT NULL,
+            account_label TEXT NOT NULL,
+            secret_ciphertext TEXT NOT NULL,
+            secret_nonce TEXT NOT NULL,
+            key_version INTEGER NOT NULL DEFAULT 1,
+            scopes TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'active',
+            expires_at TEXT,
+            last_used_at TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE UNIQUE INDEX idx_connected_accounts_owner "
+        "ON connected_accounts(tenant_id, user_id, provider)",
+        "CREATE INDEX idx_connected_accounts_status "
+        "ON connected_accounts(tenant_id, user_id, status)",
+    ),
 )
 
 

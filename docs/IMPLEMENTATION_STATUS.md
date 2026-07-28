@@ -768,3 +768,44 @@ question the owner can answer with a number, on their own provider, against thei
 That measurement has to come first.
 
 Tests: backend **181 passed**; web **68 passed**, lint clean, build successful.
+
+## Completed — ambiguity and inbox signals (2026-07-28)
+
+Two items from the V1 limits list, taken in order of how badly they hurt trust.
+
+### Name resolution asks instead of guessing
+
+`_match` returned the first partial hit, so a proposal for « Horizon » silently attached to
+whichever Horizon happened to sort first. That is the worst failure mode this product has:
+confident, invisible, and it splits a client relationship in two.
+
+- Matching is now **ranked by quality tier** (exact > prefix > substring > contained-in-query)
+  and only the best tier is considered, so an exact « Horizon » is never made ambiguous by a
+  longer « Horizon Group ».
+- A tie at the best tier raises `AmbiguousMatchError` carrying the candidates.
+- Every caller surfaces the question rather than swallowing it: skills return the candidates
+  plus an instruction to ask; `lookup()` reports `ambiguous` instead of answering about one
+  record; `commercial_proposal` **refuses** rather than creating a duplicate contact;
+  `follow_up` returns status `ambiguous`; meeting capture keeps the meeting and leaves the
+  link open; the agenda refuses the link; the API answers **409** with the candidates
+  (a well-formed request whose *target* is undecided is a conflict, not a validation error).
+
+### Messages awaiting a reply in the morning brief
+
+- **`domain/inbox.py`** reads the connected mailbox and answers the one question a briefing
+  needs: who is waiting on you. Unread messages within a 7-day window are cross-referenced
+  against CRM contact addresses, so a client you already track outranks a newsletter.
+- **Least privilege preserved.** The voice channel deliberately runs without mailbox-read
+  skills because its bearer secret is shared with the ElevenLabs bridge. The inbox reader is
+  therefore wired into the **full shelf only**: the voice brief has no inbox section at all,
+  not a redacted one. A test asserts exactly that.
+- **External content stays data.** Subjects and senders are written by third parties; the
+  digest carries an explicit framing line and is never merged into a directive. A test feeds
+  a prompt-injection subject through the whole path.
+- **A mailbox problem is never a briefing failure.** Missing, misconfigured or erroring
+  mailbox → the brief says so in one line and composes everything else normally.
+- Waiting messages become a risk line and a recommendation ("Répondre à Ama Mensah — …"),
+  and `messages` joins the user-selectable brief sections.
+
+Tests: backend **198 passed** (17 new across `tests/test_ambiguity.py` and
+`tests/test_inbox.py`); web **68 passed**, lint clean.

@@ -39,6 +39,7 @@ from emefa.domain.crm import CrmRepository
 from emefa.domain.devices import DeviceRepository
 from emefa.domain.documents import DocumentStore
 from emefa.domain.email import EmailProvider
+from emefa.domain.inbox import InboxReader
 from emefa.domain.meetings import MeetingRepository
 from emefa.domain.memories import MemoryRepository
 from emefa.domain.onboarding import OnboardingRepository
@@ -108,6 +109,10 @@ def create_app(
             binary=active_settings.himalaya_binary,
             config=active_settings.himalaya_config,
         )
+
+    # Only the full (device-authenticated) shelf reads the mailbox; the voice
+    # shelf runs without it, so its brief has no inbox section at all.
+    inbox_reader = InboxReader(active_email_provider, crm)
 
     def compose_context() -> str:
         """Profile context plus the bounded durable-memory block.
@@ -338,6 +343,7 @@ def create_app(
     application.state.documents = documents
     application.state.crm = crm
     application.state.agenda = agenda
+    application.state.inbox = inbox_reader
     application.state.meetings = meetings
     application.state.onboarding = onboarding
     application.state.report_preferences = report_preferences
@@ -368,6 +374,7 @@ def create_app(
             onboarding=onboarding,
             preferences=report_preferences,
             agenda=agenda,
+            inbox=inbox_reader,
         ),
         memory=conversations,
     )

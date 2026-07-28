@@ -151,7 +151,7 @@ client. Rien n'est envoyé : l'envoi reste une action soumise à approbation exp
 
 | Vérification | Commande | Résultat |
 |---|---|---|
-| Tests backend | `python -m pytest -q` | **181 passés** |
+| Tests backend | `python -m pytest -q` | **198 passés** |
 | Lint web | `npm run lint` | propre |
 | Tests web | `npm test` | **68 passés** |
 | Build production | `npm run build` | réussi |
@@ -164,7 +164,7 @@ la migre, et vérifie que profil, tâches, souvenirs et prospects sont intacts, 
 nouvelles colonnes arrivent vides plutôt que de casser la ligne, et que les documents écrits
 avant le catalogue sont adoptés au lieu de disparaître.
 
-52 tests backend ont été ajoutés pendant cette phase, et 7 tests web (dont 2 remplacent
+69 tests backend ont été ajoutés pendant cette phase, et 7 tests web (dont 2 remplacent
 celles de l’ancien panneau de profil). Ils vérifient des
 effets réels, pas des intentions : formules Excel réellement stockées comme formules,
 structure Word réellement présente, réunion créant réellement une tâche et déplaçant
@@ -188,28 +188,32 @@ Honnêtement listées, par ordre d'impact pour le premier utilisateur.
    n'est synchronisé** avec Google ou Microsoft : un rendez-vous créé ailleurs reste inconnu.
    La frontière technique (`CalendarProvider`, colonnes `source`/`external_id`, `sync()`
    idempotent) existe et est testée, il manque l'adaptateur et les identifiants OAuth.
-2. **Pas de lecture proactive de la boîte mail.** EMEFA peut chercher, lire, rédiger et
-   envoyer (sous approbation) quand la boîte est connectée, mais rien ne remonte
-   automatiquement dans le briefing.
+2. **Boîte mail : signaux dans le briefing, pas de traitement automatique.** Quand la boîte
+   est connectée, le briefing du matin indique désormais qui attend une réponse, en
+   distinguant les clients suivis du reste. En revanche EMEFA ne classe pas, n'archive pas et
+   ne répond pas d'elle-même : rédiger reste à la demande, envoyer reste soumis à approbation.
+   Le canal vocal n'a délibérément **aucun** accès à ces contenus (son secret est partagé avec
+   le pont ElevenLabs).
 3. **44 outils sur une seule étagère plate, soit ~8 200 jetons de schéma à chaque tour.**
    C'est désormais **mesuré**, plus supposé : un garde-fou fait échouer la construction si ce
    budget est dépassé, et une suite d'évaluation (`python -m evals.tool_selection`, 24 cas
    français) permet de mesurer la qualité de sélection sur votre propre fournisseur. Le
    regroupement progressif des compétences n'a délibérément **pas** été livré : il faut
    d'abord la mesure de référence.
-4. **Résolution de noms tolérante mais silencieuse.** « Horizon » trouve le premier Horizon.
-   S'il en existe deux, l'ambiguïté n'est pas signalée.
+4. **Résolution de noms — corrigé.** Si deux clients portent un nom proche, EMEFA ne choisit
+   plus : elle présente les candidats et demande lequel est visé, et refuse de préparer quoi
+   que ce soit tant que ce n'est pas tranché. Une correspondance exacte reste immédiate.
 5. **Canal vocal légèrement plus restreint.** Le pont ElevenLabs partage son secret ; il tourne
    donc sans les outils de lecture de boîte mail. Les actions sensibles préparées à la voix
    remontent bien dans la carte d'approbation.
 6. **Factures et devis comptables non intégrés.** Les devis sont suivis comme des affaires,
    pas générés dans un format comptable ni reliés à un système de facturation.
-7. **Pas de découverte automatique de prospects.** Assumé : la prospection non contrôlée est
+6. **Pas de découverte automatique de prospects.** Assumé : la prospection non contrôlée est
    explicitement exclue. EMEFA suit ce qu'on lui confie.
-8. **Instance mono-utilisateur.** Les colonnes de cloisonnement existent partout, mais
+7. **Instance mono-utilisateur.** Les colonnes de cloisonnement existent partout, mais
    l'authentification reste le code d'activation + jeton d'appareil.
-9. **Bundle web ~1,2 Mo** (three.js est déjà séparé). Perfectible sur réseau lent.
-10. **Pas encore d'évaluations automatiques d'agent** (choix d'outil, résistance à
+8. **Bundle web ~1,2 Mo** (three.js est déjà séparé). Perfectible sur réseau lent.
+9. **Pas encore d'évaluations automatiques d'agent** (choix d'outil, résistance à
     l'injection, multilingue). Les tests couvrent le déterministe, pas le probabiliste.
 
 ---
@@ -232,22 +236,20 @@ Par ordre de valeur décroissante pour un dirigeant.
 3. **Étendre les évaluations.** La suite couvre aujourd'hui le choix d'outil. À ajouter :
    respect des permissions, résistance à l'injection via contenus externes, honnêteté (ne pas
    annoncer une action non exécutée) et qualité multilingue.
-4. **Boîte mail proactive.** Faire remonter dans le briefing les messages nécessitant une
-   réponse, en respectant strictement la frontière « contenu externe = données, jamais
-   instructions ».
-5. **Ambiguïté explicite.** Quand une recherche de nom correspond à plusieurs entités, poser
-   la question au lieu de choisir.
-6. **Devis et factures.** Passer du suivi d'affaire à la production de documents conformes,
+4. **Boîte mail : aller plus loin que les signaux.** Le briefing signale qui attend une
+   réponse ; l'étape suivante est le tri assisté (classer, archiver, proposer une réponse
+   pré-rédigée), toujours sous la même frontière « contenu externe = données ».
+5. **Devis et factures.** Passer du suivi d'affaire à la production de documents conformes,
    avec numérotation, TVA et lien vers un système comptable.
-7. **Migration du pipeline hérité vers le CRM.** `prospects` et `contacts` coexistent
+6. **Migration du pipeline hérité vers le CRM.** `prospects` et `contacts` coexistent
    volontairement. Une migration progressive, avec conservation puis retrait, unifierait le
    suivi commercial.
-8. **Travaux longs durables.** Jobs reprenables, annulables et auditables pour les workflows
+7. **Travaux longs durables.** Jobs reprenables, annulables et auditables pour les workflows
    qui dépasseront une requête HTTP.
-9. **Voix : mesurer avant de migrer.** La ligne de base ElevenLabs (temps jusqu'au premier
+8. **Voix : mesurer avant de migrer.** La ligne de base ElevenLabs (temps jusqu'au premier
    audio, latence bout en bout, interruption, coût par minute) n'existe toujours pas. Aucune
    décision LiveKit ne devrait être prise avant.
-10. **Multi-tenant.** Comptes réels, isolation vérifiée par des tests, avant toute
+9. **Multi-tenant.** Comptes réels, isolation vérifiée par des tests, avant toute
     commercialisation à plusieurs entreprises.
 
 ---
@@ -270,5 +272,5 @@ Une journée type, entièrement supportée :
    liés, historique, blocages.
 6. **Le soir** — ouvrir « Rapport du soir » : ce qui est fait, ce qui reste, ce qui bloque, et
    par quoi commencer demain.
-7. **À tout moment** — ouvrir « Configuration » pour voir, corriger ou effacer tout ce
+6. **À tout moment** — ouvrir « Configuration » pour voir, corriger ou effacer tout ce
    qu'EMEFA sait de lui.

@@ -20,6 +20,7 @@ from typing import Any
 from emefa.domain import storage
 from emefa.domain.agenda import AgendaRepository
 from emefa.domain.crm import CrmRepository
+from emefa.domain.inbox import InboxReader
 from emefa.domain.meetings import MeetingRepository
 from emefa.domain.profiles import ProfileRepository
 from emefa.domain.prospects import ProspectRepository
@@ -31,6 +32,7 @@ MORNING_SECTIONS: tuple[tuple[str, str], ...] = (
     ("priorites", "Priorités du jour"),
     ("taches", "Tâches"),
     ("actions_reunions", "Actions issues des réunions"),
+    ("messages", "Messages en attente de réponse"),
     ("relances", "Clients à relancer"),
     ("devis", "Devis en attente de réponse"),
     ("contrats", "Contrats à échéance"),
@@ -135,6 +137,7 @@ def compose_morning_brief(
     preferences: ReportPreferences | None = None,
     today: date | None = None,
     agenda: AgendaRepository | None = None,
+    inbox: InboxReader | None = None,
 ) -> dict[str, Any]:
     reference = today or date.today()
     prefs = preferences or ReportPreferences((), ())
@@ -177,6 +180,11 @@ def compose_morning_brief(
     if meetings is not None and prefs.morning_enabled("actions_reunions"):
         brief["meeting_actions"] = meetings.open_actions(limit=10)
 
+    # Only wired into the full shelf: the voice channel runs without mailbox
+    # reads, so its brief carries no inbox section (see domain/inbox.py).
+    if inbox is not None and prefs.morning_enabled("messages"):
+        brief["inbox"] = inbox.digest(today=reference)
+
     risks: list[str] = []
     opportunities: list[dict[str, Any]] = []
     if crm is not None:
@@ -213,6 +221,9 @@ def compose_morning_brief(
         risks.append(
             f"Chevauchement : « {clash['first']['title']} » et « {clash['second']['title']} »"
         )
+    waiting = brief.get("inbox", {}).get("waiting_on_you", [])
+    if waiting:
+        risks.append(f"{len(waiting)} message(s) de clients suivis sans réponse")
     if buckets["en_retard"]:
         risks.append(f"{len(buckets['en_retard'])} tâche(s) en retard")
     if prefs.morning_enabled("risques"):
@@ -254,6 +265,10 @@ def _morning_recommendations(brief: Mapping[str, Any]) -> list[str]:
     for contract in brief.get("expiring_contracts", [])[:1]:
         recommendations.append(
             f"Décider du renouvellement du contrat « {contract['title']} »."
+        )
+    for message in brief.get("inbox", {}).get("waiting_on_you", [])[:2]:
+        recommendations.append(
+            f"Répondre à {message['contact_name']} — « {message['subject']} »."
         )
     for action in brief.get("meeting_actions", [])[:1]:
         recommendations.append(
@@ -321,6 +336,24 @@ def format_morning_text(brief: Mapping[str, Any]) -> str:
                   + (f" — {p['blocker']}" if p.get("blocker") else "")
                   + (" — échéance dépassée" if p.get("late") else ""),
     )
+    inbox = brief.get("inbox") or {}
+    if inbox.get("available"):
+        if inbox.get("unread_count"):
+            lines += ["", f"Messages non lus : {inbox['unread_count']}"]
+            for message in inbox.get("waiting_on_you", []):
+                lines.append(
+                    f"- {message['contact_name']} (client suivi) — « {message['subject']} »"
+                )
+            others = [
+                message for message in inbox.get("unread", [])
+                if not message.get("contact_name")
+            ]
+            for message in others[:4]:
+                lines.append(f"- {message['sender']} — « {message['subject']} »")
+        else:
+            lines += ["", "Aucun message en attente."]
+    elif inbox.get("reason"):
+        lines += ["", f"Messagerie : {inbox['reason']}"]
     _append_list(
         lines, "Actions attendues d'autres personnes :", brief.get("meeting_actions", []),
         lambda a: f"- {a['owner']} : {a['description']}"

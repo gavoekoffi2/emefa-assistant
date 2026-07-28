@@ -84,6 +84,7 @@ def morning_brief(
         state.meetings,
         state.report_preferences.get(),
         agenda=state.agenda,
+        inbox=state.inbox,
     )
     return ComposedReport(
         brief_date=content["date"], content=content, text=format_morning_text(content)

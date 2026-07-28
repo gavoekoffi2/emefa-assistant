@@ -27,6 +27,7 @@ from emefa.domain.crm import (
 )
 from emefa.domain.documents import DocumentNotFoundError, DocumentStore
 from emefa.domain.email import EmailProvider
+from emefa.domain.inbox import InboxReader
 from emefa.domain.meetings import MeetingRepository
 from emefa.domain.memories import CATEGORIES, MemoryRepository
 from emefa.domain.onboarding import OnboardingRepository
@@ -92,6 +93,7 @@ def build_tool_shelf(
     onboarding: OnboardingRepository | None = None,
     preferences: ReportPreferencesRepository | None = None,
     agenda: AgendaRepository | None = None,
+    inbox: InboxReader | None = None,
 ) -> ToolShelf:
     """Assemble the governed tool shelf.
 
@@ -229,7 +231,9 @@ def build_tool_shelf(
         )
     )
     if tasks is not None:
-        _add_task_skills(shelf, tasks, profiles, prospects, crm, meetings, preferences, agenda)
+        _add_task_skills(
+            shelf, tasks, profiles, prospects, crm, meetings, preferences, agenda, inbox
+        )
     if crm is not None:
         _add_crm_skills(shelf, crm)
     if agenda is not None:
@@ -819,6 +823,7 @@ def _add_task_skills(
     meetings: MeetingRepository | None = None,
     preferences: ReportPreferencesRepository | None = None,
     agenda: AgendaRepository | None = None,
+    inbox: InboxReader | None = None,
 ) -> None:
     def create_task(arguments: Mapping[str, Any]) -> dict[str, Any]:
         title = str(arguments.get("title", "")).strip()[:200]
@@ -856,7 +861,9 @@ def _add_task_skills(
         return preferences.get() if preferences is not None else None
 
     def daily_brief(_arguments: Mapping[str, Any]) -> dict[str, Any]:
-        brief = compose_morning_brief(profiles, tasks, prospects, crm, meetings, _prefs(), agenda=agenda)
+        brief = compose_morning_brief(
+            profiles, tasks, prospects, crm, meetings, _prefs(), agenda=agenda, inbox=inbox
+        )
         return {**brief, "text": format_morning_text(brief)}
 
     def evening_report(_arguments: Mapping[str, Any]) -> dict[str, Any]:

@@ -35,6 +35,11 @@ from typing import Any, Protocol
 from emefa.domain.memories import MemoryRepository
 from emefa.domain.memory import vocabulary
 
+
+class BudgetGate(Protocol):
+    def allow(self, scope: str) -> bool: ...
+
+
 #: Below this, a turn is a greeting or an acknowledgement.
 MIN_TRANSCRIPT_CHARS = 40
 #: Above this, we are looking at a pasted document; extraction reads the head.
@@ -108,9 +113,11 @@ class MemoryIngestor:
         self,
         memories: MemoryRepository,
         extractor: FactExtractor | None = None,
+        guard: BudgetGate | None = None,
     ) -> None:
         self.memories = memories
         self.extractor = extractor
+        self.guard = guard
 
     async def ingest(
         self,
@@ -119,6 +126,7 @@ class MemoryIngestor:
         source: str = "conversation",
         event_type: str = "exchange",
         log_event: bool = True,
+        scope: str = "extraction",
     ) -> IngestionResult:
         cleaned = transcript.strip()
         event_id: str | None = None
@@ -129,6 +137,12 @@ class MemoryIngestor:
 
         if self.extractor is None or len(cleaned) < MIN_TRANSCRIPT_CHARS:
             return IngestionResult(skipped=True)
+
+        # The event is on the record either way; what the budget stops is the
+        # spending. Checked before the call, not after, and consolidation can
+        # still pick the exchange up tomorrow.
+        if self.guard is not None and not self.guard.allow(scope):
+            return IngestionResult(skipped=True, error="budget_exhausted")
 
         try:
             extracted = await self.extractor.extract(cleaned[:MAX_TRANSCRIPT_CHARS])

@@ -94,6 +94,7 @@ class ConsolidationPass:
                 # The events are already in the log; re-logging the batch would
                 # make the next pass read its own output.
                 log_event=False,
+                scope="consolidation",
             )
             batches += 1
             created += result.created

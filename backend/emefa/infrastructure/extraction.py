@@ -8,6 +8,8 @@ emit a tool call. Sharing the brain would make all four of those accidental.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import httpx
 
 from emefa.domain.memory.ingest import (
@@ -32,8 +34,10 @@ class LLMFactExtractor:
         model: str,
         base_url: str,
         transport: httpx.AsyncBaseTransport | None = None,
+        on_usage: Callable[[int, int], None] | None = None,
     ) -> None:
         self.model = model
+        self.on_usage = on_usage
         self.client = httpx.AsyncClient(
             base_url=base_url.rstrip("/"),
             headers={"Authorization": f"Bearer {api_key}"},
@@ -71,6 +75,12 @@ class LLMFactExtractor:
         )
         response.raise_for_status()
         payload = response.json()
+        usage = payload.get("usage")
+        if self.on_usage is not None and isinstance(usage, dict):
+            self.on_usage(
+                int(usage.get("prompt_tokens") or 0),
+                int(usage.get("completion_tokens") or 0),
+            )
         content = payload["choices"][0]["message"].get("content") or ""
         return parse_extraction(content)
 

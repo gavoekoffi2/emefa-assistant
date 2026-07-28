@@ -30,8 +30,10 @@ from emefa.domain.accounts import AccountRepository
 from emefa.domain.agent import AgentEngine, AgentStep, Brain
 from emefa.domain.approvals import ApprovalRepository
 from emefa.domain.briefings import BriefingRepository
+from emefa.domain.budget import BudgetGuard, UsageTracker
 from emefa.domain.conversations import VOICE_CONVERSATION_ID, ConversationStore
 from emefa.domain.devices import DeviceRepository
+from emefa.domain.events import EventBus
 from emefa.domain.documents import DocumentStore
 from emefa.domain.profiles import ProfileRepository
 from emefa.domain.email import EmailProvider
@@ -81,6 +83,21 @@ def create_app(
     briefings = BriefingRepository(active_settings.database_path)
     conversations = ConversationStore(active_settings.database_path)
     documents = DocumentStore(active_settings.database_path)
+    bus = EventBus()
+    usage = UsageTracker(
+        active_settings.database_path,
+        active_settings.price_per_mtok_in,
+        active_settings.price_per_mtok_out,
+    )
+    budget = BudgetGuard(
+        usage,
+        {
+            "extraction": active_settings.daily_token_limit_extraction,
+            "consolidation": active_settings.daily_token_limit_consolidation,
+            "proactive": active_settings.daily_token_limit_proactive,
+        },
+        bus,
+    )
     active_email_provider = email_provider
     if active_email_provider is None and active_settings.email_account:
         active_email_provider = HimalayaEmailProvider(
@@ -203,6 +220,7 @@ def create_app(
             model=llm_model,
             base_url=llm_base_url,
             context_provider=compose_text_context,
+            on_usage=lambda inp, out: usage.record("chat", inp, out, model=llm_model),
         )
     else:
         selected_brain = NotConfiguredBrain()
@@ -218,11 +236,16 @@ def create_app(
     # ingestor degrades to logging events only — the conversation is still
     # recorded, it simply yields no facts until a key is configured.
     fact_extractor = (
-        LLMFactExtractor(api_key=llm_api_key, model=llm_model, base_url=llm_base_url)
+        LLMFactExtractor(
+            api_key=llm_api_key,
+            model=llm_model,
+            base_url=llm_base_url,
+            on_usage=lambda inp, out: usage.record("extraction", inp, out, model=llm_model),
+        )
         if llm_api_key
         else None
     )
-    ingestor = MemoryIngestor(memories, fact_extractor)
+    ingestor = MemoryIngestor(memories, fact_extractor, guard=budget)
     consolidation = ConsolidationPass(memories, ingestor)
 
     realtime_key = (
@@ -297,6 +320,9 @@ def create_app(
     application.state.documents = documents
     application.state.uploaded_files = uploaded_files
     application.state.skills = skills
+    application.state.bus = bus
+    application.state.usage = usage
+    application.state.budget = budget
     application.state.website_importer = WebsiteProfileImporter()
     application.state.compose_context = compose_context
     application.state.compose_text_context = compose_text_context

@@ -331,6 +331,28 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         )
         """,
     ),
+    # 13 — model usage accounting.
+    #
+    # Tokens are always recorded; money only when a price is configured. An
+    # invented price is worse than no price: it produces a budget report the
+    # owner would act on and that is quietly wrong.
+    (
+        f"""
+        CREATE TABLE usage_entries (
+            entry_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            scope TEXT NOT NULL,
+            provider TEXT NOT NULL DEFAULT '',
+            model TEXT NOT NULL DEFAULT '',
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            cost_usd REAL NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE INDEX idx_usage_scope_day ON usage_entries(user_id, created_at, scope)",
+    ),
 )
 
 

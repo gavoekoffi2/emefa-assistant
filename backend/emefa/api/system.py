@@ -40,3 +40,16 @@ def system_status(
         open_task_count=len(state.tasks.list_open()),
         schema_version=state.devices.schema_version(),
     )
+
+
+@router.get("/budget")
+def budget_report(
+    request: Request,
+    device: Annotated[Device, Depends(current_device)],
+) -> dict:
+    """Today's token spend per scope.
+
+    `pricing_configured` is false until the owner enters their provider's real
+    prices; the UI must then show tokens rather than a confident 0,00 $.
+    """
+    return request.app.state.budget.report()

@@ -33,6 +33,16 @@ class Settings(BaseSettings):
     himalaya_binary: str = "himalaya"
     himalaya_config: Path | None = None
     web_dist_path: Path | None = None
+    #: Provider prices, in USD per million tokens. Left at zero because a
+    #: guessed price produces a spend report the owner would act on and that
+    #: is quietly wrong; token counters work regardless.
+    price_per_mtok_in: float = 0.0
+    price_per_mtok_out: float = 0.0
+    #: Daily token ceilings for work EMEFA starts on her own initiative
+    #: (CLAUDE.md §34). The user's own chat and voice are not capped here.
+    daily_token_limit_extraction: int = 200_000
+    daily_token_limit_consolidation: int = 200_000
+    daily_token_limit_proactive: int = 100_000
     #: Skill catalogue directory. Defaults to the one shipped with the
     #: package; point it elsewhere to add skills without a redeploy.
     skills_catalogue_path: Path | None = None

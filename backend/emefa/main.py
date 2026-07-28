@@ -82,7 +82,12 @@ from emefa.scheduler import (
     consolidation_scheduler_loop,
     proactive_scheduler_loop,
 )
-from emefa.skills import add_entity_skills, add_mission_skills, build_tool_shelf
+from emefa.skills import (
+    add_entity_skills,
+    add_mission_skills,
+    add_visual_skills,
+    build_tool_shelf,
+)
 
 request_logger = logging.getLogger("emefa.request")
 
@@ -145,6 +150,7 @@ def create_app(
             include_mailbox_read=include_mailbox_read,
         )
         add_entity_skills(shelf, entity_graph, timeline)
+        add_visual_skills(shelf, documents, uploaded_files)
         return shelf
 
     tool_shelf = make_shelf()

@@ -7,6 +7,7 @@ import { MemoryPanel } from './MemoryPanel'
 import { PipelinePanel } from './PipelinePanel'
 import { SkillsPanel } from './SkillsPanel'
 import { CommandCenterPanel } from './CommandCenterPanel'
+import { VisualCards, type VisualCardData } from './VisualCard'
 import { DeliverablesPanel } from './DeliverablesPanel'
 import type { DeliverableRecord, SourceFileRecord } from './DeliverablesPanel'
 
@@ -32,6 +33,7 @@ type AgentRun = {
   error?: string | null
   pending_action?: { name: string; arguments: Record<string, unknown> } | null
   action_id?: string | null
+  cards?: VisualCardData[]
 }
 type PendingApproval = { action_id: string; name: string; arguments: Record<string, unknown> }
 type DemoScenario = { id: string; title: string; prompt: string; status: 'live' | 'assisted' | 'preview'; note: string }
@@ -80,6 +82,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   const [state, setState] = useState<VoiceState>('idle')
   const [transcript, setTranscript] = useState('')
   const [answer, setAnswer] = useState('Bonsoir Claude. Je suis prête lorsque vous l’êtes.')
+  const [cards, setCards] = useState<VisualCardData[]>([])
   const [notice, setNotice] = useState('')
   const [history, setHistory] = useState<ConversationTurn[]>([])
   const [activeNodes, setActiveNodes] = useState<number[]>([0])
@@ -202,6 +205,9 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
     } else if (run.status === 'blocked') { text = 'Cette action est bloquée par la politique de sécurité d’EMEFA.'; outcome = 'error' }
     else { text = agentErrorCopy[run.error ?? ''] || 'La demande n’a pas abouti.'; outcome = 'error' }
     setAnswer(text)
+    // Cards belong to the reply that raised them: a turn with nothing to show
+    // clears the previous one rather than leaving a stale chart on screen.
+    setCards(run.cards ?? [])
     setHistory((current) => [...current.slice(-7), { id: crypto.randomUUID(), role: 'assistant', text }])
     settleState(outcome)
     refreshSystem()
@@ -463,7 +469,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
           >{visualMode === 'face' ? 'NOYAU' : 'VISAGE'}</button>
           <div className="core-readout right"><span>LATENCE</span><strong>TEMPS RÉEL</strong></div>
         </div>
-        <div className="voice-copy"><p className="heard">{state === 'listening' && transcript ? `« ${transcript} »` : latestUser ? `« ${latestUser} »` : live ? 'Parlez, je vous écoute…' : visualMode === 'face' ? 'Touchez le visage pour commencer à parler' : 'Touchez le noyau pour commencer à parler'}</p><p className="answer">{answer}</p></div>
+        <div className="voice-copy"><p className="heard">{state === 'listening' && transcript ? `« ${transcript} »` : latestUser ? `« ${latestUser} »` : live ? 'Parlez, je vous écoute…' : visualMode === 'face' ? 'Touchez le visage pour commencer à parler' : 'Touchez le noyau pour commencer à parler'}</p><p className="answer">{answer}</p><VisualCards cards={cards} /></div>
         <div className="voice-controls"><button className={live ? 'danger' : ''} onClick={() => void toggleLive()}><span className="mic-symbol">⌁</span>{live ? 'Terminer la conversation' : 'Initialiser la liaison vocale'}</button><small>{live ? 'Conversation continue · interrompez EMEFA à tout moment' : 'Activation unique · échange vocal naturel'}</small></div>
       </main>
       {scenariosOpen && scenarios.length > 0 && (

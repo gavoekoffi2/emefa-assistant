@@ -21,6 +21,7 @@ from emefa.domain.profiles import ASSISTANT_FIELDS, BUSINESS_FIELDS, ProfileRepo
 from emefa.domain.prospects import STAGES, ProspectRepository
 from emefa.domain.uploaded_files import UploadedFileNotFoundError, UploadedFileStore
 from emefa.domain.tasks import TaskRepository
+from emefa.domain import visuals
 from emefa.observability import audit
 
 
@@ -1240,5 +1241,267 @@ def add_entity_skills(shelf: ToolShelf, graph, timeline) -> None:
                 "additionalProperties": False,
             },
             handler=entity_list,
+        )
+    )
+
+
+def add_visual_skills(shelf: ToolShelf, documents: DocumentStore, uploaded_files) -> None:
+    """Let EMEFA show something alongside what she says.
+
+    Every card is built from data this deployment actually holds. There is no
+    image search and no map tiles, and the tool descriptions say so, because
+    the alternative is an assistant that promises a picture and renders a
+    broken frame.
+    """
+
+    def show_file(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        file_id = str(arguments.get("file_id", "")).strip()
+        try:
+            item = uploaded_files.describe(file_id)
+        except (UploadedFileNotFoundError, ValueError):
+            return {"error": "file_not_found"}
+        caption = str(arguments.get("caption", ""))
+        kind = (item.content_type or "").lower()
+        try:
+            if kind.startswith("image/"):
+                card = visuals.image_card(file_id, item.filename, caption)
+            elif kind.startswith("video/"):
+                card = visuals.video_card(file_id, item.filename, caption)
+            else:
+                card = visuals.file_card(file_id, item.filename, item.content_type, caption)
+        except visuals.VisualCardError as error:
+            return {"error": str(error)}
+        return {"shown": visuals.offer(card), "card": card.summary()}
+
+    def show_document(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        document_id = str(arguments.get("document_id", "")).strip()
+        try:
+            # `describe`, not `get`: the latter returns a filesystem path, and
+            # a card needs the title and the download URL.
+            document = documents.describe(document_id)
+        except (DocumentNotFoundError, ValueError, OSError):
+            return {"error": "document_not_found"}
+        try:
+            card = visuals.document_card(
+                document_id,
+                document.get("title") or "Document",
+                document.get("download_url", ""),
+                str(arguments.get("caption", "")),
+            )
+        except visuals.VisualCardError as error:
+            return {"error": str(error)}
+        return {"shown": visuals.offer(card), "card": card.summary()}
+
+    def show_chart(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        points = arguments.get("points")
+        if not isinstance(points, list):
+            return {"error": "points_required"}
+        try:
+            card = visuals.chart_card(
+                str(arguments.get("title", "Graphique")),
+                points,
+                str(arguments.get("shape", "bar")),
+                str(arguments.get("unit", "")),
+                str(arguments.get("caption", "")),
+            )
+        except visuals.VisualCardError as error:
+            return {"error": str(error)}
+        return {"shown": visuals.offer(card), "card": card.summary()}
+
+    def show_table(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        columns, rows = arguments.get("columns"), arguments.get("rows")
+        if not isinstance(columns, list) or not isinstance(rows, list):
+            return {"error": "columns_and_rows_required"}
+        try:
+            card = visuals.table_card(
+                str(arguments.get("title", "Tableau")),
+                columns,
+                rows,
+                str(arguments.get("caption", "")),
+            )
+        except visuals.VisualCardError as error:
+            return {"error": str(error)}
+        return {"shown": visuals.offer(card), "card": card.summary()}
+
+    def show_metrics(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        metrics = arguments.get("metrics")
+        if not isinstance(metrics, list):
+            return {"error": "metrics_required"}
+        try:
+            card = visuals.metrics_card(
+                str(arguments.get("title", "Résultats")),
+                metrics,
+                str(arguments.get("caption", "")),
+            )
+        except visuals.VisualCardError as error:
+            return {"error": str(error)}
+        return {"shown": visuals.offer(card), "card": card.summary()}
+
+    def show_location(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        try:
+            card = visuals.map_card(
+                str(arguments.get("title", "Localisation")),
+                arguments.get("latitude"),
+                arguments.get("longitude"),
+                str(arguments.get("label", "")),
+                str(arguments.get("caption", "")),
+            )
+        except visuals.VisualCardError as error:
+            return {"error": str(error)}
+        return {"shown": visuals.offer(card), "card": card.summary()}
+
+    shelf.add(
+        AgentTool(
+            name="show_file",
+            description=(
+                "Affiche un fichier que l'utilisateur a envoyé : image en grand, "
+                "vidéo, ou lien de téléchargement selon le type. Utilise file_list "
+                "pour retrouver l'identifiant. Tu ne peux PAS aller chercher une "
+                "image sur le web : si on te demande une photo que tu n'as pas, "
+                "dis-le simplement."
+            ),
+            risk=ActionRisk.PERSONAL_READ,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "file_id": {"type": "string"},
+                    "caption": {"type": "string", "description": "Ce que l'utilisateur regarde"},
+                },
+                "required": ["file_id"],
+                "additionalProperties": False,
+            },
+            handler=show_file,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="show_document",
+            description=(
+                "Affiche un document produit par EMEFA (devis, proposition, compte "
+                "rendu) avec son lien de téléchargement."
+            ),
+            risk=ActionRisk.PERSONAL_READ,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "document_id": {"type": "string"},
+                    "caption": {"type": "string"},
+                },
+                "required": ["document_id"],
+                "additionalProperties": False,
+            },
+            handler=show_document,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="show_chart",
+            description=(
+                "Affiche un graphique à partir de chiffres que tu possèdes réellement "
+                "(pipeline, tâches, montants donnés par l'utilisateur). N'invente "
+                "jamais de valeurs pour remplir un graphique."
+            ),
+            risk=ActionRisk.PERSONAL_READ,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "shape": {"type": "string", "enum": ["bar", "line"]},
+                    "unit": {"type": "string", "description": "FCFA, %, jours…"},
+                    "points": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string"},
+                                "value": {"type": "number"},
+                            },
+                            "required": ["label", "value"],
+                        },
+                    },
+                    "caption": {"type": "string"},
+                },
+                "required": ["title", "points"],
+                "additionalProperties": False,
+            },
+            handler=show_chart,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="show_table",
+            description=(
+                "Affiche un tableau lisible plutôt qu'une longue liste dans la "
+                "conversation. À utiliser dès qu'il y a plus de quatre lignes à comparer."
+            ),
+            risk=ActionRisk.PERSONAL_READ,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "columns": {"type": "array", "items": {"type": "string"}},
+                    "rows": {
+                        "type": "array",
+                        "items": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "caption": {"type": "string"},
+                },
+                "required": ["title", "columns", "rows"],
+                "additionalProperties": False,
+            },
+            handler=show_table,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="show_metrics",
+            description="Affiche quelques chiffres clés côte à côte (résultat d'analyse, bilan).",
+            risk=ActionRisk.PERSONAL_READ,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "metrics": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string"},
+                                "value": {"type": "string"},
+                                "hint": {"type": "string"},
+                            },
+                            "required": ["label", "value"],
+                        },
+                    },
+                    "caption": {"type": "string"},
+                },
+                "required": ["title", "metrics"],
+                "additionalProperties": False,
+            },
+            handler=show_metrics,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="show_location",
+            description=(
+                "Situe un lieu par ses coordonnées. Ce n'est pas une carte routière "
+                "ni satellite : aucun fournisseur de cartes n'est connecté, et tu "
+                "dois le dire à l'utilisateur plutôt que de laisser croire le contraire."
+            ),
+            risk=ActionRisk.PERSONAL_READ,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "latitude": {"type": "number"},
+                    "longitude": {"type": "number"},
+                    "label": {"type": "string"},
+                    "caption": {"type": "string"},
+                },
+                "required": ["title", "latitude", "longitude"],
+                "additionalProperties": False,
+            },
+            handler=show_location,
         )
     )

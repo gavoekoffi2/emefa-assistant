@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from emefa.domain import storage
+from emefa.domain.agenda import AgendaRepository
 from emefa.domain.crm import CrmRepository
 from emefa.domain.meetings import MeetingRepository
 from emefa.domain.profiles import ProfileRepository
@@ -26,6 +27,7 @@ from emefa.domain.storage import DEFAULT_USER_ID
 from emefa.domain.tasks import TaskRepository
 
 MORNING_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("agenda", "Agenda du jour"),
     ("priorites", "Priorités du jour"),
     ("taches", "Tâches"),
     ("actions_reunions", "Actions issues des réunions"),
@@ -39,6 +41,7 @@ MORNING_SECTIONS: tuple[tuple[str, str], ...] = (
 )
 EVENING_SECTIONS: tuple[tuple[str, str], ...] = (
     ("resume", "Résumé de la journée"),
+    ("agenda_demain", "Agenda de demain"),
     ("termine", "Terminé aujourd'hui"),
     ("restant", "Reste à faire"),
     ("blocages", "Blocages"),
@@ -131,6 +134,7 @@ def compose_morning_brief(
     meetings: MeetingRepository | None = None,
     preferences: ReportPreferences | None = None,
     today: date | None = None,
+    agenda: AgendaRepository | None = None,
 ) -> dict[str, Any]:
     reference = today or date.today()
     prefs = preferences or ReportPreferences((), ())
@@ -153,6 +157,9 @@ def compose_morning_brief(
         "open_task_count": sum(len(items) for items in buckets.values()),
         "tasks": buckets,
     }
+    # The day opens on the schedule: an executive reads their agenda first.
+    if agenda is not None and prefs.morning_enabled("agenda"):
+        brief["agenda"] = agenda.digest(reference)
     if prefs.morning_enabled("priorites") and business.current_priorities:
         brief["priorities"] = business.current_priorities
 
@@ -202,6 +209,10 @@ def compose_morning_brief(
                     }
                 )
 
+    for clash in brief.get("agenda", {}).get("conflicts", []):
+        risks.append(
+            f"Chevauchement : « {clash['first']['title']} » et « {clash['second']['title']} »"
+        )
     if buckets["en_retard"]:
         risks.append(f"{len(buckets['en_retard'])} tâche(s) en retard")
     if prefs.morning_enabled("risques"):
@@ -217,6 +228,14 @@ def compose_morning_brief(
 def _morning_recommendations(brief: Mapping[str, Any]) -> list[str]:
     """Next-best actions, derived only from facts already in the brief."""
     recommendations: list[str] = []
+    agenda_block = brief.get("agenda", {})
+    if agenda_block.get("first_event"):
+        recommendations.append(f"Premier rendez-vous : {agenda_block['first_event']}.")
+    for clash in agenda_block.get("conflicts", [])[:1]:
+        recommendations.append(
+            f"Arbitrer le chevauchement entre « {clash['first']['title']} » et "
+            f"« {clash['second']['title']} »."
+        )
     late = brief.get("tasks", {}).get("en_retard", [])
     if late:
         recommendations.append(f"Traiter d'abord « {late[0]['title']} », en retard.")
@@ -248,6 +267,16 @@ def format_morning_text(brief: Mapping[str, Any]) -> str:
     lines = [f"Brief EMEFA du {brief.get('date', '')}"]
     if brief.get("company_name"):
         lines[0] += f" — {brief['company_name']}"
+    agenda_block = brief.get("agenda") or {}
+    if agenda_block.get("event_count"):
+        lines += ["", f"Agenda du jour : {agenda_block['event_count']} rendez-vous"]
+        lines += [f"- {event['label']}" for event in agenda_block.get("events", [])]
+        for clash in agenda_block.get("conflicts", []):
+            lines.append(
+                f"- ⚠ chevauchement : « {clash['first']['title']} » et « {clash['second']['title']} »"
+            )
+    elif "agenda" in brief:
+        lines += ["", "Agenda du jour : aucun rendez-vous."]
     if brief.get("priorities"):
         lines += ["", f"Priorités du jour : {brief['priorities']}"]
 
@@ -337,6 +366,7 @@ def compose_evening_report(
     meetings: MeetingRepository | None = None,
     preferences: ReportPreferences | None = None,
     today: date | None = None,
+    agenda: AgendaRepository | None = None,
 ) -> dict[str, Any]:
     reference = today or date.today()
     prefs = preferences or ReportPreferences((), ())
@@ -392,7 +422,16 @@ def compose_evening_report(
     if prefs.evening_enabled("blocages"):
         report["blockers"] = blockers
 
+    if agenda is not None and prefs.evening_enabled("agenda_demain"):
+        report["tomorrow_agenda"] = [
+            {"label": event.label(), "event_id": event.event_id}
+            for event in agenda.day(tomorrow)
+        ]
+
     tomorrow_items: list[str] = []
+    tomorrow_items += [
+        f"Rendez-vous : {item['label']}" for item in report.get("tomorrow_agenda", [])[:3]
+    ]
     tomorrow_items += [f"Rattraper : {item['title']}" for item in late[:3]]
     tomorrow_items += [f"Terminer : {item['title']}" for item in due_today[:3]]
     tomorrow_items += [
@@ -451,6 +490,10 @@ def format_evening_text(report: Mapping[str, Any]) -> str:
     _append_list(lines, "Blocages :", report.get("blockers", []), lambda item: f"- {item}")
     _append_list(
         lines, "Recommandations :", report.get("recommendations", []), lambda item: f"- {item}"
+    )
+    _append_list(
+        lines, "Agenda de demain :", report.get("tomorrow_agenda", []),
+        lambda item: f"- {item['label']}",
     )
     _append_list(
         lines, "Priorités de demain :", report.get("tomorrow", []), lambda item: f"- {item}"

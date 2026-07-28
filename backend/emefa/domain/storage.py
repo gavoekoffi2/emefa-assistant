@@ -461,6 +461,35 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         """,
         f"INSERT INTO report_preferences (user_id) VALUES ('{DEFAULT_USER_ID}')",
     ),
+    # 16 — local agenda. Times are stored as naive local ISO strings
+    # ("YYYY-MM-DDTHH:MM"), consistent with the date handling elsewhere; the
+    # executive's timezone lives on their profile.
+    (
+        f"""
+        CREATE TABLE events (
+            event_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            title TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'rendez_vous',
+            starts_at TEXT NOT NULL,
+            ends_at TEXT,
+            location TEXT NOT NULL DEFAULT '',
+            participants TEXT NOT NULL DEFAULT '',
+            contact_id TEXT REFERENCES contacts(contact_id) ON DELETE SET NULL,
+            project_id TEXT REFERENCES projects(project_id) ON DELETE SET NULL,
+            notes TEXT NOT NULL DEFAULT '',
+            source TEXT NOT NULL DEFAULT 'local',
+            external_id TEXT,
+            meeting_id TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE INDEX idx_events_when ON events(user_id, starts_at)",
+        # An external calendar must never create the same event twice.
+        "CREATE UNIQUE INDEX idx_events_external ON events(source, external_id)",
+    ),
 )
 
 

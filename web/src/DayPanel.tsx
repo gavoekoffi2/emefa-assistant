@@ -2,6 +2,15 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from './App'
 
 type Report = { brief_date: string; content: Record<string, unknown>; text: string }
+type AgendaEvent = { event_id: string; label: string; title: string; contact_id: string | null }
+type Conflict = { first: { title: string }; second: { title: string } }
+type Agenda = {
+  event_count: number
+  events: AgendaEvent[]
+  conflicts: Conflict[]
+  tomorrow_count: number
+  tomorrow_first: string
+}
 type SectionOption = { key: string; label: string }
 type Preferences = {
   morning_sections: string[]
@@ -35,6 +44,7 @@ export function DayPanel({ open, onClose, onAsk }: {
 }) {
   const [moment, setMoment] = useState<Moment>(currentMoment)
   const [report, setReport] = useState<Report | null>(null)
+  const [agenda, setAgenda] = useState<Agenda | null>(null)
   const [preferences, setPreferences] = useState<Preferences | null>(null)
   const [tuning, setTuning] = useState(false)
   const [error, setError] = useState('')
@@ -55,6 +65,7 @@ export function DayPanel({ open, onClose, onAsk }: {
     if (!open) return
     load(moment)
     api<Preferences>('/v1/briefings/preferences').then(setPreferences).catch(() => undefined)
+    api<Agenda>('/v1/agenda').then(setAgenda).catch(() => undefined)
   }, [open, moment, load])
 
   if (!open) return null
@@ -113,6 +124,39 @@ export function DayPanel({ open, onClose, onAsk }: {
         </div>
 
         {error && <div className="form-error" role="alert">{error}</div>}
+
+        {agenda && (
+          <div className="task-group">
+            <span className="profile-section">
+              {moment === 'morning' ? 'Agenda du jour' : 'Agenda de demain'}
+            </span>
+            {moment === 'morning' && agenda.event_count === 0 && (
+              <p className="profile-status">Aucun rendez-vous aujourd’hui.</p>
+            )}
+            {moment === 'morning' && agenda.events.map((event) => (
+              <div key={event.event_id} className="task-row">
+                <div><strong>{event.label}</strong></div>
+                <button onClick={() => {
+                  onClose()
+                  onAsk(`Prépare mon rendez-vous « ${event.title} » : rappelle-moi le contexte et les points à aborder.`)
+                }}>Préparer</button>
+              </div>
+            ))}
+            {moment === 'morning' && agenda.conflicts.map((clash, index) => (
+              <p key={index} className="form-error" role="alert">
+                Chevauchement : « {clash.first.title} » et « {clash.second.title} ».
+              </p>
+            ))}
+            {moment === 'evening' && (
+              <p className="profile-status">
+                {agenda.tomorrow_count
+                  ? `${agenda.tomorrow_count} rendez-vous demain — le premier à ${agenda.tomorrow_first}.`
+                  : 'Aucun rendez-vous demain.'}
+              </p>
+            )}
+          </div>
+        )}
+
         {!report && !error && <p className="profile-status">Composition en cours…</p>}
 
         {report && (

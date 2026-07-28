@@ -13,6 +13,7 @@ import asyncio
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from emefa.domain.agenda import AgendaRepository
 from emefa.domain.briefings import BriefingRepository
 from emefa.domain.crm import CrmRepository
 from emefa.domain.email import EmailProvider
@@ -48,6 +49,7 @@ async def run_brief_job(
     crm: CrmRepository | None = None,
     meetings: MeetingRepository | None = None,
     preferences: ReportPreferencesRepository | None = None,
+    agenda: AgendaRepository | None = None,
 ) -> dict[str, Any]:
     """Generate and store today's brief once; e-mail it only under the
     standing approval, and only once per day."""
@@ -61,6 +63,7 @@ async def run_brief_job(
             crm,
             meetings,
             preferences.get() if preferences is not None else None,
+            agenda=agenda,
         )
         stored = briefings.save(today, brief)
         audit("brief_generated", brief_date=today)
@@ -87,6 +90,7 @@ async def run_evening_job(
     crm: CrmRepository | None = None,
     meetings: MeetingRepository | None = None,
     preferences: ReportPreferencesRepository | None = None,
+    agenda: AgendaRepository | None = None,
 ) -> dict[str, Any]:
     """Same contract as the morning job, for the end-of-day report."""
     today = date.today().isoformat()
@@ -98,6 +102,7 @@ async def run_evening_job(
         crm,
         meetings,
         preferences.get() if preferences is not None else None,
+        agenda=agenda,
     )
     existing = reports.get(today)
     stored = reports.save(today, report)
@@ -153,6 +158,7 @@ async def brief_scheduler_loop(
     crm: CrmRepository | None = None,
     meetings: MeetingRepository | None = None,
     preferences: ReportPreferencesRepository | None = None,
+    agenda: AgendaRepository | None = None,
 ) -> None:
     while True:
         delay = seconds_until_hour(hour, datetime.now())
@@ -160,7 +166,7 @@ async def brief_scheduler_loop(
         try:
             await run_brief_job(
                 profiles, tasks, prospects, briefings, email_provider, email_to,
-                crm, meetings, preferences,
+                crm, meetings, preferences, agenda,
             )
         except Exception:  # one failed run must not kill the schedule
             audit("brief_job_failed")
@@ -178,6 +184,7 @@ async def evening_scheduler_loop(
     crm: CrmRepository | None = None,
     meetings: MeetingRepository | None = None,
     preferences: ReportPreferencesRepository | None = None,
+    agenda: AgendaRepository | None = None,
 ) -> None:
     while True:
         delay = seconds_until_hour(hour, datetime.now())
@@ -185,7 +192,7 @@ async def evening_scheduler_loop(
         try:
             await run_evening_job(
                 profiles, tasks, reports, email_provider, email_to,
-                crm, meetings, preferences,
+                crm, meetings, preferences, agenda,
             )
         except Exception:
             audit("evening_job_failed")

@@ -38,6 +38,7 @@ def scenarios(
     has_meetings = "meeting_capture" in skills
     has_proposal = "workflow_commercial_proposal" in skills
     has_office = "spreadsheet_create" in skills
+    has_agenda = "agenda_prepare_meeting" in skills
 
     email_note = (
         "Réel : EMEFA peut préparer un e-mail ; l'envoi passe par votre approbation."
@@ -87,6 +88,20 @@ def scenarios(
                 "l'historique et les signaux d'alerte du projet."
                 if has_crm
                 else "Aperçu : nécessite la mémoire relationnelle."
+            ),
+        ),
+        Scenario(
+            id="meeting_prep",
+            title="Préparation de réunion",
+            prompt="Prépare ma réunion avec Horizon.",
+            status="live" if has_agenda else "preview",
+            note=(
+                "Réel : EMEFA rassemble le client, le projet, les devis en attente, "
+                "les contrats, les derniers échanges et les tâches liées, puis propose "
+                "les points à aborder. L'agenda est celui qu'elle tient pour vous ; "
+                "aucune synchronisation de calendrier externe n'est encore active."
+                if has_agenda
+                else "Aperçu : la préparation de réunion n'est pas disponible."
             ),
         ),
         Scenario(

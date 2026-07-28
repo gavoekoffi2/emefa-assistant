@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 
 from emefa import __version__
+from emefa.api.agenda import router as agenda_router
 from emefa.api.agent import router as agent_router
 from emefa.api.briefings import router as briefings_router
 from emefa.api.command_center import router as command_center_router
@@ -28,6 +29,7 @@ from emefa.api.tasks import router as tasks_router
 from emefa.api.voice_llm import router as voice_llm_router
 from emefa.api.web_session import router as web_session_router
 from emefa.config import Settings
+from emefa.domain.agenda import AgendaRepository
 from emefa.domain.agent import AgentEngine, AgentStep, Brain
 from emefa.domain.approvals import ApprovalRepository
 from emefa.domain.briefings import BriefingRepository
@@ -91,6 +93,7 @@ def create_app(
     approvals = ApprovalRepository(active_settings.database_path)
     documents = DocumentStore(active_settings.database_path)
     crm = CrmRepository(active_settings.database_path)
+    agenda = AgendaRepository(active_settings.database_path, crm, tasks)
     meetings = MeetingRepository(active_settings.database_path, crm, tasks, documents)
     onboarding = OnboardingRepository(active_settings.database_path, profiles)
     report_preferences = ReportPreferencesRepository(active_settings.database_path)
@@ -128,6 +131,10 @@ def create_app(
         crm_block = crm.context_block()
         if crm_block:
             parts.append(crm_block)
+        agenda_digest = agenda.digest()
+        if agenda_digest["event_count"]:
+            schedule = ", ".join(item["label"] for item in agenda_digest["events"][:6])
+            parts.append(f"Agenda du jour ({agenda_digest['date']}) : {schedule}.")
         # While the welcome interview is unfinished, EMEFA is told what she
         # still needs to learn — so onboarding happens inside the ordinary
         # conversation instead of behind a form (mission §1).
@@ -268,6 +275,7 @@ def create_app(
                     crm,
                     meetings,
                     report_preferences,
+                    agenda,
                 )
             )
         if active_settings.evening_hour is not None:
@@ -282,6 +290,7 @@ def create_app(
                     crm,
                     meetings,
                     report_preferences,
+                    agenda,
                 )
             )
         routine_task = asyncio.create_task(
@@ -328,6 +337,7 @@ def create_app(
     application.state.conversations = conversations
     application.state.documents = documents
     application.state.crm = crm
+    application.state.agenda = agenda
     application.state.meetings = meetings
     application.state.onboarding = onboarding
     application.state.report_preferences = report_preferences
@@ -357,6 +367,7 @@ def create_app(
             workflows=workflows,
             onboarding=onboarding,
             preferences=report_preferences,
+            agenda=agenda,
         ),
         memory=conversations,
     )
@@ -384,6 +395,7 @@ def create_app(
             workflows=workflows,
             onboarding=onboarding,
             preferences=report_preferences,
+            agenda=agenda,
         ),
         memory=conversations,
     )
@@ -466,6 +478,7 @@ def create_app(
     application.include_router(profile_router)
     application.include_router(briefings_router)
     application.include_router(command_center_router)
+    application.include_router(agenda_router)
     application.include_router(crm_router)
     application.include_router(meetings_router)
     application.include_router(onboarding_router)

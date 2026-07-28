@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from dataclasses import asdict
 from typing import Any
 
+from emefa.domain.agenda import EVENT_KINDS, AgendaError, AgendaRepository
 from emefa.domain.agent import AgentTool, ToolShelf
 from emefa.domain.command_center import InitiativeRepository, RoutineRepository
 from emefa.domain.crm import (
@@ -57,9 +58,10 @@ def compose_daily_brief(
     crm: CrmRepository | None = None,
     meetings: MeetingRepository | None = None,
     preferences: ReportPreferences | None = None,
+    agenda: AgendaRepository | None = None,
 ) -> dict[str, Any]:
     """Deterministic morning brief. See :mod:`emefa.domain.reports`."""
-    return compose_morning_brief(profiles, tasks, prospects, crm, meetings, preferences)
+    return compose_morning_brief(profiles, tasks, prospects, crm, meetings, preferences, agenda=agenda)
 
 
 #: Rendering lives with the composition logic; re-exported for existing callers.
@@ -88,6 +90,7 @@ def build_tool_shelf(
     workflows: WorkflowEngine | None = None,
     onboarding: OnboardingRepository | None = None,
     preferences: ReportPreferencesRepository | None = None,
+    agenda: AgendaRepository | None = None,
 ) -> ToolShelf:
     """Assemble the governed tool shelf.
 
@@ -225,9 +228,11 @@ def build_tool_shelf(
         )
     )
     if tasks is not None:
-        _add_task_skills(shelf, tasks, profiles, prospects, crm, meetings, preferences)
+        _add_task_skills(shelf, tasks, profiles, prospects, crm, meetings, preferences, agenda)
     if crm is not None:
         _add_crm_skills(shelf, crm)
+    if agenda is not None:
+        _add_agenda_skills(shelf, agenda)
     if meetings is not None:
         _add_meeting_skills(shelf, meetings)
     if workflows is not None:
@@ -808,6 +813,7 @@ def _add_task_skills(
     crm: CrmRepository | None = None,
     meetings: MeetingRepository | None = None,
     preferences: ReportPreferencesRepository | None = None,
+    agenda: AgendaRepository | None = None,
 ) -> None:
     def create_task(arguments: Mapping[str, Any]) -> dict[str, Any]:
         title = str(arguments.get("title", "")).strip()[:200]
@@ -845,11 +851,11 @@ def _add_task_skills(
         return preferences.get() if preferences is not None else None
 
     def daily_brief(_arguments: Mapping[str, Any]) -> dict[str, Any]:
-        brief = compose_morning_brief(profiles, tasks, prospects, crm, meetings, _prefs())
+        brief = compose_morning_brief(profiles, tasks, prospects, crm, meetings, _prefs(), agenda=agenda)
         return {**brief, "text": format_morning_text(brief)}
 
     def evening_report(_arguments: Mapping[str, Any]) -> dict[str, Any]:
-        return compose_evening_report(profiles, tasks, crm, meetings, _prefs())
+        return compose_evening_report(profiles, tasks, crm, meetings, _prefs(), agenda=agenda)
 
     shelf.add(
         AgentTool(
@@ -1138,6 +1144,128 @@ def _add_crm_skills(shelf: ToolShelf, crm: CrmRepository) -> None:
             "additionalProperties": False,
         },
         handler=guarded(log_interaction),
+    ))
+
+
+def _add_agenda_skills(shelf: ToolShelf, agenda: AgendaRepository) -> None:
+    def view(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        days = max(0, min(int(arguments.get("days", 0) or 0), 30))
+        digest = agenda.digest()
+        if days:
+            digest["upcoming"] = [
+                {**asdict(event), "label": event.label()} for event in agenda.upcoming(days)
+            ]
+        return digest
+
+    def save_event(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        try:
+            event = agenda.save_event(
+                arguments.get("event_id") or None,
+                **{key: value for key, value in arguments.items() if key != "event_id"},
+            )
+        except AgendaError as error:
+            return {"error": str(error)}
+        audit("skill_event_saved", event_id=event.event_id)
+        return {"event": asdict(event), "label": event.label()}
+
+    def prepare(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        reference = str(arguments.get("event_id", "")).strip()
+        if not reference:
+            # Convenience: prepare the next appointment when none is named.
+            upcoming = agenda.upcoming(7)
+            if not upcoming:
+                return {"error": "no_upcoming_event"}
+            reference = upcoming[0].event_id
+        try:
+            return agenda.prepare(reference)
+        except AgendaError as error:
+            return {"error": str(error)}
+
+    def cancel(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        event_id = str(arguments.get("event_id", "")).strip()
+        if not event_id or not agenda.delete(event_id):
+            return {"error": "event_not_found"}
+        audit("skill_event_deleted", event_id=event_id)
+        return {"deleted": event_id}
+
+    event_properties = {
+        "title": {"type": "string", "description": "Objet du rendez-vous"},
+        "starts_at": {
+            "type": "string",
+            "description": "Début, AAAA-MM-JJTHH:MM (ou AAAA-MM-JJ pour la journée)",
+        },
+        "ends_at": {"type": "string", "description": "Fin, AAAA-MM-JJTHH:MM"},
+        "kind": {"type": "string", "enum": list(EVENT_KINDS)},
+        "location": {"type": "string", "description": "Lieu ou lien de visioconférence"},
+        "participants": {"type": "array", "items": {"type": "string"}},
+        "contact_id": {"type": "string", "description": "Identifiant ou nom du client concerné"},
+        "project_id": {"type": "string", "description": "Identifiant ou nom du projet concerné"},
+        "notes": {"type": "string"},
+    }
+
+    shelf.add(AgentTool(
+        name="agenda_view",
+        description=(
+            "Consulte l'agenda : rendez-vous du jour, chevauchements détectés et "
+            "premier rendez-vous de demain. Avec le paramètre days, ajoute les "
+            "rendez-vous à venir. À utiliser pour « qu'est-ce que j'ai aujourd'hui ? » "
+            "ou « quand suis-je libre ? »."
+        ),
+        risk=ActionRisk.PERSONAL_READ,
+        parameters={
+            "type": "object",
+            "properties": {"days": {"type": "integer", "minimum": 0, "maximum": 30}},
+            "additionalProperties": False,
+        },
+        handler=view,
+    ))
+    shelf.add(AgentTool(
+        name="agenda_save_event",
+        description=(
+            "Enregistre ou modifie un rendez-vous quand l'utilisateur en mentionne un "
+            "(« j'ai rendez-vous jeudi à 10 h avec Ama »). Rattache-le au client ou au "
+            "projet concerné dès que possible : c'est ce qui permettra à EMEFA de "
+            "préparer la réunion. Fournis event_id pour modifier un rendez-vous existant."
+        ),
+        risk=ActionRisk.LOCAL_WRITE,
+        parameters={
+            "type": "object",
+            "properties": {"event_id": {"type": "string"}, **event_properties},
+            "required": ["title", "starts_at"],
+            "additionalProperties": False,
+        },
+        handler=save_event,
+    ))
+    shelf.add(AgentTool(
+        name="agenda_prepare_meeting",
+        description=(
+            "Prépare un rendez-vous : rassemble le client, le projet, les devis en "
+            "attente, les contrats, les derniers échanges et les tâches liées, puis "
+            "propose les points à aborder. Sans event_id, prépare le prochain "
+            "rendez-vous à venir. À utiliser pour « prépare ma réunion avec X »."
+        ),
+        risk=ActionRisk.PERSONAL_READ,
+        parameters={
+            "type": "object",
+            "properties": {"event_id": {"type": "string"}},
+            "additionalProperties": False,
+        },
+        handler=prepare,
+    ))
+    shelf.add(AgentTool(
+        name="agenda_cancel_event",
+        description=(
+            "Supprime un rendez-vous de l'agenda à partir de son event_id. "
+            "Action irréversible : à n'utiliser que sur demande explicite."
+        ),
+        risk=ActionRisk.DESTRUCTIVE,
+        parameters={
+            "type": "object",
+            "properties": {"event_id": {"type": "string"}},
+            "required": ["event_id"],
+            "additionalProperties": False,
+        },
+        handler=cancel,
     ))
 
 

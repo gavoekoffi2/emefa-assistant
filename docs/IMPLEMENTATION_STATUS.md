@@ -697,3 +697,43 @@ See `docs/V1_MVP_PREMIUM.md` §"Limites restantes" for the full list. The most i
 no calendar or mailbox-driven agenda, ~40 tools on one flat shelf, fuzzy name resolution
 without ambiguity reporting, and voice-path capabilities still bounded by the ElevenLabs
 bridge's reduced shelf.
+
+## Completed — agenda and meeting preparation (2026-07-28)
+
+Closes the gap the V1 report named as its most visible: mission §3 requires the morning
+briefing to open on the day's schedule, and §28 lists meeting preparation as a priority
+workflow. Neither was possible without a place to hold appointments.
+
+- **`domain/agenda.py` + migration 16:** an `events` table with kind, start/end, location,
+  participants and optional links to a contact and a project. Times are naive local ISO
+  strings (`YYYY-MM-DDTHH:MM`), consistent with the date handling elsewhere.
+  `parse_moment()` accepts the shapes a conversation produces (`T` or space separator, with
+  or without seconds, or a bare date meaning the whole day) and **refuses** anything else
+  rather than guessing.
+- **Local first, provider-ready:** a `CalendarProvider` protocol plus `source`/`external_id`
+  columns and a unique index make an external calendar a *second source*, synced in
+  idempotently by `sync()`, rather than something the agenda becomes a wrapper around
+  (CLAUDE.md §16). No provider ships today; the seam is exercised by tests with a fake
+  provider so the contract cannot rot before the real adapter arrives.
+- **Clash detection:** overlapping appointments are surfaced in the digest, added to the
+  brief's risks, and shown as an alert in the interface. Back-to-back meetings are not
+  clashes.
+- **`prepare()`:** resolves the event's linked project or contact to a name, walks the CRM
+  relationship, and returns the contact, project, quotations, contracts, recent exchanges,
+  related open tasks and derived talking points. When nothing is linked it says so and
+  explains how to fix it, instead of inventing context.
+- **Reports:** `agenda` (morning) and `agenda_demain` (evening) join the selectable sections.
+  The brief now opens on the schedule and its first recommendation is the first appointment;
+  the evening report lists tomorrow's meetings ahead of the other priorities. The assistant's
+  system context also carries the day's schedule.
+- **API** (`api/agenda.py`): view, create, update, delete, per-day digest and
+  `GET /v1/agenda/{id}/preparation`. **Skills:** `agenda_view`, `agenda_save_event`,
+  `agenda_prepare_meeting` (defaults to the next appointment), `agenda_cancel_event`
+  (DESTRUCTIVE → approval required).
+- **Interface:** the daily surface opens on the schedule, each appointment offers "Préparer"
+  which asks EMEFA, and clashes appear as alerts.
+- The "Préparation de réunion" guided scenario moves from *assisted* to *live*, with an
+  explicit note that the agenda is the one EMEFA keeps — no external calendar sync yet.
+
+Tests: backend **175 passed** (9 new in `tests/test_agenda.py`); web **68 passed**, lint
+clean, build successful.

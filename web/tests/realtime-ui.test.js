@@ -308,6 +308,18 @@ test('the daily surface renders both reports and lets the executive tune section
   assert.match(panel, /method: 'PUT'/)
 })
 
+test('the day opens on the schedule, with clashes surfaced', () => {
+  const panel = readFileSync(new URL('../src/DayPanel.tsx', import.meta.url), 'utf8')
+  assert.match(panel, /\/v1\/agenda/)
+  assert.match(panel, /Agenda du jour/)
+  assert.match(panel, /Aucun rendez-vous aujourd’hui/)
+  // A clash is an alert, not a quiet line in a list.
+  assert.match(panel, /Chevauchement/)
+  assert.match(panel, /role="alert"/)
+  // Preparing a meeting goes through EMEFA, who holds the context.
+  assert.match(panel, /Prépare mon rendez-vous/)
+})
+
 test('the client space answers the four executive questions and stays editable', () => {
   const panel = readFileSync(new URL('../src/ClientsPanel.tsx', import.meta.url), 'utf8')
   assert.match(panel, /\/v1\/crm\/overview/)

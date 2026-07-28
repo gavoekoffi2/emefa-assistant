@@ -83,6 +83,7 @@ def morning_brief(
         state.crm,
         state.meetings,
         state.report_preferences.get(),
+        agenda=state.agenda,
     )
     return ComposedReport(
         brief_date=content["date"], content=content, text=format_morning_text(content)
@@ -101,6 +102,7 @@ def evening_report(
         state.crm,
         state.meetings,
         state.report_preferences.get(),
+        agenda=state.agenda,
     )
     # Storing what was shown keeps the evening e-mail consistent with it.
     state.evening_reports.save(content["date"], content)

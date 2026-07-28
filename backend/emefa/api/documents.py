@@ -35,6 +35,6 @@ def download_document(
         raise HTTPException(status_code=404, detail="document_not_found") from exc
     return FileResponse(
         path=str(path),
-        media_type=request.app.state.documents.mime_type,
+        media_type=metadata["content_type"],
         filename=metadata["filename"],
     )

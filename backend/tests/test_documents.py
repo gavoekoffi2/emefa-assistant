@@ -62,9 +62,10 @@ async def test_document_create_produces_downloadable_real_docx(tmp_path):
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
     doc = Document(io.BytesIO(download.content))
-    assert [paragraph.text for paragraph in doc.paragraphs] == [
-        "Compte rendu", "Décision principale", "Prochaine étape"
-    ]
+    paragraphs = [paragraph.text for paragraph in doc.paragraphs]
+    # Title, then the dated subtitle line, then the body as written.
+    assert paragraphs[0] == "Compte rendu"
+    assert paragraphs[2:] == ["Décision principale", "Prochaine étape"]
 
 
 @pytest.mark.asyncio
@@ -98,4 +99,6 @@ async def test_document_edit_requires_approval_then_replaces_content(tmp_path):
         download = await client.get(f"/v1/documents/{document_id}/download", headers=headers)
 
     doc = Document(io.BytesIO(download.content))
-    assert [paragraph.text for paragraph in doc.paragraphs] == ["Plan final", "Nouvelle version"]
+    paragraphs = [paragraph.text for paragraph in doc.paragraphs]
+    assert paragraphs[0] == "Plan final"
+    assert paragraphs[2:] == ["Nouvelle version"]

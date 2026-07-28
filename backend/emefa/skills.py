@@ -8,20 +8,45 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import asdict
-from datetime import date
 from typing import Any
 
 from emefa.domain.agent import AgentTool, ToolShelf
 from emefa.domain.command_center import InitiativeRepository, RoutineRepository
+from emefa.domain.crm import (
+    CONTACT_KINDS,
+    CONTACT_STATUSES,
+    CONTRACT_STATUSES,
+    DEAL_STAGES,
+    INTERACTION_KINDS,
+    PROJECT_HEALTH,
+    PROJECT_STATUSES,
+    CrmError,
+    CrmRepository,
+)
 from emefa.domain.documents import DocumentNotFoundError, DocumentStore
 from emefa.domain.email import EmailProvider
+from emefa.domain.meetings import MeetingRepository
 from emefa.domain.memories import CATEGORIES, MemoryRepository
+from emefa.domain.onboarding import OnboardingRepository
 from emefa.domain.policy import ActionRisk
-from emefa.domain.profiles import ASSISTANT_FIELDS, BUSINESS_FIELDS, ProfileRepository
+from emefa.domain.profiles import (
+    ASSISTANT_FIELDS,
+    BUSINESS_FIELDS,
+    FIELD_LABELS,
+    ProfileRepository,
+)
 from emefa.domain.prospects import STAGES, ProspectRepository
+from emefa.domain.reports import (
+    ReportPreferences,
+    ReportPreferencesRepository,
+    compose_evening_report,
+    compose_morning_brief,
+    format_morning_text,
+)
 from emefa.domain.tasks import TaskRepository
 from emefa.domain.uploaded_files import UploadedFileNotFoundError, UploadedFileStore
 from emefa.domain.vision import VisionAnalyzer
+from emefa.domain.workflows import WorkflowEngine
 from emefa.observability import audit
 
 
@@ -29,89 +54,20 @@ def compose_daily_brief(
     profiles: ProfileRepository,
     tasks: TaskRepository,
     prospects: ProspectRepository | None = None,
+    crm: CrmRepository | None = None,
+    meetings: MeetingRepository | None = None,
+    preferences: ReportPreferences | None = None,
 ) -> dict[str, Any]:
-    """Deterministic daily brief: open tasks by bucket, goals, due follow-ups."""
-    buckets: dict[str, list[dict[str, Any]]] = {
-        "en_retard": [],
-        "aujourdhui": [],
-        "a_venir": [],
-        "sans_echeance": [],
-    }
-    for task in tasks.list_open():
-        buckets[task.bucket()].append(
-            {"task_id": task.task_id, "title": task.title, "due_date": task.due_date}
-        )
-    business = profiles.get_business()
-    brief: dict[str, Any] = {
-        "date": date.today().isoformat(),
-        "open_task_count": sum(len(items) for items in buckets.values()),
-        "tasks": buckets,
-        "goals": business.goals,
-        "company_name": business.company_name,
-    }
-    if prospects is not None:
-        brief["due_follow_ups"] = [
-            {
-                "prospect_id": p.prospect_id,
-                "name": p.name,
-                "company": p.company,
-                "stage": p.stage,
-                "next_action": p.next_action,
-                "next_action_date": p.next_action_date,
-            }
-            for p in prospects.due_follow_ups()
-        ]
-    return brief
+    """Deterministic morning brief. See :mod:`emefa.domain.reports`."""
+    return compose_morning_brief(profiles, tasks, prospects, crm, meetings, preferences)
 
 
-_BUCKET_TITLES = (
-    ("en_retard", "En retard"),
-    ("aujourdhui", "Aujourd'hui"),
-    ("a_venir", "À venir"),
-    ("sans_echeance", "Sans échéance"),
-)
+#: Rendering lives with the composition logic; re-exported for existing callers.
+format_brief_text = format_morning_text
 
-
-def format_brief_text(brief: Mapping[str, Any]) -> str:
-    """French plain-text rendering of a brief, for e-mail and display."""
-    lines = [f"Brief EMEFA du {brief.get('date', '')}"]
-    if brief.get("company_name"):
-        lines[0] += f" — {brief['company_name']}"
-    task_buckets = brief.get("tasks", {})
-    if brief.get("open_task_count"):
-        lines.append("")
-        lines.append(f"Tâches ouvertes : {brief['open_task_count']}")
-        for key, title in _BUCKET_TITLES:
-            for task in task_buckets.get(key, []):
-                due = f" (échéance {task['due_date']})" if task.get("due_date") else ""
-                lines.append(f"- [{title}] {task['title']}{due}")
-    else:
-        lines.append("")
-        lines.append("Aucune tâche ouverte.")
-    follow_ups = brief.get("due_follow_ups", [])
-    if follow_ups:
-        lines.append("")
-        lines.append("Relances commerciales dues :")
-        for p in follow_ups:
-            company = f" ({p['company']})" if p.get("company") else ""
-            action = f" — {p['next_action']}" if p.get("next_action") else ""
-            lines.append(f"- {p['name']}{company}{action}")
-    if brief.get("goals"):
-        lines.append("")
-        lines.append(f"Objectifs : {brief['goals']}")
-    return "\n".join(lines)
 
 _BUSINESS_FIELD_DESCRIPTIONS = {
-    "owner_name": "Nom de l'utilisateur",
-    "owner_role": "Rôle ou fonction de l'utilisateur",
-    "company_name": "Nom de l'entreprise",
-    "industry": "Secteur d'activité",
-    "offer": "Produits ou services proposés",
-    "target_customers": "Clients cibles",
-    "goals": "Objectifs professionnels",
-    "constraints_notes": "Contraintes et notes diverses",
-    "website_url": "Adresse du site web officiel",
-    "website_summary": "Informations publiques extraites du site web officiel",
+    field: FIELD_LABELS.get(field, field) for field in BUSINESS_FIELDS
 }
 
 
@@ -127,6 +83,11 @@ def build_tool_shelf(
     uploaded_files: UploadedFileStore | None = None,
     vision_analyzer: VisionAnalyzer | None = None,
     include_mailbox_read: bool = True,
+    crm: CrmRepository | None = None,
+    meetings: MeetingRepository | None = None,
+    workflows: WorkflowEngine | None = None,
+    onboarding: OnboardingRepository | None = None,
+    preferences: ReportPreferencesRepository | None = None,
 ) -> ToolShelf:
     """Assemble the governed tool shelf.
 
@@ -264,7 +225,15 @@ def build_tool_shelf(
         )
     )
     if tasks is not None:
-        _add_task_skills(shelf, tasks, profiles, prospects)
+        _add_task_skills(shelf, tasks, profiles, prospects, crm, meetings, preferences)
+    if crm is not None:
+        _add_crm_skills(shelf, crm)
+    if meetings is not None:
+        _add_meeting_skills(shelf, meetings)
+    if workflows is not None:
+        _add_workflow_skills(shelf, workflows)
+    if onboarding is not None:
+        _add_onboarding_skills(shelf, onboarding)
     if memories is not None:
         _add_memory_skills(shelf, memories)
     if email_provider is not None:
@@ -443,6 +412,129 @@ def _add_document_skills(shelf: ToolShelf, documents: DocumentStore) -> None:
             "additionalProperties": False,
         },
         handler=edit,
+    ))
+
+    def read_document(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        try:
+            return documents.read(str(arguments.get("document_id", "")))
+        except DocumentNotFoundError:
+            return {"error": "document_not_found"}
+
+    shelf.add(AgentTool(
+        name="document_read",
+        description=(
+            "Relit le contenu d'un document Word produit par EMEFA, dans le format "
+            "structuré attendu par document_edit. À utiliser avant de réviser un "
+            "document existant, pour ne jamais réécrire à l'aveugle."
+        ),
+        risk=ActionRisk.PERSONAL_READ,
+        parameters={
+            "type": "object",
+            "properties": {"document_id": {"type": "string"}},
+            "required": ["document_id"],
+            "additionalProperties": False,
+        },
+        handler=read_document,
+    ))
+
+    def create_workbook(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        sheets = list(arguments.get("sheets") or [])
+        if not sheets:
+            return {"error": "sheets_required"}
+        result = documents.create_workbook(arguments.get("title", ""), sheets)
+        audit("skill_workbook_created", document_id=result["document_id"])
+        return result
+
+    shelf.add(AgentTool(
+        name="spreadsheet_create",
+        description=(
+            "Crée un vrai classeur Excel XLSX modifiable et renvoie son lien de "
+            "téléchargement : budget, suivi, tableau de bord, facture, plan de "
+            "trésorerie. Les formules restent vivantes : écris une cellule "
+            "commençant par « = » (ex. « =B2*C2 ») et Excel la recalculera. "
+            "total_columns ajoute automatiquement une ligne de totaux SUM sur les "
+            "colonnes indiquées (ex. [\"D\"])."
+        ),
+        risk=ActionRisk.LOCAL_WRITE,
+        parameters={
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Titre du classeur"},
+                "sheets": {
+                    "type": "array",
+                    "description": "Feuilles du classeur",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "Nom de la feuille"},
+                            "columns": {
+                                "type": "array", "items": {"type": "string"},
+                                "description": "En-têtes de colonnes",
+                            },
+                            "rows": {
+                                "type": "array",
+                                "description": "Lignes de données ; « =… » reste une formule vivante",
+                                "items": {"type": "array", "items": {}},
+                            },
+                            "total_columns": {
+                                "type": "array", "items": {"type": "string"},
+                                "description": "Lettres de colonnes à totaliser, ex. [\"C\", \"D\"]",
+                            },
+                            "notes": {"type": "string"},
+                        },
+                        "required": ["name"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["title", "sheets"],
+            "additionalProperties": False,
+        },
+        handler=create_workbook,
+    ))
+
+    def create_presentation(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        slides = list(arguments.get("slides") or [])
+        if not slides:
+            return {"error": "slides_required"}
+        result = documents.create_presentation(
+            arguments.get("title", ""), slides, str(arguments.get("subtitle", ""))
+        )
+        audit("skill_presentation_created", document_id=result["document_id"])
+        return result
+
+    shelf.add(AgentTool(
+        name="presentation_create",
+        description=(
+            "Crée une vraie présentation PowerPoint PPTX modifiable et renvoie son "
+            "lien de téléchargement : présentation client, comité, pitch, restitution. "
+            "Chaque diapositive a un titre, des puces courtes et des notes pour "
+            "l'orateur."
+        ),
+        risk=ActionRisk.LOCAL_WRITE,
+        parameters={
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Titre de la présentation"},
+                "subtitle": {"type": "string", "description": "Sous-titre de la diapositive d'ouverture"},
+                "slides": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "bullets": {"type": "array", "items": {"type": "string"}},
+                            "notes": {"type": "string", "description": "Notes de l'orateur"},
+                        },
+                        "required": ["title"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["title", "slides"],
+            "additionalProperties": False,
+        },
+        handler=create_presentation,
     ))
 
 
@@ -713,6 +805,9 @@ def _add_task_skills(
     tasks: TaskRepository,
     profiles: ProfileRepository,
     prospects: ProspectRepository | None = None,
+    crm: CrmRepository | None = None,
+    meetings: MeetingRepository | None = None,
+    preferences: ReportPreferencesRepository | None = None,
 ) -> None:
     def create_task(arguments: Mapping[str, Any]) -> dict[str, Any]:
         title = str(arguments.get("title", "")).strip()[:200]
@@ -744,20 +839,44 @@ def _add_task_skills(
         audit("skill_task_completed", task_id=task.task_id)
         return {"task": asdict(task)}
 
+    def _prefs() -> ReportPreferences | None:
+        # Resolved per call: the executive can retune their report sections
+        # at any moment without a restart.
+        return preferences.get() if preferences is not None else None
+
     def daily_brief(_arguments: Mapping[str, Any]) -> dict[str, Any]:
-        return compose_daily_brief(profiles, tasks, prospects)
+        brief = compose_morning_brief(profiles, tasks, prospects, crm, meetings, _prefs())
+        return {**brief, "text": format_morning_text(brief)}
+
+    def evening_report(_arguments: Mapping[str, Any]) -> dict[str, Any]:
+        return compose_evening_report(profiles, tasks, crm, meetings, _prefs())
 
     shelf.add(
         AgentTool(
             name="get_daily_brief",
             description=(
-                "Compose le brief du jour : tâches ouvertes classées (en retard, "
-                "aujourd'hui, à venir, sans échéance), relances commerciales dues "
-                "et objectifs professionnels. À utiliser quand l'utilisateur "
-                "demande ce qui mérite son attention."
+                "Compose le briefing exécutif du matin : priorités, tâches classées "
+                "(en retard, aujourd'hui, à venir), clients à relancer, devis en "
+                "attente de réponse, contrats à échéance, projets à surveiller, "
+                "risques, opportunités et recommandations. À utiliser dès que "
+                "l'utilisateur demande son brief, son point du jour ou ce qui "
+                "mérite son attention."
             ),
             risk=ActionRisk.PERSONAL_READ,
             handler=daily_brief,
+        )
+    )
+    shelf.add(
+        AgentTool(
+            name="get_evening_report",
+            description=(
+                "Compose le rapport du soir : résumé de la journée, tâches "
+                "terminées, tâches restantes, blocages, recommandations et "
+                "priorités du lendemain. À utiliser en fin de journée ou quand "
+                "l'utilisateur demande un bilan."
+            ),
+            risk=ActionRisk.PERSONAL_READ,
+            handler=evening_report,
         )
     )
 
@@ -809,6 +928,458 @@ def _add_task_skills(
             handler=complete_task,
         )
     )
+
+
+def _add_crm_skills(shelf: ToolShelf, crm: CrmRepository) -> None:
+    """The relational memory an executive assistant is expected to hold."""
+
+    def guarded(handler: Any) -> Any:
+        def wrapped(arguments: Mapping[str, Any]) -> dict[str, Any]:
+            try:
+                return handler(arguments)
+            except CrmError as error:
+                return {"error": str(error)}
+        return wrapped
+
+    def overview(_arguments: Mapping[str, Any]) -> dict[str, Any]:
+        return crm.overview()
+
+    def lookup(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        return crm.lookup(str(arguments.get("query", "")))
+
+    def save_contact(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        fields = {key: value for key, value in arguments.items() if key != "contact_id"}
+        contact = crm.save_contact(arguments.get("contact_id") or None, **fields)
+        audit("skill_crm_contact_saved", contact_id=contact.contact_id)
+        return {"contact": asdict(contact)}
+
+    def save_project(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        fields = {key: value for key, value in arguments.items() if key != "project_id"}
+        project = crm.save_project(arguments.get("project_id") or None, **fields)
+        audit("skill_crm_project_saved", project_id=project.project_id)
+        return {"project": asdict(project)}
+
+    def save_deal(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        fields = {key: value for key, value in arguments.items() if key != "deal_id"}
+        deal = crm.save_deal(arguments.get("deal_id") or None, **fields)
+        audit("skill_crm_deal_saved", deal_id=deal.deal_id)
+        return {"deal": asdict(deal)}
+
+    def save_contract(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        fields = {key: value for key, value in arguments.items() if key != "contract_id"}
+        contract = crm.save_contract(arguments.get("contract_id") or None, **fields)
+        audit("skill_crm_contract_saved", contract_id=contract.contract_id)
+        return {"contract": asdict(contract)}
+
+    def log_interaction(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        interaction = crm.log_interaction(
+            summary=str(arguments.get("summary", "")),
+            kind=str(arguments.get("kind", "note")),
+            contact_id=arguments.get("contact") or arguments.get("contact_id"),
+            project_id=arguments.get("project") or arguments.get("project_id"),
+            occurred_at=arguments.get("occurred_at"),
+        )
+        audit("skill_crm_interaction_logged", interaction_id=interaction.interaction_id)
+        return {"interaction": asdict(interaction)}
+
+    shelf.add(AgentTool(
+        name="crm_overview",
+        description=(
+            "Répond aux questions de pilotage commercial en une fois : quels clients "
+            "relancer, quels devis attendent une réponse, quels contrats expirent "
+            "bientôt et quels projets sont bloqués. Utilise cet outil pour toute "
+            "question du type « qui dois-je relancer ? » ou « où en sommes-nous ? »."
+        ),
+        risk=ActionRisk.PERSONAL_READ,
+        handler=overview,
+    ))
+    shelf.add(AgentTool(
+        name="crm_lookup",
+        description=(
+            "Retrouve tout ce qu'EMEFA sait sur un client, un projet, un devis ou un "
+            "contrat à partir de son nom, avec l'historique des échanges, les devis "
+            "liés, les contrats liés et les signaux d'alerte. C'est l'outil à utiliser "
+            "pour « où en est le projet X ? » ou « parle-moi du client Y »."
+        ),
+        risk=ActionRisk.PERSONAL_READ,
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Nom du client, projet, devis ou contrat"}
+            },
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+        handler=guarded(lookup),
+    ))
+    shelf.add(AgentTool(
+        name="crm_save_contact",
+        description=(
+            "Crée ou met à jour un client, prospect, fournisseur, partenaire ou "
+            "collaborateur. Fournis contact_id pour modifier un contact existant, "
+            "sinon un nouveau contact est créé."
+        ),
+        risk=ActionRisk.LOCAL_WRITE,
+        parameters={
+            "type": "object",
+            "properties": {
+                "contact_id": {"type": "string"},
+                "name": {"type": "string"},
+                "kind": {"type": "string", "enum": list(CONTACT_KINDS)},
+                "company": {"type": "string"},
+                "role": {"type": "string"},
+                "email": {"type": "string"},
+                "phone": {"type": "string"},
+                "notes": {"type": "string"},
+                "status": {"type": "string", "enum": list(CONTACT_STATUSES)},
+                "follow_up_days": {
+                    "type": "integer", "minimum": 0, "maximum": 365,
+                    "description": "Silence toléré avant relance, en jours",
+                },
+            },
+            "additionalProperties": False,
+        },
+        handler=guarded(save_contact),
+    ))
+    shelf.add(AgentTool(
+        name="crm_save_project",
+        description=(
+            "Crée ou met à jour un projet : objectif, état, santé, prochaine étape, "
+            "blocage et échéance. Le champ contact_id accepte aussi le nom du client."
+        ),
+        risk=ActionRisk.LOCAL_WRITE,
+        parameters={
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string"},
+                "name": {"type": "string"},
+                "contact_id": {"type": "string", "description": "Identifiant ou nom du client"},
+                "objective": {"type": "string"},
+                "status": {"type": "string", "enum": list(PROJECT_STATUSES)},
+                "health": {"type": "string", "enum": list(PROJECT_HEALTH)},
+                "next_step": {"type": "string"},
+                "blocker": {"type": "string", "description": "Ce qui bloque, vide si rien"},
+                "due_date": {"type": "string", "description": "Échéance AAAA-MM-JJ"},
+            },
+            "additionalProperties": False,
+        },
+        handler=guarded(save_project),
+    ))
+    shelf.add(AgentTool(
+        name="crm_save_deal",
+        description=(
+            "Crée ou met à jour un devis / une proposition commerciale : montant, "
+            "étape, date d'envoi et date de réponse attendue. Sert à répondre plus "
+            "tard à « quels devis attendent une réponse ? »."
+        ),
+        risk=ActionRisk.LOCAL_WRITE,
+        parameters={
+            "type": "object",
+            "properties": {
+                "deal_id": {"type": "string"},
+                "title": {"type": "string"},
+                "contact_id": {"type": "string", "description": "Identifiant ou nom du client"},
+                "project_id": {"type": "string", "description": "Identifiant ou nom du projet"},
+                "amount": {"type": "number"},
+                "currency": {"type": "string"},
+                "stage": {"type": "string", "enum": list(DEAL_STAGES)},
+                "sent_at": {"type": "string", "description": "Date d'envoi AAAA-MM-JJ"},
+                "response_due_date": {"type": "string", "description": "Réponse attendue AAAA-MM-JJ"},
+                "notes": {"type": "string"},
+            },
+            "additionalProperties": False,
+        },
+        handler=guarded(save_deal),
+    ))
+    shelf.add(AgentTool(
+        name="crm_save_contract",
+        description=(
+            "Crée ou met à jour un contrat : dates de début et de fin, valeur, statut "
+            "et préavis. Permet d'alerter avant expiration."
+        ),
+        risk=ActionRisk.LOCAL_WRITE,
+        parameters={
+            "type": "object",
+            "properties": {
+                "contract_id": {"type": "string"},
+                "title": {"type": "string"},
+                "contact_id": {"type": "string", "description": "Identifiant ou nom du client"},
+                "project_id": {"type": "string", "description": "Identifiant ou nom du projet"},
+                "start_date": {"type": "string", "description": "AAAA-MM-JJ"},
+                "end_date": {"type": "string", "description": "AAAA-MM-JJ"},
+                "value": {"type": "number"},
+                "currency": {"type": "string"},
+                "status": {"type": "string", "enum": list(CONTRACT_STATUSES)},
+                "notice_days": {"type": "integer", "minimum": 0, "maximum": 365},
+                "notes": {"type": "string"},
+            },
+            "additionalProperties": False,
+        },
+        handler=guarded(save_contract),
+    ))
+    shelf.add(AgentTool(
+        name="crm_log_interaction",
+        description=(
+            "Enregistre un échange dans la chronologie d'une relation : appel, "
+            "e-mail, réunion, message ou note. Met à jour la date du dernier contact, "
+            "ce qui évite de relancer quelqu'un que l'on vient d'appeler."
+        ),
+        risk=ActionRisk.LOCAL_WRITE,
+        parameters={
+            "type": "object",
+            "properties": {
+                "summary": {"type": "string", "description": "Ce qui s'est dit, en une phrase"},
+                "kind": {"type": "string", "enum": list(INTERACTION_KINDS)},
+                "contact": {"type": "string", "description": "Identifiant ou nom du contact"},
+                "project": {"type": "string", "description": "Identifiant ou nom du projet"},
+                "occurred_at": {"type": "string", "description": "Date AAAA-MM-JJ"},
+            },
+            "required": ["summary"],
+            "additionalProperties": False,
+        },
+        handler=guarded(log_interaction),
+    ))
+
+
+def _add_meeting_skills(shelf: ToolShelf, meetings: MeetingRepository) -> None:
+    def capture(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        try:
+            result = meetings.capture(
+                title=str(arguments.get("title", "")),
+                notes=str(arguments.get("notes", "")),
+                occurred_at=arguments.get("occurred_at"),
+                participants=list(arguments.get("participants") or []),
+                summary=str(arguments.get("summary", "")),
+                decisions=list(arguments.get("decisions") or []),
+                actions=list(arguments.get("actions") or []),
+                project=arguments.get("project"),
+                contact=arguments.get("contact"),
+            )
+        except ValueError as error:
+            return {"error": str(error)}
+        audit("skill_meeting_captured", meeting_id=result["meeting_id"])
+        return result
+
+    def list_meetings(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        limit = max(1, min(int(arguments.get("limit", 10)), 50))
+        entries = meetings.list(limit=limit)
+        return {"count": len(entries), "meetings": entries, "open_actions": meetings.open_actions(20)}
+
+    shelf.add(AgentTool(
+        name="meeting_capture",
+        description=(
+            "Transforme des notes de réunion en suivi réel : rédige le compte rendu "
+            "Word, enregistre les décisions, enregistre les actions avec responsable "
+            "et échéance, crée une tâche pour chaque action qui incombe à "
+            "l'utilisateur, met à jour la prochaine étape du projet concerné et "
+            "consigne la réunion dans l'historique du client. Utilise cet outil dès "
+            "qu'une réunion est racontée ou dictée."
+        ),
+        risk=ActionRisk.LOCAL_WRITE,
+        parameters={
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Sujet de la réunion"},
+                "occurred_at": {"type": "string", "description": "Date AAAA-MM-JJ"},
+                "participants": {"type": "array", "items": {"type": "string"}},
+                "summary": {"type": "string", "description": "Résumé professionnel des échanges"},
+                "notes": {"type": "string", "description": "Notes brutes éventuelles"},
+                "decisions": {
+                    "type": "array", "items": {"type": "string"},
+                    "description": "Décisions prises, une par entrée",
+                },
+                "actions": {
+                    "type": "array",
+                    "description": "Actions décidées. Responsable « moi » = une tâche est créée.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "description": {"type": "string"},
+                            "owner": {"type": "string"},
+                            "due_date": {"type": "string", "description": "AAAA-MM-JJ"},
+                        },
+                        "required": ["description"],
+                        "additionalProperties": False,
+                    },
+                },
+                "project": {"type": "string", "description": "Nom du projet concerné"},
+                "contact": {"type": "string", "description": "Nom du client concerné"},
+            },
+            "required": ["title"],
+            "additionalProperties": False,
+        },
+        handler=capture,
+    ))
+    shelf.add(AgentTool(
+        name="meeting_list",
+        description=(
+            "Liste les dernières réunions enregistrées avec leurs comptes rendus, "
+            "ainsi que les actions encore attendues d'autres personnes."
+        ),
+        risk=ActionRisk.PERSONAL_READ,
+        parameters={
+            "type": "object",
+            "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 50}},
+            "additionalProperties": False,
+        },
+        handler=list_meetings,
+    ))
+
+
+def _add_workflow_skills(shelf: ToolShelf, workflows: WorkflowEngine) -> None:
+    def proposal(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        client = str(arguments.get("client", "")).strip()
+        subject = str(arguments.get("subject", "")).strip()
+        if not client or not subject:
+            return {"error": "client_and_subject_required"}
+        try:
+            result = workflows.commercial_proposal(
+                client=client,
+                subject=subject,
+                items=list(arguments.get("items") or []),
+                context=str(arguments.get("context", "")),
+                amount=arguments.get("amount"),
+                currency=str(arguments.get("currency", "XOF")),
+                validity_days=int(arguments.get("validity_days", 30) or 30),
+                project=arguments.get("project"),
+            )
+        except CrmError as error:
+            return {"error": str(error)}
+        audit("skill_workflow_proposal", deal_id=result["deal_id"])
+        return result
+
+    def relance(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        result = workflows.follow_up(
+            client=str(arguments.get("client", "")),
+            tone=str(arguments.get("tone", "courtois")),
+        )
+        audit("skill_workflow_follow_up", status=result.get("status", ""))
+        return result
+
+    shelf.add(AgentTool(
+        name="workflow_commercial_proposal",
+        description=(
+            "Scénario complet « prépare une proposition commerciale » : retrouve le "
+            "client et son historique, récupère les devis antérieurs, génère le "
+            "document Word, enregistre le devis, crée la tâche de relance et prépare "
+            "l'e-mail. Rien n'est envoyé : l'envoi est proposé et attend l'approbation "
+            "de l'utilisateur. Utilise cet outil plutôt que d'enchaîner les outils un "
+            "par un."
+        ),
+        risk=ActionRisk.LOCAL_WRITE,
+        parameters={
+            "type": "object",
+            "properties": {
+                "client": {"type": "string", "description": "Nom du client ou du prospect"},
+                "subject": {"type": "string", "description": "Objet de la proposition"},
+                "context": {"type": "string", "description": "Contexte et besoin exprimé"},
+                "items": {
+                    "type": "array",
+                    "description": "Lignes chiffrées de la proposition",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {"type": "string"},
+                            "quantity": {"type": "number"},
+                            "unit_price": {"type": "number"},
+                        },
+                        "required": ["label"],
+                        "additionalProperties": False,
+                    },
+                },
+                "amount": {"type": "number", "description": "Montant global si pas de lignes"},
+                "currency": {"type": "string"},
+                "validity_days": {"type": "integer", "minimum": 1, "maximum": 365},
+                "project": {"type": "string"},
+            },
+            "required": ["client", "subject"],
+            "additionalProperties": False,
+        },
+        handler=proposal,
+    ))
+    shelf.add(AgentTool(
+        name="workflow_follow_up",
+        description=(
+            "Scénario complet « relance ce client » : rassemble l'historique et les "
+            "devis en attente, prépare un message de relance adapté et crée la tâche "
+            "de suivi. L'envoi reste soumis à approbation."
+        ),
+        risk=ActionRisk.LOCAL_WRITE,
+        parameters={
+            "type": "object",
+            "properties": {
+                "client": {"type": "string"},
+                "tone": {"type": "string", "enum": ["courtois", "direct"]},
+            },
+            "required": ["client"],
+            "additionalProperties": False,
+        },
+        handler=relance,
+    ))
+
+
+def _add_onboarding_skills(shelf: ToolShelf, onboarding: OnboardingRepository) -> None:
+    def plan(_arguments: Mapping[str, Any]) -> dict[str, Any]:
+        status = onboarding.status()
+        return {
+            "completed": status["completed"],
+            "progress": status["progress"],
+            "next_topic": status["next_topic"],
+            "next_question": onboarding.next_question(),
+            "topics": [
+                {
+                    "topic_id": topic["topic_id"],
+                    "title": topic["title"],
+                    "status": topic["status"],
+                    "missing": [item["label"] for item in topic["missing_fields"]],
+                }
+                for topic in status["topics"]
+            ],
+        }
+
+    def finish(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        topic_id = str(arguments.get("skip_topic", "")).strip()
+        if topic_id:
+            try:
+                return {"onboarding": onboarding.skip(topic_id)}
+            except ValueError:
+                return {"error": "unknown_topic"}
+        status = onboarding.complete()
+        audit("skill_onboarding_completed", progress=status["progress"])
+        return {"onboarding": status}
+
+    shelf.add(AgentTool(
+        name="onboarding_plan",
+        description=(
+            "Indique où en est l'entretien d'accueil : ce qui est déjà connu du "
+            "dirigeant et de son entreprise, ce qu'il reste à découvrir, et la "
+            "prochaine question naturelle à poser. À consulter au début d'une "
+            "première conversation et avant de poser une question personnelle, pour "
+            "ne jamais redemander une information déjà connue."
+        ),
+        risk=ActionRisk.PERSONAL_READ,
+        handler=plan,
+    ))
+    shelf.add(AgentTool(
+        name="onboarding_finish",
+        description=(
+            "Clôt l'entretien d'accueil quand le dirigeant estime en avoir assez dit, "
+            "ou met de côté un sujet précis via skip_topic (personnel, entreprise, "
+            "activite, objectifs, preferences). L'entretien pourra toujours reprendre."
+        ),
+        risk=ActionRisk.LOCAL_WRITE,
+        parameters={
+            "type": "object",
+            "properties": {
+                "skip_topic": {
+                    "type": "string",
+                    "enum": ["personnel", "entreprise", "activite", "objectifs", "preferences"],
+                }
+            },
+            "additionalProperties": False,
+        },
+        handler=finish,
+    ))
 
 
 def _add_initiative_skills(shelf: ToolShelf, initiatives: InitiativeRepository) -> None:

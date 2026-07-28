@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import httpx
 import pytest
@@ -33,10 +33,13 @@ def test_command_center_repositories_persist_and_detect_due_routines(tmp_path):
         schedule_kind="daily",
         schedule_hour=9,
     )
-    assert routines.due(datetime(2026, 7, 26, 9, 0, tzinfo=timezone.utc)) == [daily]
+    # start_run stamps last_run_at with the real clock, so the "already ran
+    # today" guard can only be exercised against today's date.
+    today = date.today()
+    assert routines.due(datetime(today.year, today.month, today.day, 9, 0, tzinfo=timezone.utc)) == [daily]
     run = routines.start_run(daily.routine_id)
     routines.finish_run(run.run_id, "completed", "Revue prête")
-    assert routines.due(datetime(2026, 7, 26, 9, 30, tzinfo=timezone.utc)) == []
+    assert routines.due(datetime(today.year, today.month, today.day, 9, 30, tzinfo=timezone.utc)) == []
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,9 @@
-"""Stored proactive daily briefings."""
+"""Stored proactive reports — the morning brief and the evening report.
+
+Both use the same shape and the same idempotency rule (one row per day, sent
+at most once), so the repository is parameterised by table rather than
+duplicated.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from emefa.domain import storage
+
+_TABLES = {"briefings", "evening_reports"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,14 +26,17 @@ class Briefing:
 
 
 class BriefingRepository:
-    def __init__(self, database_path: Path) -> None:
+    def __init__(self, database_path: Path, table: str = "briefings") -> None:
+        if table not in _TABLES:
+            raise ValueError(f"unknown report table: {table}")
         self.database_path = database_path
+        self.table = table
         storage.run_migrations(database_path)
 
     def save(self, brief_date: str, content: dict[str, Any]) -> Briefing:
         with storage.connect(self.database_path) as connection:
             connection.execute(
-                "INSERT INTO briefings (brief_date, content) VALUES (?, ?) "
+                f"INSERT INTO {self.table} (brief_date, content) VALUES (?, ?) "
                 "ON CONFLICT(brief_date) DO UPDATE SET content = excluded.content",
                 (brief_date, json.dumps(content, ensure_ascii=False)),
             )
@@ -38,7 +48,7 @@ class BriefingRepository:
         with storage.connect(self.database_path) as connection:
             row = connection.execute(
                 "SELECT brief_date, content, emailed, created_at "
-                "FROM briefings WHERE brief_date = ?",
+                f"FROM {self.table} WHERE brief_date = ?",
                 (brief_date,),
             ).fetchone()
         if row is None:
@@ -53,5 +63,5 @@ class BriefingRepository:
     def mark_emailed(self, brief_date: str) -> None:
         with storage.connect(self.database_path) as connection:
             connection.execute(
-                "UPDATE briefings SET emailed = 1 WHERE brief_date = ?", (brief_date,)
+                f"UPDATE {self.table} SET emailed = 1 WHERE brief_date = ?", (brief_date,)
             )

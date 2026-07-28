@@ -243,6 +243,224 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         """,
         "CREATE INDEX idx_routine_runs_recent ON routine_runs(routine_id, started_at)",
     ),
+    # 11 — executive profile depth + conversational onboarding state (V1 MVP).
+    (
+        *(
+            f"ALTER TABLE business_profiles ADD COLUMN {column} TEXT NOT NULL DEFAULT ''"
+            for column in (
+                # Personal profile
+                "preferred_name",
+                "country",
+                "city",
+                "timezone",
+                "working_hours",
+                # Company
+                "products",
+                "services",
+                "organization",
+                "collaborators",
+                # Activity
+                "clients",
+                "suppliers",
+                "partners",
+                # Objectives
+                "annual_goals",
+                "quarterly_goals",
+                "current_priorities",
+                "challenges",
+                # Preferences
+                "autonomy_level",
+                "communication_style",
+                "report_frequency",
+                "organization_preferences",
+            )
+        ),
+        f"""
+        CREATE TABLE onboarding_state (
+            user_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            started_at TEXT,
+            completed_at TEXT,
+            skipped_topics TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        f"INSERT INTO onboarding_state (user_id) VALUES ('{DEFAULT_USER_ID}')",
+    ),
+    # 12 — executive CRM: contacts, projects, deals, contracts, interactions.
+    (
+        f"""
+        CREATE TABLE contacts (
+            contact_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'client',
+            company TEXT NOT NULL DEFAULT '',
+            role TEXT NOT NULL DEFAULT '',
+            email TEXT NOT NULL DEFAULT '',
+            phone TEXT NOT NULL DEFAULT '',
+            notes TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'actif',
+            follow_up_days INTEGER NOT NULL DEFAULT 0,
+            last_interaction_at TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE INDEX idx_contacts_kind ON contacts(user_id, kind, status)",
+        f"""
+        CREATE TABLE projects (
+            project_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            name TEXT NOT NULL,
+            contact_id TEXT REFERENCES contacts(contact_id) ON DELETE SET NULL,
+            objective TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'cadrage',
+            health TEXT NOT NULL DEFAULT 'ok',
+            next_step TEXT NOT NULL DEFAULT '',
+            blocker TEXT NOT NULL DEFAULT '',
+            due_date TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE INDEX idx_projects_status ON projects(user_id, status, health)",
+        f"""
+        CREATE TABLE deals (
+            deal_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            title TEXT NOT NULL,
+            contact_id TEXT REFERENCES contacts(contact_id) ON DELETE SET NULL,
+            project_id TEXT REFERENCES projects(project_id) ON DELETE SET NULL,
+            amount REAL NOT NULL DEFAULT 0,
+            currency TEXT NOT NULL DEFAULT 'XOF',
+            stage TEXT NOT NULL DEFAULT 'brouillon',
+            sent_at TEXT,
+            response_due_date TEXT,
+            document_id TEXT,
+            notes TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE INDEX idx_deals_stage ON deals(user_id, stage, response_due_date)",
+        f"""
+        CREATE TABLE contracts (
+            contract_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            title TEXT NOT NULL,
+            contact_id TEXT REFERENCES contacts(contact_id) ON DELETE SET NULL,
+            project_id TEXT REFERENCES projects(project_id) ON DELETE SET NULL,
+            start_date TEXT,
+            end_date TEXT,
+            value REAL NOT NULL DEFAULT 0,
+            currency TEXT NOT NULL DEFAULT 'XOF',
+            status TEXT NOT NULL DEFAULT 'actif',
+            notice_days INTEGER NOT NULL DEFAULT 30,
+            notes TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE INDEX idx_contracts_end ON contracts(user_id, status, end_date)",
+        f"""
+        CREATE TABLE interactions (
+            interaction_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            contact_id TEXT REFERENCES contacts(contact_id) ON DELETE CASCADE,
+            project_id TEXT REFERENCES projects(project_id) ON DELETE SET NULL,
+            kind TEXT NOT NULL DEFAULT 'note',
+            summary TEXT NOT NULL,
+            occurred_at TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE INDEX idx_interactions_contact ON interactions(contact_id, occurred_at)",
+        "CREATE INDEX idx_interactions_project ON interactions(project_id, occurred_at)",
+    ),
+    # 13 — meeting engine: minutes, decisions, actions.
+    (
+        f"""
+        CREATE TABLE meetings (
+            meeting_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            title TEXT NOT NULL,
+            occurred_at TEXT NOT NULL,
+            participants TEXT NOT NULL DEFAULT '',
+            project_id TEXT REFERENCES projects(project_id) ON DELETE SET NULL,
+            contact_id TEXT REFERENCES contacts(contact_id) ON DELETE SET NULL,
+            summary TEXT NOT NULL DEFAULT '',
+            notes TEXT NOT NULL DEFAULT '',
+            document_id TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE INDEX idx_meetings_recent ON meetings(user_id, occurred_at)",
+        """
+        CREATE TABLE meeting_decisions (
+            decision_id TEXT PRIMARY KEY,
+            meeting_id TEXT NOT NULL REFERENCES meetings(meeting_id) ON DELETE CASCADE,
+            text TEXT NOT NULL,
+            position INTEGER NOT NULL DEFAULT 0
+        )
+        """,
+        """
+        CREATE TABLE meeting_actions (
+            meeting_action_id TEXT PRIMARY KEY,
+            meeting_id TEXT NOT NULL REFERENCES meetings(meeting_id) ON DELETE CASCADE,
+            description TEXT NOT NULL,
+            owner TEXT NOT NULL DEFAULT '',
+            due_date TEXT,
+            task_id TEXT,
+            position INTEGER NOT NULL DEFAULT 0
+        )
+        """,
+        "CREATE INDEX idx_meeting_actions_meeting ON meeting_actions(meeting_id, position)",
+    ),
+    # 14 — office artifact index (Word/Excel/PowerPoint share one catalogue).
+    (
+        f"""
+        CREATE TABLE artifacts (
+            artifact_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            kind TEXT NOT NULL DEFAULT 'document',
+            title TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE INDEX idx_artifacts_recent ON artifacts(user_id, updated_at)",
+    ),
+    # 15 — evening report + per-user report section preferences.
+    (
+        f"""
+        CREATE TABLE evening_reports (
+            brief_date TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            content TEXT NOT NULL,
+            emailed INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        f"""
+        CREATE TABLE report_preferences (
+            user_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            morning_sections TEXT NOT NULL DEFAULT '',
+            evening_sections TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        f"INSERT INTO report_preferences (user_id) VALUES ('{DEFAULT_USER_ID}')",
+    ),
 )
 
 

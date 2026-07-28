@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     vision_model: str = "google/gemini-2.5-flash-lite"
     voice_llm_token: SecretStr | None = None
     brief_hour: int | None = None
+    #: Local hour for the end-of-day report; unset disables the evening job.
+    evening_hour: int | None = None
     brief_email_to: str | None = None
     routine_timezone: str = "Africa/Lome"
     elevenlabs_api_key: SecretStr | None = None

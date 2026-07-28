@@ -30,15 +30,20 @@ from emefa.domain.approvals import ApprovalRepository
 from emefa.domain.briefings import BriefingRepository
 from emefa.domain.command_center import InitiativeRepository, RoutineRepository
 from emefa.domain.conversations import VOICE_CONVERSATION_ID, ConversationStore
+from emefa.domain.crm import CrmRepository
 from emefa.domain.devices import DeviceRepository
 from emefa.domain.documents import DocumentStore
 from emefa.domain.email import EmailProvider
+from emefa.domain.meetings import MeetingRepository
 from emefa.domain.memories import MemoryRepository
+from emefa.domain.onboarding import OnboardingRepository
 from emefa.domain.profiles import ProfileRepository
 from emefa.domain.prospects import ProspectRepository
 from emefa.domain.ratelimit import FailureLimiter
+from emefa.domain.reports import ReportPreferencesRepository
 from emefa.domain.tasks import TaskRepository
 from emefa.domain.uploaded_files import UploadedFileStore
+from emefa.domain.workflows import WorkflowEngine
 from emefa.infrastructure.deepseek import DeepSeekBrain
 from emefa.infrastructure.email import HimalayaEmailProvider
 from emefa.infrastructure.livekit import LiveKitBroker
@@ -53,7 +58,7 @@ from emefa.observability import (
     request_id_var,
 )
 from emefa.routine_runner import routine_scheduler_loop
-from emefa.scheduler import brief_scheduler_loop
+from emefa.scheduler import brief_scheduler_loop, evening_scheduler_loop
 from emefa.skills import build_tool_shelf
 
 request_logger = logging.getLogger("emefa.request")
@@ -81,6 +86,15 @@ def create_app(
     initiatives = InitiativeRepository(active_settings.database_path)
     routines = RoutineRepository(active_settings.database_path)
     approvals = ApprovalRepository(active_settings.database_path)
+    documents = DocumentStore(active_settings.database_path)
+    crm = CrmRepository(active_settings.database_path)
+    meetings = MeetingRepository(active_settings.database_path, crm, tasks, documents)
+    onboarding = OnboardingRepository(active_settings.database_path, profiles)
+    report_preferences = ReportPreferencesRepository(active_settings.database_path)
+    evening_reports = BriefingRepository(
+        active_settings.database_path, table="evening_reports"
+    )
+    workflows = WorkflowEngine(profiles, crm, documents, tasks)
     active_email_provider = email_provider
     if active_email_provider is None and active_settings.email_account:
         active_email_provider = HimalayaEmailProvider(
@@ -108,6 +122,15 @@ def create_app(
         initiative_block = initiatives.context_block()
         if initiative_block:
             parts.append(initiative_block)
+        crm_block = crm.context_block()
+        if crm_block:
+            parts.append(crm_block)
+        # While the welcome interview is unfinished, EMEFA is told what she
+        # still needs to learn — so onboarding happens inside the ordinary
+        # conversation instead of behind a form (mission §1).
+        onboarding_block = onboarding.briefing_for_agent()
+        if onboarding_block:
+            parts.append(onboarding_block)
         files = uploaded_files.list(limit=8)
         if files:
             lines = [
@@ -228,6 +251,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_application: FastAPI):
         scheduler_task = None
+        evening_task = None
         if active_settings.brief_hour is not None:
             scheduler_task = asyncio.create_task(
                 brief_scheduler_loop(
@@ -238,6 +262,23 @@ def create_app(
                     briefings,
                     active_email_provider,
                     active_settings.brief_email_to,
+                    crm,
+                    meetings,
+                    report_preferences,
+                )
+            )
+        if active_settings.evening_hour is not None:
+            evening_task = asyncio.create_task(
+                evening_scheduler_loop(
+                    active_settings.evening_hour,
+                    profiles,
+                    tasks,
+                    evening_reports,
+                    active_email_provider,
+                    active_settings.brief_email_to,
+                    crm,
+                    meetings,
+                    report_preferences,
                 )
             )
         routine_task = asyncio.create_task(
@@ -249,10 +290,11 @@ def create_app(
             )
         )
         yield
-        if scheduler_task is not None:
-            scheduler_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await scheduler_task
+        for task in (scheduler_task, evening_task):
+            if task is not None:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
         routine_task.cancel()
         with suppress(asyncio.CancelledError):
             await routine_task
@@ -281,7 +323,13 @@ def create_app(
     application.state.initiatives = initiatives
     application.state.routines = routines
     application.state.conversations = conversations
-    application.state.documents = DocumentStore(active_settings.database_path)
+    application.state.documents = documents
+    application.state.crm = crm
+    application.state.meetings = meetings
+    application.state.onboarding = onboarding
+    application.state.report_preferences = report_preferences
+    application.state.evening_reports = evening_reports
+    application.state.workflows = workflows
     application.state.uploaded_files = uploaded_files
     application.state.vision = vision_analyzer
     application.state.website_importer = WebsiteProfileImporter()
@@ -295,12 +343,17 @@ def create_app(
             tasks,
             memories,
             active_email_provider,
-            application.state.documents,
+            documents,
             prospects,
             initiatives=initiatives,
             routines=routines,
             uploaded_files=uploaded_files,
             vision_analyzer=vision_analyzer,
+            crm=crm,
+            meetings=meetings,
+            workflows=workflows,
+            onboarding=onboarding,
+            preferences=report_preferences,
         ),
         memory=conversations,
     )
@@ -323,6 +376,11 @@ def create_app(
             uploaded_files=uploaded_files,
             vision_analyzer=vision_analyzer,
             include_mailbox_read=False,
+            crm=crm,
+            meetings=meetings,
+            workflows=workflows,
+            onboarding=onboarding,
+            preferences=report_preferences,
         ),
         memory=conversations,
     )

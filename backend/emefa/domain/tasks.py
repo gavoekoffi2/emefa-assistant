@@ -75,6 +75,16 @@ class TaskRepository:
             ).fetchall()
         return [Task(**dict(row)) for row in rows]
 
+    def list_completed_since(self, since: str, limit: int = 50) -> list[Task]:
+        """Tasks closed on or after ``since`` (YYYY-MM-DD) — evening report."""
+        with storage.connect(self.database_path) as connection:
+            rows = connection.execute(
+                f"SELECT {_COLUMNS} FROM tasks WHERE status = 'done' "
+                "AND completed_at >= ? ORDER BY completed_at DESC LIMIT ?",
+                (since, limit),
+            ).fetchall()
+        return [Task(**dict(row)) for row in rows]
+
     def complete(self, task_id: str) -> Task | None:
         with storage.connect(self.database_path) as connection:
             updated = connection.execute(

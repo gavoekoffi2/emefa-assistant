@@ -9,18 +9,92 @@ from emefa.domain import storage
 from emefa.domain.storage import DEFAULT_ASSISTANT_ID
 
 ASSISTANT_FIELDS = ("name", "primary_language", "interaction_style")
-BUSINESS_FIELDS = (
+
+#: Field groups mirror the onboarding interview so a captured answer always
+#: has one obvious home. Order is the order the executive profile is shown in.
+PERSONAL_FIELDS = (
     "owner_name",
+    "preferred_name",
     "owner_role",
+    "country",
+    "city",
+    "timezone",
+    "working_hours",
+)
+COMPANY_FIELDS = (
     "company_name",
     "industry",
     "offer",
-    "target_customers",
-    "goals",
-    "constraints_notes",
+    "products",
+    "services",
+    "organization",
+    "collaborators",
     "website_url",
     "website_summary",
 )
+ACTIVITY_FIELDS = (
+    "target_customers",
+    "clients",
+    "suppliers",
+    "partners",
+)
+OBJECTIVE_FIELDS = (
+    "goals",
+    "annual_goals",
+    "quarterly_goals",
+    "current_priorities",
+    "challenges",
+)
+PREFERENCE_FIELDS = (
+    "autonomy_level",
+    "communication_style",
+    "report_frequency",
+    "organization_preferences",
+    "constraints_notes",
+)
+
+BUSINESS_FIELDS = (
+    *PERSONAL_FIELDS,
+    *COMPANY_FIELDS,
+    *ACTIVITY_FIELDS,
+    *OBJECTIVE_FIELDS,
+    *PREFERENCE_FIELDS,
+)
+
+#: Human labels, used for the configuration centre, the onboarding interview
+#: and the system-context block — one source of truth, three surfaces.
+FIELD_LABELS: dict[str, str] = {
+    "owner_name": "Nom complet",
+    "preferred_name": "Nom d'usage souhaité",
+    "owner_role": "Fonction",
+    "country": "Pays",
+    "city": "Ville",
+    "timezone": "Fuseau horaire",
+    "working_hours": "Horaires de travail",
+    "company_name": "Entreprise",
+    "industry": "Secteur d'activité",
+    "offer": "Offre principale",
+    "products": "Produits",
+    "services": "Services",
+    "organization": "Organisation interne",
+    "collaborators": "Collaborateurs",
+    "website_url": "Site web officiel",
+    "website_summary": "Informations publiques importées du site",
+    "target_customers": "Clients cibles",
+    "clients": "Clients principaux",
+    "suppliers": "Fournisseurs",
+    "partners": "Partenaires",
+    "goals": "Objectifs généraux",
+    "annual_goals": "Objectifs annuels",
+    "quarterly_goals": "Objectifs trimestriels",
+    "current_priorities": "Priorités actuelles",
+    "challenges": "Difficultés et défis",
+    "autonomy_level": "Niveau d'autonomie souhaité",
+    "communication_style": "Style de communication",
+    "report_frequency": "Fréquence des rapports",
+    "organization_preferences": "Préférences d'organisation",
+    "constraints_notes": "Contraintes et notes",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,19 +108,51 @@ class AssistantProfile:
 @dataclass(frozen=True, slots=True)
 class BusinessProfile:
     assistant_id: str
-    owner_name: str
-    owner_role: str
-    company_name: str
-    industry: str
-    offer: str
-    target_customers: str
-    goals: str
-    constraints_notes: str
-    website_url: str
-    website_summary: str
+    # Personal
+    owner_name: str = ""
+    preferred_name: str = ""
+    owner_role: str = ""
+    country: str = ""
+    city: str = ""
+    timezone: str = ""
+    working_hours: str = ""
+    # Company
+    company_name: str = ""
+    industry: str = ""
+    offer: str = ""
+    products: str = ""
+    services: str = ""
+    organization: str = ""
+    collaborators: str = ""
+    website_url: str = ""
+    website_summary: str = ""
+    # Activity
+    target_customers: str = ""
+    clients: str = ""
+    suppliers: str = ""
+    partners: str = ""
+    # Objectives
+    goals: str = ""
+    annual_goals: str = ""
+    quarterly_goals: str = ""
+    current_priorities: str = ""
+    challenges: str = ""
+    # Preferences
+    autonomy_level: str = ""
+    communication_style: str = ""
+    report_frequency: str = ""
+    organization_preferences: str = ""
+    constraints_notes: str = ""
 
     def is_empty(self) -> bool:
         return not any(getattr(self, field) for field in BUSINESS_FIELDS)
+
+    def filled_fields(self) -> tuple[str, ...]:
+        return tuple(field for field in BUSINESS_FIELDS if getattr(self, field).strip())
+
+    def address_as(self) -> str:
+        """How EMEFA should name the executive out loud."""
+        return self.preferred_name.strip() or self.owner_name.strip()
 
 
 class ProfileRepository:
@@ -112,22 +218,20 @@ class ProfileRepository:
         ]
         if assistant.interaction_style:
             lines.append(f"Style d'interaction souhaité : {assistant.interaction_style}.")
+        address = business.address_as()
+        if address:
+            lines.append(f"Tu t'adresses à {address}.")
+        if business.communication_style:
+            lines.append(f"Style de communication attendu : {business.communication_style}.")
+        if business.autonomy_level:
+            lines.append(
+                f"Niveau d'autonomie accordé : {business.autonomy_level}. Les actions "
+                "sensibles restent soumises à approbation quelle que soit cette préférence."
+            )
         if not business.is_empty():
             lines.append("Contexte professionnel de l'utilisateur :")
-            labels = {
-                "owner_name": "Nom",
-                "owner_role": "Rôle",
-                "company_name": "Entreprise",
-                "industry": "Secteur",
-                "offer": "Offre",
-                "target_customers": "Clients cibles",
-                "goals": "Objectifs",
-                "constraints_notes": "Contraintes et notes",
-                "website_url": "Site web officiel",
-                "website_summary": "Informations publiques importées du site",
-            }
-            for field, label in labels.items():
+            for field in BUSINESS_FIELDS:
                 value = getattr(business, field)
                 if value:
-                    lines.append(f"- {label} : {value}")
+                    lines.append(f"- {FIELD_LABELS.get(field, field)} : {value}")
         return "\n".join(lines)

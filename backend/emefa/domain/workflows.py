@@ -22,7 +22,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import date, timedelta
 from typing import Any
 
-from emefa.domain.crm import CrmError, CrmRepository
+from emefa.domain.crm import AmbiguousMatchError, CrmError, CrmRepository
 from emefa.domain.documents import DocumentStore
 from emefa.domain.profiles import ProfileRepository
 from emefa.domain.tasks import TaskRepository
@@ -78,6 +78,10 @@ class WorkflowEngine:
         try:
             contact_id = self.crm.resolve_contact(client)
             contact = self.crm.get_contact(contact_id) if contact_id else None
+        except AmbiguousMatchError:
+            # Creating a second "Horizon" here would quietly split the
+            # relationship in two. The caller has to disambiguate first.
+            raise
         except CrmError:
             contact = None
         if contact is None:
@@ -233,6 +237,11 @@ class WorkflowEngine:
         reference = today or date.today()
         try:
             contact_id = self.crm.resolve_contact(client)
+        except AmbiguousMatchError as error:
+            return {
+                "workflow": "relance", "status": "ambiguous",
+                "error": str(error), "candidates": error.candidates,
+            }
         except CrmError:
             return {"workflow": "relance", "status": "failed", "error": "client_introuvable"}
         contact = self.crm.get_contact(contact_id) if contact_id else None

@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from emefa.domain import storage
-from emefa.domain.crm import CrmError, CrmRepository
+from emefa.domain.crm import AmbiguousMatchError, CrmError, CrmRepository
 from emefa.domain.tasks import TaskRepository
 
 EVENT_KINDS = ("rendez_vous", "réunion", "déplacement", "échéance", "personnel")
@@ -188,6 +188,8 @@ class AgendaRepository:
     def _link(resolver: Any, reference: object) -> str | None:
         try:
             return resolver(reference)
+        except AmbiguousMatchError:
+            raise  # the caller must ask which record was meant
         except CrmError as error:
             raise AgendaError(str(error)) from error
 

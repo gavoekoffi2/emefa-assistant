@@ -20,6 +20,7 @@ from emefa.domain.crm import (
     INTERACTION_KINDS,
     PROJECT_HEALTH,
     PROJECT_STATUSES,
+    AmbiguousMatchError,
     CrmError,
 )
 from emefa.domain.devices import Device
@@ -101,6 +102,12 @@ def _crm(request: Request) -> Any:
 def _guard(action: Any) -> Any:
     try:
         return action()
+    except AmbiguousMatchError as error:
+        # 409: the request is well formed, the target is what is undecided.
+        raise HTTPException(
+            status_code=409,
+            detail={"error": str(error), "candidates": error.candidates},
+        ) from error
     except CrmError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 

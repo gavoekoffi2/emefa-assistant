@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from emefa.domain import storage
-from emefa.domain.crm import CrmError, CrmRepository
+from emefa.domain.crm import AmbiguousMatchError, CrmError, CrmRepository
 from emefa.domain.documents import DocumentStore
 from emefa.domain.tasks import TaskRepository
 
@@ -107,14 +107,19 @@ class MeetingRepository:
         project_id: str | None = None
         contact_id: str | None = None
         unresolved: list[str] = []
+        ambiguous: list[dict[str, Any]] = []
         if project:
             try:
                 project_id = self.crm.resolve_project(project)
+            except AmbiguousMatchError as error:
+                ambiguous.append({"reference": project, "candidates": error.candidates})
             except CrmError:
                 unresolved.append(f"projet:{project}")
         if contact:
             try:
                 contact_id = self.crm.resolve_contact(contact)
+            except AmbiguousMatchError as error:
+                ambiguous.append({"reference": contact, "candidates": error.candidates})
             except CrmError:
                 unresolved.append(f"contact:{contact}")
         if contact_id is None and project_id is not None:
@@ -185,6 +190,7 @@ class MeetingRepository:
             "contact_id": contact_id,
             "interaction_id": interaction_id,
             "unresolved_links": unresolved,
+            "ambiguous_links": ambiguous,
         }
 
     def _record_actions(

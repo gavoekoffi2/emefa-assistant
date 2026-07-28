@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from emefa.api.devices import current_device
 from emefa.domain.agenda import EVENT_KINDS, AgendaError
+from emefa.domain.crm import AmbiguousMatchError
 from emefa.domain.devices import Device
 from emefa.observability import audit
 
@@ -32,6 +33,11 @@ class EventPayload(BaseModel):
 def _guard(action: Any) -> Any:
     try:
         return action()
+    except AmbiguousMatchError as error:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": str(error), "candidates": error.candidates},
+        ) from error
     except AgendaError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 

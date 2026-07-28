@@ -68,6 +68,20 @@ class CrmError(ValueError):
     """Invalid CRM input (unknown enum value, malformed date)."""
 
 
+class AmbiguousMatchError(CrmError):
+    """A name matched several records equally well.
+
+    Guessing here is the worst possible failure: it silently attaches work to
+    the wrong client. The candidates travel with the error so the caller can
+    ask which one was meant.
+    """
+
+    def __init__(self, kind: str, candidates: list[dict[str, str]]) -> None:
+        super().__init__(f"ambiguous_{kind}")
+        self.kind = kind
+        self.candidates = candidates
+
+
 @dataclass(frozen=True, slots=True)
 class Contact:
     contact_id: str
@@ -626,10 +640,29 @@ class CrmRepository:
         if not needle:
             raise CrmError("query_required")
 
-        project = self._match(self.list_projects(include_closed=True), needle, "name")
-        contact = self._match(self.list_contacts(), needle, "name") or self._match(
-            self.list_contacts(), needle, "company"
-        )
+        projects_found = self._candidates(self.list_projects(include_closed=True), needle, "name")
+        contacts_found = self._candidates(self.list_contacts(), needle, "name")
+        if not contacts_found:
+            contacts_found = self._candidates(self.list_contacts(), needle, "company")
+
+        # Answering confidently about the wrong "Horizon" is worse than asking.
+        if len(projects_found) > 1 or len(contacts_found) > 1:
+            return {
+                "found": False,
+                "ambiguous": True,
+                "query": query,
+                "candidates": [
+                    {"kind": "projet", "id": item.project_id, "name": item.name}
+                    for item in projects_found[:8]
+                ] + [
+                    {"kind": "contact", "id": item.contact_id, "name": item.name,
+                     "company": item.company}
+                    for item in contacts_found[:8]
+                ],
+            }
+
+        project = projects_found[0] if projects_found else None
+        contact = contacts_found[0] if contacts_found else None
         deal = self._match(self.list_deals(), needle, "title")
         contract = self._match(self.list_contracts(), needle, "title")
 
@@ -694,39 +727,68 @@ class CrmRepository:
         }
 
     @staticmethod
+    def _candidates(items: list[Any], needle: str, attribute: str) -> list[Any]:
+        """All records matching at the best available quality tier.
+
+        Exact beats prefix beats substring beats "the stored name appears in
+        what the user said". Only the best tier is returned, so « Horizon »
+        matching one record exactly is not made ambiguous by a longer
+        « Horizon Group » that merely contains it.
+        """
+        tiers: list[list[Any]] = [[], [], [], []]
+        for item in items:
+            value = str(getattr(item, attribute, "") or "").lower()
+            if not value:
+                continue
+            if value == needle:
+                tiers[0].append(item)
+            elif value.startswith(needle):
+                tiers[1].append(item)
+            elif needle in value:
+                tiers[2].append(item)
+            elif value in needle:
+                tiers[3].append(item)
+        for tier in tiers:
+            if tier:
+                return tier
+        return []
+
+    @staticmethod
     def _match(items: list[Any], needle: str, attribute: str) -> Any | None:
-        exact = [item for item in items if getattr(item, attribute, "").lower() == needle]
-        if exact:
-            return exact[0]
-        partial = [
-            item
-            for item in items
-            if getattr(item, attribute, "") and needle in getattr(item, attribute).lower()
-        ]
-        if partial:
-            return partial[0]
-        reverse = [
-            item
-            for item in items
-            if getattr(item, attribute, "") and getattr(item, attribute).lower() in needle
-        ]
-        return reverse[0] if reverse else None
+        """First best match. Used where a tie is genuinely harmless."""
+        candidates = CrmRepository._candidates(items, needle, attribute)
+        return candidates[0] if candidates else None
 
     # -- name resolution --------------------------------------------------
 
     def resolve_contact(self, reference: object) -> str | None:
-        """Accept an id *or* a name, so the agent never has to guess ids."""
+        """Accept an id *or* a name, so the agent never has to guess ids.
+
+        Raises :class:`AmbiguousMatchError` when several contacts match equally
+        well — the caller must ask rather than pick one.
+        """
         value = _text(reference, 200)
         if not value:
             return None
         if self.get_contact(value) is not None:
             return value
-        match = self._match(self.list_contacts(), value.lower(), "name")
-        if match is None:
-            match = self._match(self.list_contacts(), value.lower(), "company")
-        if match is None:
+        needle = value.lower()
+        contacts = self.list_contacts()
+        candidates = self._candidates(contacts, needle, "name")
+        if not candidates:
+            candidates = self._candidates(contacts, needle, "company")
+        if not candidates:
             raise CrmError("contact_not_found")
-        return match.contact_id
+        if len(candidates) > 1:
+            raise AmbiguousMatchError(
+                "contact",
+                [
+                    {"contact_id": item.contact_id, "name": item.name,
+                     "company": item.company, "kind": item.kind}
+                    for item in candidates[:8]
+                ],
+            )
+        return candidates[0].contact_id
 
     def resolve_project(self, reference: object) -> str | None:
         value = _text(reference, 200)
@@ -734,10 +796,21 @@ class CrmRepository:
             return None
         if self.get_project(value) is not None:
             return value
-        match = self._match(self.list_projects(include_closed=True), value.lower(), "name")
-        if match is None:
+        candidates = self._candidates(
+            self.list_projects(include_closed=True), value.lower(), "name"
+        )
+        if not candidates:
             raise CrmError("project_not_found")
-        return match.project_id
+        if len(candidates) > 1:
+            raise AmbiguousMatchError(
+                "project",
+                [
+                    {"project_id": item.project_id, "name": item.name,
+                     "status": item.status}
+                    for item in candidates[:8]
+                ],
+            )
+        return candidates[0].project_id
 
     def context_block(self, limit: int = 6) -> str:
         """Compact CRM digest injected into the assistant's system context."""

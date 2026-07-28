@@ -21,6 +21,7 @@ from emefa.domain.crm import (
     INTERACTION_KINDS,
     PROJECT_HEALTH,
     PROJECT_STATUSES,
+    AmbiguousMatchError,
     CrmError,
     CrmRepository,
 )
@@ -951,6 +952,17 @@ def _add_crm_skills(shelf: ToolShelf, crm: CrmRepository) -> None:
         def wrapped(arguments: Mapping[str, Any]) -> dict[str, Any]:
             try:
                 return handler(arguments)
+            except AmbiguousMatchError as error:
+                # The model must ask which one, not choose for the executive.
+                return {
+                    "error": str(error),
+                    "candidates": error.candidates,
+                    "instruction": (
+                        "Plusieurs enregistrements correspondent. Demande à "
+                        "l'utilisateur lequel il vise avant de continuer, puis "
+                        "réutilise l'identifiant exact."
+                    ),
+                }
             except CrmError as error:
                 return {"error": str(error)}
         return wrapped
@@ -1379,6 +1391,15 @@ def _add_workflow_skills(shelf: ToolShelf, workflows: WorkflowEngine) -> None:
                 validity_days=int(arguments.get("validity_days", 30) or 30),
                 project=arguments.get("project"),
             )
+        except AmbiguousMatchError as error:
+            return {
+                "error": str(error),
+                "candidates": error.candidates,
+                "instruction": (
+                    "Plusieurs clients portent ce nom. Demande lequel avant de "
+                    "préparer quoi que ce soit."
+                ),
+            }
         except CrmError as error:
             return {"error": str(error)}
         audit("skill_workflow_proposal", deal_id=result["deal_id"])

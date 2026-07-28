@@ -699,3 +699,27 @@ fingerprint.
 `cd web && npm run lint && npx tsc --noEmit && npm test && npm run build` → all pass (50 web tests).
 
 Voice and the holographic face remain untouched.
+
+
+---
+
+# Phase 11 — Suite bureautique (2026-07-28)
+
+Première tranche de la vision « assistante exécutive » — la feuille de route
+complète et son ordonnancement sont dans `docs/EXECUTIVE_ASSISTANT_ROADMAP.md`.
+
+Word, Excel et PowerPoint derrière l'interface de capacité demandée par
+`CLAUDE.md` §19 (spécification → fournisseur → moteur de rendu). Le fournisseur
+natif s'appuie sur python-docx, openpyxl et python-pptx ; rien dans le domaine
+ne les connaît, donc le moteur est remplaçable sans toucher un appelant.
+
+**OfficeCLI :** aucun paquet de ce nom sur PyPI. Aucun adaptateur écrit contre
+une dépendance invérifiable ; la couture existe et brancher un fournisseur est
+une ligne dans le point de composition.
+
+Le magasin d'artefacts accepte désormais classeurs et présentations à côté des
+documents, et la route de téléchargement sert le type réel de chaque fichier.
+
+## Tests
+
+`cd backend && python -m pytest` → 290 pass.

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from emefa.api.devices import current_device
+from emefa.api.workspace import current_workspace
 from emefa.domain.devices import Device
 from emefa.domain.profiles import (
     ACTIVITY_FIELDS,
@@ -135,7 +136,7 @@ def get_profile(
     request: Request,
     device: Annotated[Device, Depends(current_device)],
 ) -> AssistantProfileResponse:
-    profile = request.app.state.profiles.get_assistant()
+    profile = current_workspace(request, device).profiles.get_assistant()
     return AssistantProfileResponse(**asdict(profile))
 
 
@@ -146,14 +147,14 @@ def update_profile(
     device: Annotated[Device, Depends(current_device)],
 ) -> AssistantProfileResponse:
     changes = payload.model_dump(exclude_none=True)
-    profile = request.app.state.profiles.update_assistant(changes)
+    profile = current_workspace(request, device).profiles.update_assistant(changes)
     audit("assistant_profile_updated", device_id=device.device_id, fields=sorted(changes))
     return AssistantProfileResponse(**asdict(profile))
 
 
 @router.get("/business/schema")
 def business_schema(
-    _device: Annotated[Device, Depends(current_device)],
+    device: Annotated[Device, Depends(current_device)],
 ) -> list[dict[str, object]]:
     """Field groups and labels, so the configuration centre stays in sync
     with the interview without duplicating the field list in the frontend."""
@@ -181,7 +182,7 @@ def get_business(
     request: Request,
     device: Annotated[Device, Depends(current_device)],
 ) -> BusinessProfileResponse:
-    profile = request.app.state.profiles.get_business()
+    profile = current_workspace(request, device).profiles.get_business()
     return BusinessProfileResponse(**asdict(profile))
 
 
@@ -192,7 +193,7 @@ def update_business(
     device: Annotated[Device, Depends(current_device)],
 ) -> BusinessProfileResponse:
     changes = payload.model_dump(exclude_none=True)
-    profile = request.app.state.profiles.update_business(changes)
+    profile = current_workspace(request, device).profiles.update_business(changes)
     audit("business_profile_updated", device_id=device.device_id, fields=sorted(changes))
     return BusinessProfileResponse(**asdict(profile))
 
@@ -210,7 +211,8 @@ async def import_business_website(
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    current = request.app.state.profiles.get_business()
+    profiles = current_workspace(request, device).profiles
+    current = profiles.get_business()
     changes = {
         "website_url": imported.url,
         "website_summary": imported.summary,
@@ -219,7 +221,7 @@ async def import_business_website(
         changes["company_name"] = imported.company_name
     if not current.offer and imported.description:
         changes["offer"] = imported.description
-    profile = request.app.state.profiles.update_business(changes)
+    profile = profiles.update_business(changes)
     audit(
         "business_website_imported",
         device_id=device.device_id,

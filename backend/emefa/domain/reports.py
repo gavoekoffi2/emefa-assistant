@@ -17,14 +17,13 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
-from emefa.domain import storage
 from emefa.domain.agenda import AgendaRepository
 from emefa.domain.crm import CrmRepository
 from emefa.domain.inbox import InboxReader
 from emefa.domain.meetings import MeetingRepository
 from emefa.domain.profiles import ProfileRepository
 from emefa.domain.prospects import ProspectRepository
-from emefa.domain.storage import DEFAULT_USER_ID
+from emefa.domain.scope import Ownership, Scope, ScopedStore
 from emefa.domain.tasks import TaskRepository
 
 MORNING_SECTIONS: tuple[tuple[str, str], ...] = (
@@ -71,23 +70,21 @@ class ReportPreferences:
         return not self.evening_sections or key in self.evening_sections
 
 
-class ReportPreferencesRepository:
-    def __init__(self, database_path: Path) -> None:
-        self.database_path = Path(database_path)
-        storage.run_migrations(self.database_path)
+class ReportPreferencesRepository(ScopedStore):
+    """How one person wants their reports composed."""
+
+    ownership = Ownership.USER
+
+    def __init__(self, database_path: Path, scope: Scope | None = None) -> None:
+        super().__init__(database_path, scope)
 
     def get(self) -> ReportPreferences:
-        with storage.connect(self.database_path) as connection:
-            row = connection.execute(
-                "SELECT morning_sections, evening_sections FROM report_preferences "
-                "WHERE user_id = ?",
-                (DEFAULT_USER_ID,),
-            ).fetchone()
-            if row is None:
-                connection.execute(
-                    "INSERT INTO report_preferences (user_id) VALUES (?)", (DEFAULT_USER_ID,)
-                )
-                return ReportPreferences((), ())
+        row = self.fetch_one(
+            "morning_sections, evening_sections", "report_preferences"
+        )
+        if row is None:
+            self.insert("report_preferences", {})
+            return ReportPreferences((), ())
         return ReportPreferences(
             morning_sections=_split(row["morning_sections"]),
             evening_sections=_split(row["evening_sections"]),
@@ -104,13 +101,8 @@ class ReportPreferencesRepository:
         if evening_sections is not None:
             values["evening_sections"] = _join(evening_sections, EVENING_SECTIONS)
         if values:
-            assignments = ", ".join(f"{column} = ?" for column in values)
-            with storage.connect(self.database_path) as connection:
-                connection.execute(
-                    f"UPDATE report_preferences SET {assignments}, "
-                    "updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",
-                    (*values.values(), DEFAULT_USER_ID),
-                )
+            self.get()  # ensure the row exists for this owner
+            self.update_scoped("report_preferences", "user_id", self.scope.user_id, values)
         return self.get()
 
 

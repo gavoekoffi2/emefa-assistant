@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from emefa.domain import storage
+from emefa.domain.scope import Ownership, Scope, ScopedStore
 from emefa.domain.crm import AmbiguousMatchError, CrmError, CrmRepository
 from emefa.domain.documents import DocumentStore
 from emefa.domain.tasks import TaskRepository
@@ -67,19 +68,32 @@ def _iso_date(value: object) -> str | None:
         return None
 
 
-class MeetingRepository:
+class MeetingRepository(ScopedStore):
+    """Minutes belong to the company: a colleague may read what was decided."""
+
+    ownership = Ownership.TENANT
+
     def __init__(
         self,
         database_path: Path,
         crm: CrmRepository,
         tasks: TaskRepository,
         documents: DocumentStore,
+        scope: Scope | None = None,
     ) -> None:
-        self.database_path = Path(database_path)
-        storage.run_migrations(self.database_path)
+        super().__init__(database_path, scope)
         self.crm = crm
         self.tasks = tasks
         self.documents = documents
+
+    def for_scope(self, scope: Scope) -> "MeetingRepository":
+        return MeetingRepository(
+            self.database_path,
+            self.crm.for_scope(scope),
+            self.tasks.for_scope(scope),
+            self.documents.for_scope(scope),
+            scope,
+        )
 
     # -- capture ----------------------------------------------------------
 
@@ -126,27 +140,16 @@ class MeetingRepository:
             linked = self.crm.get_project(project_id)
             contact_id = linked.contact_id if linked else None
 
-        with storage.connect(self.database_path) as connection:
-            connection.execute(
-                "INSERT INTO meetings (meeting_id, title, occurred_at, participants, "
-                "project_id, contact_id, summary, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    meeting_id,
-                    clean_title,
-                    when,
-                    people,
-                    project_id,
-                    contact_id,
-                    _text(summary, 8_000),
-                    _text(notes, 40_000),
-                ),
-            )
-            for position, text in enumerate(clean_decisions):
-                connection.execute(
-                    "INSERT INTO meeting_decisions (decision_id, meeting_id, text, position) "
-                    "VALUES (?, ?, ?, ?)",
-                    (uuid.uuid4().hex, meeting_id, text, position),
-                )
+        self.insert("meetings", {
+            "meeting_id": meeting_id, "title": clean_title, "occurred_at": when,
+            "participants": people, "project_id": project_id, "contact_id": contact_id,
+            "summary": _text(summary, 8_000), "notes": _text(notes, 40_000),
+        })
+        for position, text in enumerate(clean_decisions):
+            self.insert("meeting_decisions", {
+                "decision_id": uuid.uuid4().hex, "meeting_id": meeting_id,
+                "text": text, "position": position,
+            })
 
         recorded_actions = self._record_actions(meeting_id, clean_title, actions or [])
 
@@ -158,11 +161,10 @@ class MeetingRepository:
                     clean_title, when, people, summary, clean_decisions, recorded_actions
                 ),
             )
-            with storage.connect(self.database_path) as connection:
-                connection.execute(
-                    "UPDATE meetings SET document_id = ? WHERE meeting_id = ?",
-                    (document["document_id"], meeting_id),
-                )
+            self.update_scoped(
+                "meetings", "meeting_id", meeting_id,
+                {"document_id": document["document_id"]}, touch_updated_at=False,
+            )
 
         project_update = self._refresh_project(project_id, recorded_actions)
         interaction_id = None
@@ -212,13 +214,11 @@ class MeetingRepository:
                 )
                 task_id = task.task_id
             action_id = uuid.uuid4().hex
-            with storage.connect(self.database_path) as connection:
-                connection.execute(
-                    "INSERT INTO meeting_actions (meeting_action_id, meeting_id, "
-                    "description, owner, due_date, task_id, position) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (action_id, meeting_id, description, owner, due, task_id, position),
-                )
+            self.insert("meeting_actions", {
+                "meeting_action_id": action_id, "meeting_id": meeting_id,
+                "description": description, "owner": owner, "due_date": due,
+                "task_id": task_id, "position": position,
+            })
             recorded.append(
                 MeetingAction(
                     meeting_action_id=action_id,
@@ -274,61 +274,47 @@ class MeetingRepository:
     # -- reads ------------------------------------------------------------
 
     def get(self, meeting_id: str) -> dict[str, Any] | None:
-        with storage.connect(self.database_path) as connection:
-            row = connection.execute(
-                "SELECT meeting_id, title, occurred_at, participants, project_id, "
-                "contact_id, summary, notes, document_id, created_at "
-                "FROM meetings WHERE meeting_id = ?",
-                (meeting_id,),
-            ).fetchone()
-            if row is None:
-                return None
-            decisions = connection.execute(
-                "SELECT text FROM meeting_decisions WHERE meeting_id = ? ORDER BY position",
-                (meeting_id,),
-            ).fetchall()
-            actions = connection.execute(
-                "SELECT meeting_action_id, description, owner, due_date, task_id "
-                "FROM meeting_actions WHERE meeting_id = ? ORDER BY position",
-                (meeting_id,),
-            ).fetchall()
-        meeting = Meeting(**dict(row))
+        row = self.fetch_one(
+            "meeting_id, title, occurred_at, participants, project_id, contact_id, "
+            "summary, notes, document_id, created_at",
+            "meetings", "meeting_id = ?", (meeting_id,),
+        )
+        if row is None:
+            return None
+        decisions = self.fetch_all(
+            "text", "meeting_decisions", "meeting_id = ?", (meeting_id,), "ORDER BY position"
+        )
+        actions = self.fetch_all(
+            "meeting_action_id, description, owner, due_date, task_id",
+            "meeting_actions", "meeting_id = ?", (meeting_id,), "ORDER BY position",
+        )
         return {
-            **asdict(meeting),
+            **asdict(Meeting(**row)),
             "decisions": [item["text"] for item in decisions],
-            "actions": [dict(item) for item in actions],
+            "actions": actions,
         }
 
     def list(self, limit: int = 20) -> list[dict[str, Any]]:
-        with storage.connect(self.database_path) as connection:
-            rows = connection.execute(
-                "SELECT m.meeting_id, m.title, m.occurred_at, m.participants, "
-                "m.project_id, m.document_id, m.summary, "
-                "(SELECT COUNT(*) FROM meeting_decisions d WHERE d.meeting_id = m.meeting_id) "
-                "AS decision_count, "
-                "(SELECT COUNT(*) FROM meeting_actions a WHERE a.meeting_id = m.meeting_id) "
-                "AS action_count "
-                "FROM meetings m ORDER BY m.occurred_at DESC, m.created_at DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
-        return [dict(row) for row in rows]
+        return self.fetch_all(
+            "meeting_id, title, occurred_at, participants, project_id, document_id, summary, "
+            "(SELECT COUNT(*) FROM meeting_decisions d WHERE d.meeting_id = meetings.meeting_id) "
+            "AS decision_count, "
+            "(SELECT COUNT(*) FROM meeting_actions a WHERE a.meeting_id = meetings.meeting_id) "
+            "AS action_count",
+            "meetings", "", (limit,), "ORDER BY occurred_at DESC, created_at DESC LIMIT ?",
+        )
 
     def open_actions(self, limit: int = 50) -> list[dict[str, Any]]:
         """Actions assigned to somebody else — the executive's chase list."""
-        with storage.connect(self.database_path) as connection:
-            rows = connection.execute(
-                "SELECT a.meeting_action_id, a.description, a.owner, a.due_date, "
-                "m.title AS meeting_title, m.occurred_at "
-                "FROM meeting_actions a JOIN meetings m ON m.meeting_id = a.meeting_id "
-                "WHERE a.task_id IS NULL AND a.owner != '' "
-                "ORDER BY a.due_date IS NULL, a.due_date LIMIT ?",
-                (limit,),
-            ).fetchall()
-        return [dict(row) for row in rows]
+        return self.fetch_all(
+            "meeting_action_id, description, owner, due_date, "
+            "(SELECT title FROM meetings m WHERE m.meeting_id = meeting_actions.meeting_id) "
+            "AS meeting_title",
+            "meeting_actions", "task_id IS NULL AND owner != ''", (limit,),
+            "ORDER BY due_date IS NULL, due_date LIMIT ?",
+        )
 
     def delete(self, meeting_id: str) -> bool:
-        with storage.connect(self.database_path) as connection:
-            connection.execute("DELETE FROM meeting_decisions WHERE meeting_id = ?", (meeting_id,))
-            connection.execute("DELETE FROM meeting_actions WHERE meeting_id = ?", (meeting_id,))
-            cursor = connection.execute("DELETE FROM meetings WHERE meeting_id = ?", (meeting_id,))
-            return cursor.rowcount > 0
+        self.delete_scoped("meeting_decisions", "meeting_id", meeting_id)
+        self.delete_scoped("meeting_actions", "meeting_id", meeting_id)
+        return self.delete_scoped("meetings", "meeting_id", meeting_id)

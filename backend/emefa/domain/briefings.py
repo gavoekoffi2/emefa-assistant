@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from emefa.domain import storage
+from emefa.domain.scope import Ownership, Scope, ScopedStore
 
 _TABLES = {"briefings", "evening_reports"}
 
@@ -25,32 +25,43 @@ class Briefing:
     created_at: str
 
 
-class BriefingRepository:
-    def __init__(self, database_path: Path, table: str = "briefings") -> None:
+class BriefingRepository(ScopedStore):
+    """A report is written for one person, so it is personal."""
+
+    ownership = Ownership.USER
+
+    def __init__(
+        self,
+        database_path: Path,
+        table: str = "briefings",
+        scope: Scope | None = None,
+    ) -> None:
         if table not in _TABLES:
             raise ValueError(f"unknown report table: {table}")
-        self.database_path = database_path
         self.table = table
-        storage.run_migrations(database_path)
+        super().__init__(database_path, scope)
+
+    def for_scope(self, scope: Scope) -> "BriefingRepository":
+        return BriefingRepository(self.database_path, self.table, scope)
 
     def save(self, brief_date: str, content: dict[str, Any]) -> Briefing:
-        with storage.connect(self.database_path) as connection:
-            connection.execute(
-                f"INSERT INTO {self.table} (brief_date, content) VALUES (?, ?) "
-                "ON CONFLICT(brief_date) DO UPDATE SET content = excluded.content",
-                (brief_date, json.dumps(content, ensure_ascii=False)),
+        payload = json.dumps(content, ensure_ascii=False)
+        if self.get(brief_date) is None:
+            self.insert(self.table, {"brief_date": brief_date, "content": payload})
+        else:
+            self.update_scoped(
+                self.table, "brief_date", brief_date, {"content": payload},
+                touch_updated_at=False,
             )
         found = self.get(brief_date)
         assert found is not None
         return found
 
     def get(self, brief_date: str) -> Briefing | None:
-        with storage.connect(self.database_path) as connection:
-            row = connection.execute(
-                "SELECT brief_date, content, emailed, created_at "
-                f"FROM {self.table} WHERE brief_date = ?",
-                (brief_date,),
-            ).fetchone()
+        row = self.fetch_one(
+            "brief_date, content, emailed, created_at", self.table,
+            "brief_date = ?", (brief_date,),
+        )
         if row is None:
             return None
         return Briefing(
@@ -61,7 +72,6 @@ class BriefingRepository:
         )
 
     def mark_emailed(self, brief_date: str) -> None:
-        with storage.connect(self.database_path) as connection:
-            connection.execute(
-                f"UPDATE {self.table} SET emailed = 1 WHERE brief_date = ?", (brief_date,)
-            )
+        self.update_scoped(
+            self.table, "brief_date", brief_date, {"emailed": 1}, touch_updated_at=False
+        )

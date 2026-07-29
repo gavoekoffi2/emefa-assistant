@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import uuid
+
 from dataclasses import dataclass
 from pathlib import Path
 
 from emefa.domain import storage
+from emefa.domain.scope import Ownership, Scope, ScopedStore
 from emefa.domain.storage import DEFAULT_ASSISTANT_ID
 
 ASSISTANT_FIELDS = ("name", "primary_language", "interaction_style")
@@ -155,17 +158,45 @@ class BusinessProfile:
         return self.preferred_name.strip() or self.owner_name.strip()
 
 
-class ProfileRepository:
-    def __init__(self, database_path: Path) -> None:
-        self.database_path = database_path
-        storage.run_migrations(database_path)
+class ProfileRepository(ScopedStore):
+    """The company's own description, and the assistant serving it.
+
+    Both are tenant-owned: every colleague works with the same company profile
+    and the same assistant identity.
+    """
+
+    ownership = Ownership.TENANT
+
+    def __init__(self, database_path: Path, scope: Scope | None = None) -> None:
+        super().__init__(database_path, scope)
+        self.assistant_id = self._resolve_assistant_id()
+
+    def _resolve_assistant_id(self) -> str:
+        """One assistant per company, provisioned on first use.
+
+        Migration 2 seeded rows for the default tenant only. Any other company
+        gets its own assistant and its own empty business profile the first
+        time it is touched, so a new tenant is usable without a separate
+        bootstrap step — and can never fall back to another company's profile.
+        """
+        row = self.fetch_one("assistant_id", "assistants")
+        if row is not None:
+            return row["assistant_id"]
+        assistant_id = (
+            DEFAULT_ASSISTANT_ID
+            if self.scope.is_default()
+            else f"ast_{uuid.uuid4().hex[:12]}"
+        )
+        self.insert("assistants", {"assistant_id": assistant_id, "name": "EMEFA"})
+        self.insert("business_profiles", {"assistant_id": assistant_id})
+        return assistant_id
 
     def get_assistant(self) -> AssistantProfile:
         with storage.connect(self.database_path) as connection:
             row = connection.execute(
                 "SELECT assistant_id, name, primary_language, interaction_style "
-                "FROM assistants WHERE assistant_id = ?",
-                (DEFAULT_ASSISTANT_ID,),
+                "FROM assistants WHERE assistant_id = ? AND tenant_id = ?",
+                (self.assistant_id, self.scope.tenant_id),
             ).fetchone()
         if row is None:
             raise RuntimeError("default assistant row missing; migrations not applied")
@@ -179,8 +210,9 @@ class ProfileRepository:
         columns = ", ".join(("assistant_id", *BUSINESS_FIELDS))
         with storage.connect(self.database_path) as connection:
             row = connection.execute(
-                f"SELECT {columns} FROM business_profiles WHERE assistant_id = ?",
-                (DEFAULT_ASSISTANT_ID,),
+                f"SELECT {columns} FROM business_profiles "
+                "WHERE assistant_id = ? AND tenant_id = ?",
+                (self.assistant_id, self.scope.tenant_id),
             ).fetchone()
         if row is None:
             raise RuntimeError("default business profile missing; migrations not applied")
@@ -204,8 +236,8 @@ class ProfileRepository:
         with storage.connect(self.database_path) as connection:
             connection.execute(
                 f"UPDATE {table} SET {assignments}, updated_at = CURRENT_TIMESTAMP "
-                f"WHERE {key_column} = ?",
-                (*accepted.values(), DEFAULT_ASSISTANT_ID),
+                f"WHERE {key_column} = ? AND tenant_id = ?",
+                (*accepted.values(), self.assistant_id, self.scope.tenant_id),
             )
 
     def system_context(self) -> str:

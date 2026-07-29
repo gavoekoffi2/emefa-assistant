@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from emefa.api.devices import current_device
+from emefa.api.workspace import current_workspace
 from emefa.domain.devices import Device
 from emefa.observability import audit
 
@@ -23,10 +24,10 @@ class TopicRequest(BaseModel):
 
 @router.get("/status")
 def status(
-    request: Request, _device: Annotated[Device, Depends(current_device)]
+    request: Request, device: Annotated[Device, Depends(current_device)]
 ) -> dict[str, Any]:
-    state = request.app.state.onboarding.status()
-    return {**state, "next_question": request.app.state.onboarding.next_question()}
+    onboarding = current_workspace(request, device).onboarding
+    return {**onboarding.status(), "next_question": onboarding.next_question()}
 
 
 @router.post("/start")
@@ -34,7 +35,7 @@ def start(
     request: Request, device: Annotated[Device, Depends(current_device)]
 ) -> dict[str, Any]:
     audit("onboarding_started", device_id=device.device_id)
-    return request.app.state.onboarding.start()
+    return current_workspace(request, device).onboarding.start()
 
 
 @router.post("/skip")
@@ -44,7 +45,7 @@ def skip(
     device: Annotated[Device, Depends(current_device)],
 ) -> dict[str, Any]:
     try:
-        state = request.app.state.onboarding.skip(payload.topic_id)
+        state = current_workspace(request, device).onboarding.skip(payload.topic_id)
     except ValueError as error:
         raise HTTPException(status_code=404, detail="unknown_topic") from error
     audit("onboarding_topic_skipped", device_id=device.device_id, topic=payload.topic_id)
@@ -55,9 +56,9 @@ def skip(
 def resume(
     payload: TopicRequest,
     request: Request,
-    _device: Annotated[Device, Depends(current_device)],
+    device: Annotated[Device, Depends(current_device)],
 ) -> dict[str, Any]:
-    return request.app.state.onboarding.resume(payload.topic_id)
+    return current_workspace(request, device).onboarding.resume(payload.topic_id)
 
 
 @router.post("/complete")
@@ -65,12 +66,12 @@ def complete(
     request: Request, device: Annotated[Device, Depends(current_device)]
 ) -> dict[str, Any]:
     audit("onboarding_completed", device_id=device.device_id)
-    return request.app.state.onboarding.complete()
+    return current_workspace(request, device).onboarding.complete()
 
 
 @router.post("/reopen")
 def reopen(
-    request: Request, _device: Annotated[Device, Depends(current_device)]
+    request: Request, device: Annotated[Device, Depends(current_device)]
 ) -> dict[str, Any]:
     """Restart the interview — used from the configuration centre."""
-    return request.app.state.onboarding.reopen()
+    return current_workspace(request, device).onboarding.reopen()

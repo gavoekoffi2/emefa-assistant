@@ -13,7 +13,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from emefa.domain import storage
+from emefa.domain.scope import Ownership, Scope, ScopedStore
 
 STAGES = ("nouveau", "contacté", "qualifié", "proposition", "gagné", "perdu")
 OPEN_STAGES = ("nouveau", "contacté", "qualifié", "proposition")
@@ -47,10 +47,13 @@ class Prospect:
             return False
 
 
-class ProspectRepository:
-    def __init__(self, database_path: Path) -> None:
-        self.database_path = database_path
-        storage.run_migrations(database_path)
+class ProspectRepository(ScopedStore):
+    """The legacy pipeline. Belongs to the company, like the CRM it precedes."""
+
+    ownership = Ownership.TENANT
+
+    def __init__(self, database_path: Path, scope: Scope | None = None) -> None:
+        super().__init__(database_path, scope)
 
     def add(self, name: str, **fields: Any) -> Prospect:
         cleaned_name = " ".join(str(name).split())[:200]
@@ -58,34 +61,22 @@ class ProspectRepository:
             raise ValueError("prospect name must not be empty")
         values = self._clean_fields(fields)
         prospect_id = uuid.uuid4().hex
-        columns = ["prospect_id", "name", *values.keys()]
-        placeholders = ", ".join("?" for _ in columns)
-        with storage.connect(self.database_path) as connection:
-            connection.execute(
-                f"INSERT INTO prospects ({', '.join(columns)}) VALUES ({placeholders})",
-                (prospect_id, cleaned_name, *values.values()),
-            )
+        self.insert("prospects", {"prospect_id": prospect_id, "name": cleaned_name, **values})
         found = self.get(prospect_id)
         assert found is not None
         return found
 
     def get(self, prospect_id: str) -> Prospect | None:
-        with storage.connect(self.database_path) as connection:
-            row = connection.execute(
-                f"SELECT {_COLUMNS} FROM prospects WHERE prospect_id = ?",
-                (prospect_id,),
-            ).fetchone()
-        return Prospect(**dict(row)) if row is not None else None
+        row = self.fetch_one(_COLUMNS, "prospects", "prospect_id = ?", (prospect_id,))
+        return Prospect(**row) if row is not None else None
 
     def list_open(self, limit: int = 100) -> list[Prospect]:
-        with storage.connect(self.database_path) as connection:
-            rows = connection.execute(
-                f"SELECT {_COLUMNS} FROM prospects "
-                f"WHERE stage IN ({', '.join('?' for _ in OPEN_STAGES)}) "
-                "ORDER BY next_action_date IS NULL, next_action_date, created_at LIMIT ?",
-                (*OPEN_STAGES, limit),
-            ).fetchall()
-        return [Prospect(**dict(row)) for row in rows]
+        rows = self.fetch_all(
+            _COLUMNS, "prospects",
+            f"stage IN ({', '.join('?' for _ in OPEN_STAGES)})", (*OPEN_STAGES, limit),
+            "ORDER BY next_action_date IS NULL, next_action_date, created_at LIMIT ?",
+        )
+        return [Prospect(**row) for row in rows]
 
     def update(self, prospect_id: str, **fields: Any) -> Prospect | None:
         if self.get(prospect_id) is None:
@@ -96,13 +87,7 @@ class ProspectRepository:
             values["stage"] = stage
         if not values:
             return self.get(prospect_id)
-        assignments = ", ".join(f"{column} = ?" for column in values)
-        with storage.connect(self.database_path) as connection:
-            connection.execute(
-                f"UPDATE prospects SET {assignments}, updated_at = CURRENT_TIMESTAMP "
-                "WHERE prospect_id = ?",
-                (*values.values(), prospect_id),
-            )
+        self.update_scoped("prospects", "prospect_id", prospect_id, values)
         return self.get(prospect_id)
 
     def due_follow_ups(self, today: date | None = None) -> list[Prospect]:

@@ -26,15 +26,12 @@ SCOPED_REPOSITORIES = (CrmRepository, TaskRepository, MemoryRepository, AgendaRe
 #: the hierarchy, not because they are data owned within it.
 IDENTITY_TABLES = ("tenants", "users")
 
-#: Still single-scope. Listed so the gap is visible in the test suite rather
-#: than only in a document; move a name up as it gets scoped.
-KNOWN_UNSCOPED_TABLES = (
-    "meetings", "meeting_decisions", "meeting_actions",
-    "prospects", "initiatives", "routines", "routine_runs",
-    "briefings", "evening_reports", "report_preferences",
-    "conversation_turns", "pending_actions", "uploaded_files",
-    "artifacts", "onboarding_state", "business_profiles", "assistants",
-)
+#: Deliberately empty, and it must stay that way.
+#:
+#: Every table carrying ``tenant_id`` is served by a scoped repository. A name
+#: may only appear here with a written justification in the audit report — the
+#: conformance test at the bottom refuses anything else.
+KNOWN_UNSCOPED_TABLES: tuple[str, ...] = ()
 
 
 @pytest.fixture
@@ -201,19 +198,31 @@ def test_the_unscoped_tables_are_the_ones_we_think_they_are(tmp_path):
         }
 
     scoped_now = {
+        # company-owned
         "contacts", "projects", "deals", "contracts", "interactions",
-        "tasks", "memories", "events", "connected_accounts",
+        "tasks", "meetings", "meeting_decisions", "meeting_actions",
+        "prospects", "initiatives", "routines", "routine_runs",
+        "artifacts", "business_profiles", "assistants",
+        # personal
+        "memories", "events", "connected_accounts", "conversation_turns",
+        "pending_actions", "briefings", "evening_reports",
+        "report_preferences", "onboarding_state",
     }
     unaccounted = (
         tenant_tables - scoped_now - set(KNOWN_UNSCOPED_TABLES) - set(IDENTITY_TABLES)
     )
     assert not unaccounted, (
-        f"these tables carry tenant_id but are neither scoped nor listed as a known "
-        f"gap: {sorted(unaccounted)}. Scope them, or add them to "
-        f"KNOWN_UNSCOPED_TABLES with intent."
+        f"these tables carry tenant_id but are not served by a scoped repository: "
+        f"{sorted(unaccounted)}. Scope them. Adding a name to KNOWN_UNSCOPED_TABLES "
+        f"is a deliberate, documented exception — not the default fix."
     )
     # And the ones we claim are scoped really do exist.
-    assert scoped_now <= tenant_tables
+    assert scoped_now <= tenant_tables, sorted(scoped_now - tenant_tables)
+    # The goal is zero exceptions; this asserts we have not started collecting them.
+    assert KNOWN_UNSCOPED_TABLES == (), (
+        "an unscoped table has been accepted; justify it in "
+        "docs/MULTI_TENANCY_AUDIT.md or scope it"
+    )
 
 
 def test_every_scoped_repository_accepts_and_honours_a_scope(tmp_path):

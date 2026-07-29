@@ -29,7 +29,7 @@ from emefa.domain.profiles import (
     PREFERENCE_FIELDS,
     ProfileRepository,
 )
-from emefa.domain.storage import DEFAULT_USER_ID
+from emefa.domain.scope import Ownership, Scope, ScopedStore
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,36 +114,37 @@ TOPICS: tuple[Topic, ...] = (
 TOPIC_BY_ID = {topic.topic_id: topic for topic in TOPICS}
 
 
-class OnboardingRepository:
-    def __init__(self, database_path: Path, profiles: ProfileRepository) -> None:
-        self.database_path = Path(database_path)
-        storage.run_migrations(self.database_path)
+class OnboardingRepository(ScopedStore):
+    """How well EMEFA knows *this* person; the profile it fills is the company's."""
+
+    ownership = Ownership.USER
+
+    def __init__(
+        self,
+        database_path: Path,
+        profiles: ProfileRepository,
+        scope: Scope | None = None,
+    ) -> None:
+        super().__init__(database_path, scope)
         self.profiles = profiles
+
+    def for_scope(self, scope: Scope) -> "OnboardingRepository":
+        return OnboardingRepository(self.database_path, self.profiles.for_scope(scope), scope)
 
     # -- persisted state --------------------------------------------------
 
     def _state(self) -> dict[str, Any]:
-        with storage.connect(self.database_path) as connection:
-            row = connection.execute(
-                "SELECT started_at, completed_at, skipped_topics FROM onboarding_state "
-                "WHERE user_id = ?",
-                (DEFAULT_USER_ID,),
-            ).fetchone()
-            if row is None:
-                connection.execute(
-                    "INSERT INTO onboarding_state (user_id) VALUES (?)", (DEFAULT_USER_ID,)
-                )
-                return {"started_at": None, "completed_at": None, "skipped_topics": ""}
-        return dict(row)
+        row = self.fetch_one(
+            "started_at, completed_at, skipped_topics", "onboarding_state"
+        )
+        if row is None:
+            self.insert("onboarding_state", {})
+            return {"started_at": None, "completed_at": None, "skipped_topics": ""}
+        return row
 
     def _write(self, values: dict[str, Any]) -> None:
-        assignments = ", ".join(f"{column} = ?" for column in values)
-        with storage.connect(self.database_path) as connection:
-            connection.execute(
-                f"UPDATE onboarding_state SET {assignments}, "
-                "updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",
-                (*values.values(), DEFAULT_USER_ID),
-            )
+        self._state()  # ensure the row exists for this owner
+        self.update_scoped("onboarding_state", "user_id", self.scope.user_id, values)
 
     def _skipped(self) -> set[str]:
         raw = self._state().get("skipped_topics") or ""

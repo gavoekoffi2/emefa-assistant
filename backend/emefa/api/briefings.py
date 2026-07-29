@@ -59,7 +59,7 @@ def todays_briefing(
     request: Request,
     device: Annotated[Device, Depends(current_device)],
 ) -> BriefingResponse:
-    briefing = request.app.state.briefings.get(date.today().isoformat())
+    briefing = current_workspace(request, device).briefings.get(date.today().isoformat())
     if briefing is None:
         raise HTTPException(status_code=404, detail="no_briefing_today")
     return BriefingResponse(
@@ -79,12 +79,12 @@ def morning_brief(
     state = request.app.state
     workspace = current_workspace(request, device)
     content = compose_morning_brief(
-        state.profiles,
+        workspace.profiles,
         workspace.tasks,
-        state.prospects,
+        workspace.prospects,
         workspace.crm,
         workspace.meetings,
-        state.report_preferences.get(),
+        workspace.report_preferences.get(),
         agenda=workspace.agenda,
         inbox=workspace.inbox,
     )
@@ -101,15 +101,15 @@ def evening_report(
     state = request.app.state
     workspace = current_workspace(request, device)
     content = compose_evening_report(
-        state.profiles,
+        workspace.profiles,
         workspace.tasks,
         workspace.crm,
         workspace.meetings,
-        state.report_preferences.get(),
+        workspace.report_preferences.get(),
         agenda=workspace.agenda,
     )
     # Storing what was shown keeps the evening e-mail consistent with it.
-    state.evening_reports.save(content["date"], content)
+    workspace.evening_reports.save(content["date"], content)
     return ComposedReport(
         brief_date=content["date"], content=content, text=format_evening_text(content)
     )
@@ -120,7 +120,9 @@ def get_preferences(
     request: Request,
     device: Annotated[Device, Depends(current_device)],
 ) -> PreferencesResponse:
-    return _preferences_response(request.app.state.report_preferences.get())
+    return _preferences_response(
+        current_workspace(request, device).report_preferences.get()
+    )
 
 
 @router.put("/preferences", response_model=PreferencesResponse)
@@ -129,7 +131,7 @@ def update_preferences(
     request: Request,
     device: Annotated[Device, Depends(current_device)],
 ) -> PreferencesResponse:
-    preferences = request.app.state.report_preferences.update(
+    preferences = current_workspace(request, device).report_preferences.update(
         morning_sections=payload.morning_sections,
         evening_sections=payload.evening_sections,
     )

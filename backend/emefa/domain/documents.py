@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
-from emefa.domain import storage
+from emefa.domain.scope import Ownership, Scope, ScopedStore
 from emefa.domain.office import (
     KIND_EXTENSIONS,
     KIND_MIME_TYPES,
@@ -40,25 +40,54 @@ class DocumentNotFoundError(LookupError):
     pass
 
 
-class DocumentStore:
-    """Catalogue of the durable deliverables EMEFA produces."""
+class DocumentStore(ScopedStore):
+    """Catalogue of the durable deliverables EMEFA produces.
+
+    Deliverables belong to the **company**. Isolation is enforced twice: the
+    catalogue is a scoped table, and each tenant's files live in their own
+    directory — so a listing cannot see another company's files even if the
+    catalogue were wrong.
+    """
 
     #: Kept for callers that predate multi-format support.
     mime_type = _DOCX_MIME
+    ownership = Ownership.TENANT
 
     def __init__(
         self,
         database_path: Path,
         provider: OfficeProvider | None = None,
         footer: str = "Document préparé par EMEFA",
+        scope: Scope | None = None,
     ) -> None:
-        self.database_path = Path(database_path)
-        storage.run_migrations(self.database_path)
-        self.root = self.database_path.parent / "documents"
-        self.root.mkdir(parents=True, exist_ok=True)
+        super().__init__(database_path, scope)
         self.provider = provider or PythonOfficeProvider()
         self.footer = footer
+        self.root = self.database_path.parent / "documents" / self.scope.tenant_id
+        self.root.mkdir(parents=True, exist_ok=True)
+        self._adopt_legacy_directory()
         self._index_existing_files()
+
+    def for_scope(self, scope: Scope) -> "DocumentStore":
+        return DocumentStore(self.database_path, self.provider, self.footer, scope)
+
+    def _adopt_legacy_directory(self) -> None:
+        """Move pre-tenant files into the default tenant's directory.
+
+        Before this change every artifact sat directly under ``documents/``.
+        Those belong to the deployment that created them — the default tenant —
+        and are moved once, on first boot after the upgrade.
+        """
+        if not self.scope.is_default():
+            return
+        legacy = self.database_path.parent / "documents"
+        for extension in KIND_EXTENSIONS.values():
+            for path in legacy.glob(f"*{extension}"):
+                if path.parent == self.root:
+                    continue
+                target = self.root / path.name
+                if not target.exists():
+                    path.rename(target)
 
     # -- identity & paths -------------------------------------------------
 
@@ -85,44 +114,35 @@ class DocumentStore:
 
     def _index_existing_files(self) -> None:
         """Adopt artifacts written before the catalogue existed."""
-        with storage.connect(self.database_path) as connection:
-            known = {
-                row[0]
-                for row in connection.execute("SELECT artifact_id FROM artifacts").fetchall()
-            }
-            for kind, extension in KIND_EXTENSIONS.items():
-                for path in self.root.glob(f"*{extension}"):
+        known = {
+            row["artifact_id"] for row in self.fetch_all("artifact_id", "artifacts")
+        }
+        for kind, extension in KIND_EXTENSIONS.items():
+            for path in self.root.glob(f"*{extension}"):
+                try:
+                    artifact_id = self._validated_id(path.stem)
+                except DocumentNotFoundError:
+                    continue
+                if artifact_id in known:
+                    continue
+                title = path.stem
+                if kind == "document":
                     try:
-                        artifact_id = self._validated_id(path.stem)
-                    except DocumentNotFoundError:
+                        title = self.provider.read_document(path)[0]
+                    except Exception:  # a corrupt file must not block boot
                         continue
-                    if artifact_id in known:
-                        continue
-                    title = path.stem
-                    if kind == "document":
-                        try:
-                            title = self.provider.read_document(path)[0]
-                        except Exception:  # a corrupt file must not block boot
-                            continue
-                    connection.execute(
-                        "INSERT INTO artifacts (artifact_id, kind, title) VALUES (?, ?, ?)",
-                        (artifact_id, kind, title),
-                    )
+                self._record(artifact_id, kind, title)
 
     def _record(self, artifact_id: str, kind: str, title: str) -> None:
-        with storage.connect(self.database_path) as connection:
-            connection.execute(
-                "INSERT INTO artifacts (artifact_id, kind, title) VALUES (?, ?, ?) "
-                "ON CONFLICT(artifact_id) DO UPDATE SET "
-                "title = excluded.title, updated_at = CURRENT_TIMESTAMP",
-                (artifact_id, kind, title),
-            )
+        if self.fetch_one("artifact_id", "artifacts", "artifact_id = ?", (artifact_id,)):
+            self.update_scoped("artifacts", "artifact_id", artifact_id, {"title": title})
+        else:
+            self.insert("artifacts", {
+                "artifact_id": artifact_id, "kind": kind, "title": title,
+            })
 
     def _title_of(self, artifact_id: str) -> str | None:
-        with storage.connect(self.database_path) as connection:
-            row = connection.execute(
-                "SELECT title FROM artifacts WHERE artifact_id = ?", (artifact_id,)
-            ).fetchone()
+        row = self.fetch_one("title", "artifacts", "artifact_id = ?", (artifact_id,))
         return row["title"] if row is not None else None
 
     # -- cleaning ---------------------------------------------------------

@@ -9,6 +9,8 @@ import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+from emefa.domain.scope import DEFAULT_SCOPE, Scope
 from uuid import UUID, uuid4
 
 from docx import Document
@@ -45,12 +47,44 @@ _DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 
 class UploadedFileStore:
-    """Path-safe persistent storage for arbitrary user files."""
+    """Path-safe persistent storage for arbitrary user files.
 
-    def __init__(self, database_path: Path, max_upload_bytes: int = _DEFAULT_MAX_UPLOAD_BYTES) -> None:
-        self.root = Path(database_path).parent / "uploads"
-        self.root.mkdir(parents=True, exist_ok=True)
+    There is no index table here: metadata lives beside each file. Isolation is
+    therefore achieved by giving **each tenant its own directory**, so a listing
+    physically cannot reach another company's uploads.
+    """
+
+    def __init__(
+        self,
+        database_path: Path,
+        max_upload_bytes: int = _DEFAULT_MAX_UPLOAD_BYTES,
+        scope: Scope | None = None,
+    ) -> None:
+        self.database_path = Path(database_path)
+        self.scope = scope or DEFAULT_SCOPE
         self.max_upload_bytes = max_upload_bytes
+        self.root = self.database_path.parent / "uploads" / self.scope.tenant_id
+        self.root.mkdir(parents=True, exist_ok=True)
+        self._adopt_legacy_directory()
+
+    def for_scope(self, scope: Scope) -> "UploadedFileStore":
+        return UploadedFileStore(self.database_path, self.max_upload_bytes, scope)
+
+    def _adopt_legacy_directory(self) -> None:
+        """Files uploaded before tenants existed belong to the default one."""
+        if not self.scope.is_default():
+            return
+        legacy = self.database_path.parent / "uploads"
+        for path in legacy.iterdir() if legacy.is_dir() else ():
+            if not path.is_dir() or path == self.root:
+                continue
+            try:
+                UUID(path.name)
+            except (ValueError, AttributeError):
+                continue  # a tenant directory, not a file directory
+            target = self.root / path.name
+            if not target.exists():
+                path.rename(target)
 
     @staticmethod
     def _validated_id(file_id: str) -> str:

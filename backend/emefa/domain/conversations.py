@@ -7,41 +7,35 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from emefa.domain import storage
+from emefa.domain.scope import Ownership, Scope, ScopedStore
 
 # Single-user voice channel; the ElevenLabs bridge has no device binding.
 VOICE_CONVERSATION_ID = "voice:default"
 
 
-class ConversationStore:
-    def __init__(self, database_path: Path) -> None:
-        self.database_path = database_path
-        storage.run_migrations(database_path)
+class ConversationStore(ScopedStore):
+    """What was said to EMEFA, by one person, inside their company."""
+
+    ownership = Ownership.USER
+
+    def __init__(self, database_path: Path, scope: Scope | None = None) -> None:
+        super().__init__(database_path, scope)
 
     def recent(self, conversation_id: str, limit: int = 12) -> list[dict[str, Any]]:
-        with storage.connect(self.database_path) as connection:
-            rows = connection.execute(
-                "SELECT payload FROM conversation_turns WHERE conversation_id = ? "
-                "ORDER BY turn_id DESC LIMIT ?",
-                (conversation_id, limit),
-            ).fetchall()
+        rows = self.fetch_all(
+            "payload", "conversation_turns", "conversation_id = ?", (conversation_id, limit),
+            "ORDER BY turn_id DESC LIMIT ?",
+        )
         return [json.loads(row["payload"]) for row in reversed(rows)]
 
     def extend(self, conversation_id: str, entries: Sequence[Mapping[str, Any]]) -> None:
         if not entries:
             return
-        with storage.connect(self.database_path) as connection:
-            connection.executemany(
-                "INSERT INTO conversation_turns (conversation_id, payload) VALUES (?, ?)",
-                [
-                    (conversation_id, json.dumps(dict(entry), ensure_ascii=False))
-                    for entry in entries
-                ],
-            )
+        for entry in entries:
+            self.insert("conversation_turns", {
+                "conversation_id": conversation_id,
+                "payload": json.dumps(dict(entry), ensure_ascii=False),
+            })
 
     def forget(self, conversation_id: str) -> None:
-        with storage.connect(self.database_path) as connection:
-            connection.execute(
-                "DELETE FROM conversation_turns WHERE conversation_id = ?",
-                (conversation_id,),
-            )
+        self.delete_scoped("conversation_turns", "conversation_id", conversation_id)

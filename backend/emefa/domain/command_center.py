@@ -13,12 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from emefa.domain.storage import (
-    DEFAULT_TENANT_ID,
-    DEFAULT_USER_ID,
-    connect,
-    run_migrations,
-)
+from emefa.domain.scope import Ownership, Scope, ScopedStore
 
 INITIATIVE_STATUSES = ("proposed", "active", "paused", "completed", "cancelled")
 PRIORITIES = ("low", "normal", "high", "critical")
@@ -82,10 +77,18 @@ def _run(row: Any) -> RoutineRun:
     return RoutineRun(**{field: row[field] for field in RoutineRun.__dataclass_fields__})
 
 
-class InitiativeRepository:
-    def __init__(self, database_path: Path) -> None:
-        self.database_path = database_path
-        run_migrations(database_path)
+def _now() -> str:
+    """SQLite's CURRENT_TIMESTAMP shape, for values we set explicitly."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+class InitiativeRepository(ScopedStore):
+    """Company resource: colleagues see the same ones."""
+
+    ownership = Ownership.TENANT
+
+    def __init__(self, database_path: Path, scope: Scope | None = None) -> None:
+        super().__init__(database_path, scope)
 
     def add(
         self,
@@ -100,44 +103,28 @@ class InitiativeRepository:
         due_date: str | None = None,
     ) -> Initiative:
         initiative_id = f"ini_{uuid.uuid4().hex[:12]}"
-        with connect(self.database_path) as connection:
-            connection.execute(
-                """INSERT INTO initiatives
-                (initiative_id, tenant_id, user_id, title, objective, status,
-                 priority, risk, autonomy_level, next_action, due_date)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    initiative_id, DEFAULT_TENANT_ID, DEFAULT_USER_ID,
-                    title.strip()[:300], objective.strip()[:5_000], status,
-                    priority, risk, autonomy_level, next_action.strip()[:2_000], due_date,
-                ),
-            )
+        self.insert("initiatives", {
+            "initiative_id": initiative_id, "title": title.strip()[:300],
+            "objective": objective.strip()[:5_000], "status": status, "priority": priority,
+            "risk": risk, "autonomy_level": autonomy_level,
+            "next_action": next_action.strip()[:2_000], "due_date": due_date,
+        })
         item = self.get(initiative_id)
         assert item is not None
         return item
 
     def get(self, initiative_id: str) -> Initiative | None:
-        with connect(self.database_path) as connection:
-            row = connection.execute(
-                "SELECT * FROM initiatives WHERE initiative_id = ? AND user_id = ?",
-                (initiative_id, DEFAULT_USER_ID),
-            ).fetchone()
+        row = self.fetch_one("*", "initiatives", "initiative_id = ?", (initiative_id,))
         return _initiative(row) if row else None
 
     def list(self, include_closed: bool = True, limit: int = 100) -> list[Initiative]:
-        where = "user_id = ?"
-        params: list[Any] = [DEFAULT_USER_ID]
-        if not include_closed:
-            where += " AND status NOT IN ('completed', 'cancelled')"
-        params.append(max(1, min(limit, 250)))
-        with connect(self.database_path) as connection:
-            rows = connection.execute(
-                f"""SELECT * FROM initiatives WHERE {where}
-                ORDER BY CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1
-                WHEN 'normal' THEN 2 ELSE 3 END, COALESCE(due_date, '9999-12-31'), updated_at DESC
-                LIMIT ?""",
-                params,
-            ).fetchall()
+        where = "" if include_closed else "status NOT IN ('completed', 'cancelled')"
+        rows = self.fetch_all(
+            "*", "initiatives", where, (max(1, min(limit, 250)),),
+            """ORDER BY CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1
+            WHEN 'normal' THEN 2 ELSE 3 END, COALESCE(due_date, '9999-12-31'),
+            updated_at DESC LIMIT ?""",
+        )
         return [_initiative(row) for row in rows]
 
     def update(self, initiative_id: str, changes: dict[str, Any]) -> Initiative | None:
@@ -148,14 +135,8 @@ class InitiativeRepository:
         values = {key: value for key, value in changes.items() if key in allowed}
         if not values:
             return self.get(initiative_id)
-        assignments = ", ".join(f"{key} = ?" for key in values)
-        with connect(self.database_path) as connection:
-            cursor = connection.execute(
-                f"UPDATE initiatives SET {assignments}, updated_at = CURRENT_TIMESTAMP "
-                "WHERE initiative_id = ? AND user_id = ?",
-                (*values.values(), initiative_id, DEFAULT_USER_ID),
-            )
-        return self.get(initiative_id) if cursor.rowcount else None
+        changed = self.update_scoped("initiatives", "initiative_id", initiative_id, values)
+        return self.get(initiative_id) if changed else None
 
     def context_block(self, limit: int = 8) -> str:
         items = self.list(include_closed=False, limit=limit)
@@ -168,10 +149,13 @@ class InitiativeRepository:
         return "\n".join(lines)
 
 
-class RoutineRepository:
-    def __init__(self, database_path: Path) -> None:
-        self.database_path = database_path
-        run_migrations(database_path)
+class RoutineRepository(ScopedStore):
+    """Company resource: colleagues see the same ones."""
+
+    ownership = Ownership.TENANT
+
+    def __init__(self, database_path: Path, scope: Scope | None = None) -> None:
+        super().__init__(database_path, scope)
 
     def add(
         self,
@@ -184,38 +168,25 @@ class RoutineRepository:
         enabled: bool = True,
     ) -> Routine:
         routine_id = f"rtn_{uuid.uuid4().hex[:12]}"
-        with connect(self.database_path) as connection:
-            connection.execute(
-                """INSERT INTO routines
-                (routine_id, tenant_id, user_id, name, prompt, schedule_kind,
-                 schedule_hour, schedule_weekday, enabled, requires_confirmation)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
-                (
-                    routine_id, DEFAULT_TENANT_ID, DEFAULT_USER_ID,
-                    name.strip()[:200], prompt.strip()[:10_000], schedule_kind,
-                    schedule_hour, schedule_weekday, int(enabled),
-                ),
-            )
+        self.insert("routines", {
+            "routine_id": routine_id, "name": name.strip()[:200],
+            "prompt": prompt.strip()[:10_000], "schedule_kind": schedule_kind,
+            "schedule_hour": schedule_hour, "schedule_weekday": schedule_weekday,
+            "enabled": int(enabled), "requires_confirmation": 1,
+        })
         item = self.get(routine_id)
         assert item is not None
         return item
 
     def get(self, routine_id: str) -> Routine | None:
-        with connect(self.database_path) as connection:
-            row = connection.execute(
-                "SELECT * FROM routines WHERE routine_id = ? AND user_id = ?",
-                (routine_id, DEFAULT_USER_ID),
-            ).fetchone()
+        row = self.fetch_one("*", "routines", "routine_id = ?", (routine_id,))
         return _routine(row) if row else None
 
     def list(self, enabled_only: bool = False, limit: int = 100) -> list[Routine]:
-        condition = "AND enabled = 1" if enabled_only else ""
-        with connect(self.database_path) as connection:
-            rows = connection.execute(
-                f"SELECT * FROM routines WHERE user_id = ? {condition} "
-                "ORDER BY enabled DESC, updated_at DESC LIMIT ?",
-                (DEFAULT_USER_ID, max(1, min(limit, 250))),
-            ).fetchall()
+        rows = self.fetch_all(
+            "*", "routines", "enabled = 1" if enabled_only else "",
+            (max(1, min(limit, 250)),), "ORDER BY enabled DESC, updated_at DESC LIMIT ?",
+        )
         return [_routine(row) for row in rows]
 
     def update(self, routine_id: str, changes: dict[str, Any]) -> Routine | None:
@@ -225,14 +196,8 @@ class RoutineRepository:
             values["enabled"] = int(bool(values["enabled"]))
         if not values:
             return self.get(routine_id)
-        assignments = ", ".join(f"{key} = ?" for key in values)
-        with connect(self.database_path) as connection:
-            cursor = connection.execute(
-                f"UPDATE routines SET {assignments}, updated_at = CURRENT_TIMESTAMP "
-                "WHERE routine_id = ? AND user_id = ?",
-                (*values.values(), routine_id, DEFAULT_USER_ID),
-            )
-        return self.get(routine_id) if cursor.rowcount else None
+        changed = self.update_scoped("routines", "routine_id", routine_id, values)
+        return self.get(routine_id) if changed else None
 
     def due(self, now: datetime) -> list[Routine]:
         today = now.date().isoformat()
@@ -248,48 +213,42 @@ class RoutineRepository:
         return result
 
     def start_run(self, routine_id: str) -> RoutineRun:
+        if self.get(routine_id) is None:
+            raise ValueError("routine_not_found")
         run_id = f"rrn_{uuid.uuid4().hex[:12]}"
-        with connect(self.database_path) as connection:
-            connection.execute(
-                """INSERT INTO routine_runs
-                (run_id, routine_id, tenant_id, user_id, status)
-                VALUES (?, ?, ?, ?, 'running')""",
-                (run_id, routine_id, DEFAULT_TENANT_ID, DEFAULT_USER_ID),
-            )
-            connection.execute(
-                "UPDATE routines SET last_run_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP "
-                "WHERE routine_id = ?",
-                (routine_id,),
-            )
+        self.insert("routine_runs", {
+            "run_id": run_id, "routine_id": routine_id, "status": "running",
+        })
+        self.update_scoped(
+            "routines", "routine_id", routine_id,
+            {"last_run_at": _now()},
+        )
         run = self.get_run(run_id)
         assert run is not None
         return run
 
     def finish_run(self, run_id: str, status: str, result: str = "", action_id: str | None = None) -> RoutineRun:
-        with connect(self.database_path) as connection:
-            connection.execute(
-                """UPDATE routine_runs SET status = ?, result = ?, action_id = ?,
-                finished_at = CURRENT_TIMESTAMP WHERE run_id = ?""",
-                (status, result[:10_000], action_id, run_id),
-            )
+        self.update_scoped(
+            "routine_runs", "run_id", run_id,
+            {
+                "status": status, "result": result[:10_000], "action_id": action_id,
+                "finished_at": _now(),
+            },
+            touch_updated_at=False,
+        )
         run = self.get_run(run_id)
         assert run is not None
         return run
 
     def get_run(self, run_id: str) -> RoutineRun | None:
-        with connect(self.database_path) as connection:
-            row = connection.execute(
-                "SELECT * FROM routine_runs WHERE run_id = ? AND user_id = ?",
-                (run_id, DEFAULT_USER_ID),
-            ).fetchone()
+        row = self.fetch_one("*", "routine_runs", "run_id = ?", (run_id,))
         return _run(row) if row else None
 
     def list_runs(self, limit: int = 50) -> list[RoutineRun]:
-        with connect(self.database_path) as connection:
-            rows = connection.execute(
-                "SELECT * FROM routine_runs WHERE user_id = ? ORDER BY started_at DESC LIMIT ?",
-                (DEFAULT_USER_ID, max(1, min(limit, 200))),
-            ).fetchall()
+        rows = self.fetch_all(
+            "*", "routine_runs", "", (max(1, min(limit, 200)),),
+            "ORDER BY started_at DESC LIMIT ?",
+        )
         return [_run(row) for row in rows]
 
     def export(self) -> dict[str, Any]:

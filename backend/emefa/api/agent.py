@@ -86,7 +86,7 @@ def serialize_reply(reply: AgentReply) -> RunResponse:
 def _register_pending(request: Request, device: Device, response: RunResponse) -> RunResponse:
     """Persist a confirmation_required action so it survives reload/restart."""
     if response.status == "confirmation_required" and response.pending_action is not None:
-        pending = request.app.state.approvals.create(
+        pending = current_workspace(request, device).approvals.create(
             device.device_id,
             RequestedAction(
                 name=response.pending_action.name,
@@ -169,7 +169,7 @@ def list_approvals(
 ) -> list[ApprovalSummary]:
     # Single-user mode: the voice channel has no device binding, so its
     # pending approvals are shown to any authenticated device.
-    approvals = request.app.state.approvals
+    approvals = current_workspace(request, device).approvals
     pending = [
         *approvals.pending_for(device.device_id),
         *approvals.pending_for(VOICE_CONVERSATION_ID),
@@ -192,7 +192,7 @@ async def decide_approval(
     request: Request,
     device: Annotated[Device, Depends(current_device)],
 ) -> RunResponse:
-    approvals = request.app.state.approvals
+    approvals = current_workspace(request, device).approvals
     pending = approvals.get(action_id)
     if (
         pending is None

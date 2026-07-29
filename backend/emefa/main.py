@@ -119,31 +119,53 @@ def create_app(
     def build_workspace(scope: Scope) -> Workspace:
         scoped_crm = crm.for_scope(scope)
         scoped_tasks = tasks.for_scope(scope)
+        scoped_documents = documents.for_scope(scope)
+        scoped_profiles = profiles.for_scope(scope)
         scoped_memories = memories.for_scope(scope)
-        scoped_agenda = AgendaRepository(
-            active_settings.database_path, scoped_crm, scoped_tasks, scope
-        )
+        scoped_agenda = agenda.for_scope(scope)
         scoped_meetings = MeetingRepository(
-            active_settings.database_path, scoped_crm, scoped_tasks, documents
+            active_settings.database_path, scoped_crm, scoped_tasks, scoped_documents, scope
         )
-        scoped_workflows = WorkflowEngine(profiles, scoped_crm, documents, scoped_tasks)
+        scoped_prospects = prospects.for_scope(scope)
+        scoped_initiatives = initiatives.for_scope(scope)
+        scoped_routines = routines.for_scope(scope)
+        scoped_conversations = conversations.for_scope(scope)
+        scoped_approvals = approvals.for_scope(scope)
+        scoped_briefings = briefings.for_scope(scope)
+        scoped_evening = evening_reports.for_scope(scope)
+        scoped_preferences = report_preferences.for_scope(scope)
+        scoped_onboarding = OnboardingRepository(
+            active_settings.database_path, scoped_profiles, scope
+        )
+        scoped_uploads = uploaded_files.for_scope(scope)
+        scoped_workflows = WorkflowEngine(
+            scoped_profiles, scoped_crm, scoped_documents, scoped_tasks
+        )
         scoped_inbox = InboxReader(active_email_provider, scoped_crm)
         engine = AgentEngine(
             selected_brain,
             build_tool_shelf(
-                profiles, scoped_tasks, scoped_memories, active_email_provider, documents,
-                prospects, initiatives=initiatives, routines=routines,
-                uploaded_files=uploaded_files, vision_analyzer=vision_analyzer,
-                crm=scoped_crm, meetings=scoped_meetings, workflows=scoped_workflows,
-                onboarding=onboarding, preferences=report_preferences,
-                agenda=scoped_agenda, inbox=scoped_inbox,
+                scoped_profiles, scoped_tasks, scoped_memories, active_email_provider,
+                scoped_documents, scoped_prospects, initiatives=scoped_initiatives,
+                routines=scoped_routines, uploaded_files=scoped_uploads,
+                vision_analyzer=vision_analyzer, crm=scoped_crm, meetings=scoped_meetings,
+                workflows=scoped_workflows, onboarding=scoped_onboarding,
+                preferences=scoped_preferences, agenda=scoped_agenda, inbox=scoped_inbox,
             ),
-            memory=conversations,
+            memory=scoped_conversations,
         )
         return Workspace(
-            scope=scope, crm=scoped_crm, tasks=scoped_tasks, memories=scoped_memories,
-            agenda=scoped_agenda, meetings=scoped_meetings, workflows=scoped_workflows,
-            inbox=scoped_inbox, agent=engine,
+            scope=scope,
+            crm=scoped_crm, tasks=scoped_tasks, meetings=scoped_meetings,
+            documents=scoped_documents, profiles=scoped_profiles,
+            prospects=scoped_prospects, initiatives=scoped_initiatives,
+            routines=scoped_routines,
+            memories=scoped_memories, agenda=scoped_agenda,
+            conversations=scoped_conversations, approvals=scoped_approvals,
+            briefings=scoped_briefings, evening_reports=scoped_evening,
+            report_preferences=scoped_preferences, onboarding=scoped_onboarding,
+            uploaded_files=scoped_uploads,
+            workflows=scoped_workflows, inbox=scoped_inbox, agent=engine,
         )
 
     def workspace_for(scope: Scope) -> Workspace:

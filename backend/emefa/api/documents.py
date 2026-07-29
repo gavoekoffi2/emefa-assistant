@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from emefa.api.devices import current_device
+from emefa.api.workspace import current_workspace
 from emefa.domain.devices import Device
 from emefa.domain.documents import DocumentNotFoundError
 
@@ -15,22 +16,23 @@ router = APIRouter(prefix="/v1/documents", tags=["documents"])
 @router.get("")
 def list_documents(
     request: Request,
-    _device: Annotated[Device, Depends(current_device)],
+    device: Annotated[Device, Depends(current_device)],
 ) -> list[dict[str, Any]]:
     """List the durable deliverables produced by EMEFA, newest first."""
 
-    return request.app.state.documents.list()
+    return current_workspace(request, device).documents.list()
 
 
 @router.get("/{document_id}/download", response_class=FileResponse)
 def download_document(
     document_id: str,
     request: Request,
-    _device: Annotated[Device, Depends(current_device)],
+    device: Annotated[Device, Depends(current_device)],
 ) -> FileResponse:
+    documents = current_workspace(request, device).documents
     try:
-        path = request.app.state.documents.get(document_id)
-        metadata = request.app.state.documents.describe(document_id)
+        path = documents.get(document_id)
+        metadata = documents.describe(document_id)
     except DocumentNotFoundError as exc:
         raise HTTPException(status_code=404, detail="document_not_found") from exc
     return FileResponse(

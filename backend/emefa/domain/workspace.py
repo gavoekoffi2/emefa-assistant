@@ -4,10 +4,9 @@ A request is served from a workspace, not from application-wide singletons:
 the repositories and the agent inside it are bound to the scope of the device
 that authenticated. `main.create_app` memoises one per scope.
 
-Only the repositories that are actually tenant-scoped are rebound. The rest
-(profiles, documents, prospects, routines…) are still single-scope by design
-and are reached through application state — a gap tracked explicitly in
-`tests/test_tenant_isolation.py`, not papered over here.
+Every business resource is rebound: there is no longer a category of data
+reached through application state. `tests/test_tenant_isolation.py` asserts
+that no table carrying `tenant_id` is left unscoped.
 """
 
 from __future__ import annotations
@@ -21,11 +20,26 @@ from emefa.domain.scope import Scope
 @dataclass(frozen=True, slots=True)
 class Workspace:
     scope: Scope
+    # company-owned
     crm: Any
     tasks: Any
+    meetings: Any
+    documents: Any
+    profiles: Any
+    prospects: Any
+    initiatives: Any
+    routines: Any
+    # personal
     memories: Any
     agenda: Any
-    meetings: Any
+    conversations: Any
+    approvals: Any
+    briefings: Any
+    evening_reports: Any
+    report_preferences: Any
+    onboarding: Any
+    uploaded_files: Any
+    # composed
     workflows: Any
     inbox: Any
     agent: Any

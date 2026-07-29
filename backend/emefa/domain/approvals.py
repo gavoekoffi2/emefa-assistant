@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from emefa.domain import storage
+from emefa.domain.scope import Ownership, Scope, ScopedStore
 from emefa.domain.agent import RequestedAction
 
 
@@ -28,66 +29,66 @@ class PendingAction:
         )
 
 
-class ApprovalRepository:
-    def __init__(self, database_path: Path) -> None:
-        self.database_path = database_path
-        storage.run_migrations(database_path)
+def _now() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+_COLUMNS = (
+    "action_id, conversation_id, tool_name, arguments, call_id, status, created_at"
+)
+
+
+class ApprovalRepository(ScopedStore):
+    """A consequential action waiting for its owner's explicit yes."""
+
+    ownership = Ownership.USER
+
+    def __init__(self, database_path: Path, scope: Scope | None = None) -> None:
+        super().__init__(database_path, scope)
 
     def create(self, conversation_id: str, action: RequestedAction) -> PendingAction:
         action_id = uuid.uuid4().hex
-        with storage.connect(self.database_path) as connection:
-            connection.execute(
-                "INSERT INTO pending_actions "
-                "(action_id, conversation_id, tool_name, arguments, call_id) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (
-                    action_id,
-                    conversation_id,
-                    action.name,
-                    json.dumps(action.arguments, ensure_ascii=False),
-                    action.call_id,
-                ),
-            )
+        self.insert("pending_actions", {
+            "action_id": action_id, "conversation_id": conversation_id,
+            "tool_name": action.name,
+            "arguments": json.dumps(action.arguments, ensure_ascii=False),
+            "call_id": action.call_id,
+        })
         found = self.get(action_id)
         assert found is not None
         return found
 
     def get(self, action_id: str) -> PendingAction | None:
-        with storage.connect(self.database_path) as connection:
-            row = connection.execute(
-                "SELECT action_id, conversation_id, tool_name, arguments, call_id, "
-                "status, created_at FROM pending_actions WHERE action_id = ?",
-                (action_id,),
-            ).fetchone()
-        return self._from_row(row)
+        return self._from_row(
+            self.fetch_one(_COLUMNS, "pending_actions", "action_id = ?", (action_id,))
+        )
 
     def pending_for(self, conversation_id: str) -> list[PendingAction]:
-        with storage.connect(self.database_path) as connection:
-            rows = connection.execute(
-                "SELECT action_id, conversation_id, tool_name, arguments, call_id, "
-                "status, created_at FROM pending_actions "
-                "WHERE conversation_id = ? AND status = 'pending' ORDER BY created_at",
-                (conversation_id,),
-            ).fetchall()
+        rows = self.fetch_all(
+            _COLUMNS, "pending_actions", "conversation_id = ? AND status = 'pending'",
+            (conversation_id,), "ORDER BY created_at",
+        )
         return [action for row in rows if (action := self._from_row(row)) is not None]
 
     def claim(self, action_id: str) -> bool:
         """Atomically reserve a pending action before executing its side effect."""
+        # Still one statement, so two concurrent approvals cannot both win.
         with storage.connect(self.database_path) as connection:
             cursor = connection.execute(
                 "UPDATE pending_actions SET status = 'executing' "
-                "WHERE action_id = ? AND status = 'pending'",
-                (action_id,),
+                f"WHERE action_id = ? AND status = 'pending' "
+                f"AND {self.scope.predicate(self.ownership)}",
+                (action_id, *self.scope.values(self.ownership)),
             )
             return cursor.rowcount == 1
 
     def resolve(self, action_id: str, status: str) -> None:
-        with storage.connect(self.database_path) as connection:
-            connection.execute(
-                "UPDATE pending_actions SET status = ?, resolved_at = CURRENT_TIMESTAMP "
-                "WHERE action_id = ?",
-                (status, action_id),
-            )
+        self.update_scoped(
+            "pending_actions", "action_id", action_id,
+            {"status": status, "resolved_at": _now()}, touch_updated_at=False,
+        )
 
     @staticmethod
     def _from_row(row) -> PendingAction | None:

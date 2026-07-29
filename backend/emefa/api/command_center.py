@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
 
 from emefa.api.devices import current_device
+from emefa.api.workspace import current_workspace
 from emefa.domain.command_center import (
     INITIATIVE_STATUSES,
     Initiative,
@@ -106,10 +107,10 @@ def snapshot(
 @router.get("/initiatives", response_model=list[Initiative])
 def list_initiatives(
     request: Request,
-    _device: Annotated[Device, Depends(current_device)],
+    device: Annotated[Device, Depends(current_device)],
     include_closed: bool = True,
 ) -> list[Initiative]:
-    return request.app.state.initiatives.list(include_closed=include_closed)
+    return current_workspace(request, device).initiatives.list(include_closed=include_closed)
 
 
 @router.post("/initiatives", response_model=Initiative, status_code=201)
@@ -118,7 +119,7 @@ def create_initiative(
     request: Request,
     device: Annotated[Device, Depends(current_device)],
 ) -> Initiative:
-    item = request.app.state.initiatives.add(**payload.model_dump())
+    item = current_workspace(request, device).initiatives.add(**payload.model_dump())
     audit("initiative_created", device_id=device.device_id, initiative_id=item.initiative_id)
     return item
 
@@ -131,7 +132,7 @@ def update_initiative(
     device: Annotated[Device, Depends(current_device)],
 ) -> Initiative:
     changes = payload.model_dump(exclude_unset=True)
-    item = request.app.state.initiatives.update(initiative_id, changes)
+    item = current_workspace(request, device).initiatives.update(initiative_id, changes)
     if item is None:
         raise HTTPException(status_code=404, detail="initiative_not_found")
     audit("initiative_updated", device_id=device.device_id, initiative_id=initiative_id)
@@ -141,9 +142,9 @@ def update_initiative(
 @router.get("/routines", response_model=list[Routine])
 def list_routines(
     request: Request,
-    _device: Annotated[Device, Depends(current_device)],
+    device: Annotated[Device, Depends(current_device)],
 ) -> list[Routine]:
-    return request.app.state.routines.list()
+    return current_workspace(request, device).routines.list()
 
 
 @router.post("/routines", response_model=Routine, status_code=201)
@@ -152,7 +153,7 @@ def create_routine(
     request: Request,
     device: Annotated[Device, Depends(current_device)],
 ) -> Routine:
-    item = request.app.state.routines.add(**payload.model_dump())
+    item = current_workspace(request, device).routines.add(**payload.model_dump())
     audit("routine_created", device_id=device.device_id, routine_id=item.routine_id)
     return item
 
@@ -164,7 +165,8 @@ def update_routine(
     request: Request,
     device: Annotated[Device, Depends(current_device)],
 ) -> Routine:
-    current = request.app.state.routines.get(routine_id)
+    routines = current_workspace(request, device).routines
+    current = routines.get(routine_id)
     if current is None:
         raise HTTPException(status_code=404, detail="routine_not_found")
     changes = payload.model_dump(exclude_unset=True)
@@ -179,7 +181,7 @@ def update_routine(
         changes.update(schedule_hour=None, schedule_weekday=None)
     elif schedule_kind == "daily":
         changes["schedule_weekday"] = None
-    item = request.app.state.routines.update(routine_id, changes)
+    item = routines.update(routine_id, changes)
     assert item is not None
     audit("routine_updated", device_id=device.device_id, routine_id=routine_id)
     return item
@@ -191,14 +193,15 @@ async def run_routine_now(
     request: Request,
     device: Annotated[Device, Depends(current_device)],
 ) -> dict[str, Any]:
-    routine = request.app.state.routines.get(routine_id)
+    workspace = current_workspace(request, device)
+    routine = workspace.routines.get(routine_id)
     if routine is None:
         raise HTTPException(status_code=404, detail="routine_not_found")
     run = await execute_routine(
         routine,
-        request.app.state.routines,
-        request.app.state.agent,
-        request.app.state.approvals,
+        workspace.routines,
+        workspace.agent,
+        workspace.approvals,
         device.device_id,
     )
     return asdict(run)

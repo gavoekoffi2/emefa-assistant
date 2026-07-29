@@ -879,3 +879,66 @@ listed in `KNOWN_UNSCOPED_TABLES`, and a conformance test fails if a new table c
 
 Tests: backend **229 passed** (12 in `tests/test_tenant_isolation.py`), plus an end-to-end
 two-tenant run against uvicorn covering CRM, tasks, agenda, briefings and lookup.
+
+## Completed — multi-tenancy certified end to end (2026-07-29)
+
+Everything the section above listed as "still single-scope" is now scoped, and the
+architecture no longer relies on anyone remembering to scope it. Full report:
+**`docs/MULTI_TENANCY_AUDIT.md`**.
+
+### Every repository goes through `ScopedStore`
+
+Prospects, initiatives, routines, routine runs, meetings (with decisions and actions),
+conversations, approvals, briefings, evening reports, report preferences, onboarding state,
+documents, uploaded files and profiles. Documents and uploads moved to per-tenant
+directories, so filesystem access is bounded the same way SQL access is.
+
+`KNOWN_UNSCOPED_TABLES` is now **empty**, and a test asserts it stays empty. Four identity
+tables (`tenants`, `users`, `auth_tokens`, `invitations`) are exempt because they are read
+*before* the caller's tenant is known — the justification is written out in the audit, and a
+test pins the exemption to exactly those four names.
+
+### Real SaaS accounts
+
+Signup creates the company and its owner in one transaction; verification, reset and
+invitation links are single-use, expiring, stored only as hashes, and never returned in an
+HTTP response. Passwords use stdlib scrypt. Sign-in, reset and forgotten-password answer
+identically whether or not an address is registered. The shared instance code is no longer
+the way in — it remains only for the existing private deployment.
+
+Roles — propriétaire, administrateur, manager, collaborateur, lecture seule — are one
+permission matrix in `domain/roles.py`.
+
+### Authorisation is default-deny, globally
+
+`api/authorization.py` installs one global dependency covering all 114 routes. An
+unclassified route is **refused**, not allowed, and a conformance test fails the build if any
+registered route has no policy. Roles restrict actions, not visibility: all five seats read
+the same company CRM.
+
+### Three defects the isolation tests found
+
+1. The request path served the startup instance (recorded above).
+2. `briefings` and `evening_reports` were keyed on `brief_date` alone, so the first company
+   to generate a report on a day blocked every other company. `events` was unique on
+   `(source, external_id)` alone, which would have broken calendar sync the moment a
+   connector was switched on. Migration 20 puts the tenant in all three keys.
+3. Only the default tenant was seeded, so a second company crashed on its first request.
+
+None of the three was found by reading the code. All three were found by tests.
+
+### Verification
+
+Backend **296 passed**, including `tests/test_two_companies.py` — Entreprise Alpha and
+Entreprise Beta built through the real signup path, probing lecture, modification,
+suppression, recherche, export and référence. A migration-upgrade run from a v19 database
+confirms migration 20 preserves every row. CI has a dedicated multi-tenant isolation job.
+
+### Not covered — read before launch
+
+Database-at-rest encryption, per-tenant backup/restore, company deletion (RGPD), resource
+quotas, SQLite concurrent-write limits, and a customer-facing audit log. Listed with their
+risks in §7 of the audit.
+
+**OAuth connectors (Gmail, Calendar, Microsoft) remain deliberately not started.** They were
+held until this certification was complete; that condition is now met.

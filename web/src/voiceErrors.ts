@@ -24,11 +24,26 @@ const REASONS: Record<string, string> = {
   speech_provider_unavailable: 'le fournisseur de voix est injoignable',
 }
 
-/** Failures that pass on their own: the user should wait, not go and fix something. */
+/** Failures that pass on their own: the user should wait, not go and fix
+ *  something — and the cloned voice should retry rather than give up. */
 const TRANSIENT = new Set(['speech_rate_limited', 'speech_provider_unavailable'])
 
+/** Is this worth another attempt?
+ *
+ * One source of truth with the copy above: a failure described as temporary
+ * must also be one the queue retries, or the message and the behaviour
+ * disagree in front of the user.
+ */
+export function isTransientSpeechFailure(cause: unknown): boolean {
+  return TRANSIENT.has(speechFailureCode(cause))
+}
+
+export function speechFailureCode(cause: unknown): string {
+  return cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : ''
+}
+
 export function describeSpeechFailure(cause: unknown): string {
-  const code = cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : ''
+  const code = speechFailureCode(cause)
   const reason = REASONS[code]
   if (!reason) {
     // An unrecognised code is still shown rather than hidden: an opaque

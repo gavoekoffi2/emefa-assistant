@@ -475,3 +475,106 @@ test('the cloned voice falls back rather than failing the conversation', () => {
   assert.match(clonedVoice, /describeSpeechFailure\(cause\)/)
   assert.match(clonedVoice, /enabledRef\.current = false/)
 })
+
+test('synthesis concurrency is bounded to what the provider account allows', async () => {
+  const { createLimiter, MAX_CONCURRENT_SYNTHESES } = await import('../src/speechLimiter.ts')
+
+  // Two is the floor across ElevenLabs plans; more than that is refused.
+  assert.equal(MAX_CONCURRENT_SYNTHESES, 2)
+
+  let active = 0
+  let peak = 0
+  const limiter = createLimiter(2)
+  const release = []
+  const jobs = Array.from({ length: 6 }, () =>
+    limiter(async () => {
+      active += 1
+      peak = Math.max(peak, active)
+      await new Promise((resolve) => release.push(resolve))
+      active -= 1
+    }),
+  )
+
+  // Let the first slots be taken, then drain one at a time.
+  while (release.length > 0 || active > 0) {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const next = release.shift()
+    if (next) next()
+    else break
+  }
+  await Promise.all(jobs)
+
+  assert.equal(peak, 2, `six sentences must never open more than two requests (peak ${peak})`)
+})
+
+test('the limiter releases its slot even when a synthesis fails', async () => {
+  const { createLimiter } = await import('../src/speechLimiter.ts')
+  const limiter = createLimiter(1)
+
+  await assert.rejects(() => limiter(async () => { throw new Error('speech_rate_limited') }))
+  // A leaked slot would deadlock every later sentence, which is worse than
+  // the failure that caused it.
+  assert.equal(await limiter(async () => 'ok'), 'ok')
+})
+
+test('a temporary refusal is retried instead of ending the cloned voice', async () => {
+  const { isTransientSpeechFailure } = await import('../src/voiceErrors.ts')
+
+  // Concurrency limits and provider outages clear on their own.
+  assert.equal(isTransientSpeechFailure(new Error('speech_rate_limited')), true)
+  assert.equal(isTransientSpeechFailure(new Error('speech_provider_unavailable')), true)
+  // Configuration faults do not; retrying them just delays the fallback.
+  assert.equal(isTransientSpeechFailure(new Error('speech_quota_exceeded')), false)
+  assert.equal(isTransientSpeechFailure(new Error('speech_voice_not_found')), false)
+  assert.equal(isTransientSpeechFailure(new Error('speech_key_invalid')), false)
+
+  // The hook retries transient failures through the limiter before giving up.
+  assert.match(clonedVoice, /isTransientSpeechFailure\(cause\)/)
+  assert.match(clonedVoice, /RETRY_DELAYS_MS/)
+  assert.match(clonedVoice, /limiterRef\.current\(/)
+})
+
+test('a refused sentence never surfaces as an unhandled rejection', () => {
+  // The drain loop may not reach a queued item for seconds; the rejection has
+  // to be marked handled at enqueue time without being swallowed.
+  assert.match(clonedVoice, /prepared\.catch\(\(\) => \{\}\)/)
+})
+
+test('the reported failure is reproduced, and the limiter fixes it', async () => {
+  const { createLimiter } = await import('../src/speechLimiter.ts')
+
+  // A provider that refuses whenever a third request is open — which is what
+  // the entry ElevenLabs tiers do.
+  const makeProvider = () => {
+    let open = 0
+    return async () => {
+      open += 1
+      try {
+        if (open > 2) throw new Error('speech_rate_limited')
+        await new Promise((resolve) => setTimeout(resolve, 1))
+        return 'audio'
+      } finally {
+        open -= 1
+      }
+    }
+  }
+
+  const sentences = Array.from({ length: 6 }, (_, index) => `Phrase ${index + 1}.`)
+
+  // Before: every sentence is requested at once, exactly as enqueue used to.
+  const unbounded = makeProvider()
+  const results = await Promise.allSettled(sentences.map(() => unbounded()))
+  const refused = results.filter((item) => item.status === 'rejected')
+  assert.ok(
+    refused.length > 0,
+    'the old unbounded behaviour must reproduce the failure, or this test proves nothing',
+  )
+  assert.equal(refused[0].reason.message, 'speech_rate_limited')
+
+  // After: the same reply through the limiter completes in the cloned voice.
+  const bounded = makeProvider()
+  const limiter = createLimiter(2)
+  const spoken = await Promise.all(sentences.map((text) => limiter(() => bounded(text))))
+  assert.equal(spoken.length, 6)
+  assert.ok(spoken.every((item) => item === 'audio'), 'every sentence must be synthesised')
+})

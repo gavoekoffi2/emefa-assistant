@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { remapAnalyserSpectrum } from './face/audioSpectrum.ts'
 import { createPlaybackLatch, type PlaybackLatch } from './voicePlayback.ts'
-import { describeSpeechFailure } from './voiceErrors.ts'
+import { describeSpeechFailure, isTransientSpeechFailure } from './voiceErrors.ts'
+import { createLimiter } from './speechLimiter.ts'
 
 type QueuedAudio = {
   generation: number
@@ -14,6 +15,10 @@ type ClonedVoiceOptions = {
 }
 
 const EMPTY_FREQUENCIES = new Uint8Array(128)
+
+/** Backoff for a refusal that clears by itself. Two attempts is enough to
+ *  ride out a concurrency spike without delaying the reply noticeably. */
+const RETRY_DELAYS_MS = [400, 1200]
 
 export function useClonedVoice({ onFailure }: ClonedVoiceOptions) {
   const [isSpeaking, setIsSpeaking] = useState(false)
@@ -28,6 +33,7 @@ export function useClonedVoice({ onFailure }: ClonedVoiceOptions) {
   const drainingRef = useRef(false)
   const enabledRef = useRef(false)
   const failureRef = useRef(onFailure)
+  const limiterRef = useRef(createLimiter())
 
   useEffect(() => { failureRef.current = onFailure }, [onFailure])
 
@@ -81,7 +87,7 @@ export function useClonedVoice({ onFailure }: ClonedVoiceOptions) {
     enabledRef.current = true
   }, [ensureAudioGraph, interrupt])
 
-  const fetchAudio = useCallback(async (text: string, controller: AbortController) => {
+  const requestAudio = useCallback(async (text: string, controller: AbortController) => {
     const response = await fetch('/v1/realtime/speech', {
       method: 'POST',
       credentials: 'include',
@@ -97,6 +103,26 @@ export function useClonedVoice({ onFailure }: ClonedVoiceOptions) {
     const context = await ensureAudioGraph()
     return context.decodeAudioData(encoded.slice(0))
   }, [ensureAudioGraph])
+
+  const fetchAudio = useCallback(async (text: string, controller: AbortController) => {
+    // Through the limiter, so a long reply cannot open more requests than the
+    // provider account allows. Without this the tail of every multi-sentence
+    // answer was refused for concurrency and the cloned voice dropped out.
+    return limiterRef.current(async () => {
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          return await requestAudio(text, controller)
+        } catch (cause) {
+          const retryable =
+            isTransientSpeechFailure(cause) && attempt < RETRY_DELAYS_MS.length
+          if (!retryable || controller.signal.aborted) throw cause
+          // A rate limit clears by itself. Giving up on it would silence the
+          // rest of the reply for a condition that lasts a few hundred ms.
+          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]))
+        }
+      }
+    })
+  }, [requestAudio])
 
   const playBuffer = useCallback(async (buffer: AudioBuffer, generation: number) => {
     if (!enabledRef.current || generation !== generationRef.current) return
@@ -160,13 +186,15 @@ export function useClonedVoice({ onFailure }: ClonedVoiceOptions) {
     const controller = new AbortController()
     const generation = generationRef.current
     controllersRef.current.add(controller)
-    queueRef.current.push({
-      generation,
-      controller,
-      // Start preparing every sentence immediately. Playback still drains in
-      // order, which removes most provider gaps without mixing segments.
-      prepared: fetchAudio(text, controller),
-    })
+    // Queue every sentence for preparation at once; the limiter decides how
+    // many actually reach the provider. Playback still drains in order, which
+    // removes most provider gaps without mixing segments.
+    const prepared = fetchAudio(text, controller)
+    // The drain loop is what handles this rejection, but it may not reach this
+    // item for several seconds. Mark it handled now so a refusal never
+    // surfaces as an unhandled rejection; `drain` still sees it when it awaits.
+    prepared.catch(() => {})
+    queueRef.current.push({ generation, controller, prepared })
     void drain()
   }, [drain, fetchAudio])
 

@@ -233,9 +233,10 @@ def _refusing_gateway(status: int, body: object) -> RealtimeGateway:
         # Provider validation errors arrive as a list.
         (422, {"detail": [{"loc": ["body", "text"], "msg": "too long"}]},
          "speech_request_invalid"),
-        # A body we cannot parse at all must not crash the classifier.
-        (500, b"<html>gateway error</html>", "speech_provider_rejected_request"),
-        (503, None, "speech_provider_rejected_request"),
+        # A body we cannot parse at all must not crash the classifier, and a
+        # 5xx is the provider's own fault — transient, so worth retrying.
+        (500, b"<html>gateway error</html>", "speech_provider_unavailable"),
+        (503, None, "speech_provider_unavailable"),
     ],
 )
 async def test_a_refusal_is_classified_by_its_real_cause(status, body, expected):
@@ -356,3 +357,154 @@ async def test_a_rate_limit_is_answered_as_retryable_not_as_misconfiguration():
 
     assert response.status_code == 429
     assert response.json()["detail"] == "speech_rate_limited"
+
+
+# -- self-service diagnosis -------------------------------------------------
+
+
+def _voice_app(folder, handler, *, voice_id="voice_test"):
+    from emefa.domain.agent import AgentStep
+
+    class Brain:
+        async def think(self, history, tools):
+            return AgentStep(answer="ok")
+
+    from pathlib import Path
+
+    app = create_app(
+        Settings(
+            database_path=Path(folder) / "check.db",
+            elevenlabs_api_key="secret",
+            elevenlabs_agent_id="agent_test",
+            elevenlabs_voice_id=voice_id,
+            cookie_secure=False,
+        ),
+        brain=Brain(),
+    )
+    app.state.realtime = RealtimeGateway(
+        "secret", "agent_test", voice_id, transport=httpx.MockTransport(handler)
+    )
+    return app
+
+
+@pytest.mark.asyncio
+async def test_voice_check_names_the_fault_and_lists_the_usable_voices():
+    """The question after "the voice was refused" is always "then which voice
+    should I use?" — so the check answers both at once."""
+    import tempfile
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/voices":
+            return httpx.Response(200, json={"voices": [
+                {"voice_id": "abc123", "name": "Koffi", "category": "cloned"},
+                {"voice_id": "def456", "name": "Rachel", "category": "premade"},
+            ]})
+        return httpx.Response(
+            400, json={"detail": {"status": "voice_not_found", "message": "unknown voice"}}
+        )
+
+    with tempfile.TemporaryDirectory() as folder:
+        app = _voice_app(folder, handler)
+        _, token = app.state.devices.enroll("Poste")
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            body = (await client.get(
+                "/v1/system/voice-check", headers={"Authorization": f"Bearer {token}"}
+            )).json()
+        await app.state.realtime.close()
+
+    assert body["ok"] is False
+    assert body["reason"] == "speech_voice_not_found"
+    assert body["provider_status"] == 400
+    assert body["provider_message"] == "unknown voice"
+    assert [voice["name"] for voice in body["available_voices"]] == ["Koffi", "Rachel"]
+
+
+@pytest.mark.asyncio
+async def test_voice_check_confirms_a_working_configuration():
+    import tempfile
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"ID3-audio")
+
+    with tempfile.TemporaryDirectory() as folder:
+        app = _voice_app(folder, handler)
+        _, token = app.state.devices.enroll("Poste")
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            body = (await client.get(
+                "/v1/system/voice-check", headers={"Authorization": f"Bearer {token}"}
+            )).json()
+        await app.state.realtime.close()
+
+    assert body == {
+        "ok": True, "configured": True, "voice_id": "voice_test",
+        "reason": "", "provider_status": None, "provider_message": "",
+        "available_voices": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_voice_check_is_owner_only(tmp_path):
+    """It returns the provider's message, so it is not for every colleague."""
+    from emefa.domain.account_mail import Delivery
+
+    class Mailer:
+        def __init__(self):
+            self.invitations = {}
+
+        def send_verification(self, **_):
+            return Delivery("email", True)
+
+        def send_invitation(self, *, to, token, **_):
+            self.invitations[to] = token
+            return Delivery("email", True)
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"ID3-audio")
+
+    app = _voice_app(tmp_path, handler)
+    app.state.account_mailer = Mailer()
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        owner = await client.post("/v1/auth/signup", json={
+            "email": "jean@alpha.tg", "password": "motdepasse-solide",
+            "display_name": "Jean", "company_name": "Alpha"})
+        owner_auth = {"Authorization": f"Bearer {owner.cookies['emefa_session']}"}
+        await client.post("/v1/auth/invitations", headers=owner_auth,
+                          json={"email": "admin@alpha.tg", "role": "admin"})
+        joined = await client.post("/v1/auth/invitations/accept", json={
+            "token": app.state.account_mailer.invitations["admin@alpha.tg"],
+            "password": "motdepasse-solide", "display_name": "Admin"})
+        admin_auth = {"Authorization": f"Bearer {joined.cookies['emefa_session']}"}
+
+        assert (await client.get("/v1/system/voice-check", headers=owner_auth)).status_code == 200
+        assert (await client.get("/v1/system/voice-check", headers=admin_auth)).status_code == 403
+    await app.state.realtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        # 400 is what the provider uses for most refusals; leaving it on the
+        # catch-all sent the very failures we were chasing back to "rejected".
+        (400, "speech_request_invalid"),
+        (413, "speech_text_too_long"),
+        (500, "speech_provider_unavailable"),
+        (502, "speech_provider_unavailable"),
+    ],
+)
+async def test_no_common_status_falls_back_to_the_generic_code(status, expected):
+    from emefa.infrastructure.realtime import SpeechProviderError
+
+    gateway = RealtimeGateway(
+        "secret", "a", "v",
+        transport=httpx.MockTransport(lambda _r: httpx.Response(status, json={"detail": {}})),
+    )
+    try:
+        with pytest.raises(SpeechProviderError) as raised:
+            await gateway.synthesize("Bonsoir.")
+    finally:
+        await gateway.close()
+    assert raised.value.reason == expected

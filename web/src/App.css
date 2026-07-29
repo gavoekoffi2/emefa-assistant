@@ -14,3 +14,10 @@
 .auth-switch button{padding:0;border:0;background:none;color:#0a617d;font-size:14px;font-weight:600;cursor:pointer}
 .auth-switch button:hover{text-decoration:underline}
 .auth-switch button.quiet{margin-left:auto;color:#8798a0;font-weight:500}
+
+/* Voice self-check in the configuration centre. */
+.voice-check{display:grid;gap:10px;justify-items:start}
+.voice-check .form-error{display:grid;gap:6px;width:100%}
+.voice-check .form-error small{opacity:.85}
+.voice-check ul{margin:0;padding-left:18px;display:grid;gap:3px}
+.voice-check code{padding:1px 5px;border-radius:5px;background:rgba(0,0,0,.08);font-size:12px}

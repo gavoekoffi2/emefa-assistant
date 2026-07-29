@@ -31,13 +31,30 @@ _PROVIDER_REASONS: dict[str, str] = {
 }
 
 #: Fallback when the body carries no recognisable name, keyed on HTTP status.
+#:
+#: 400 matters as much as the rest: the provider uses it for most refusals,
+#: and leaving it out sent exactly the failures we were trying to diagnose
+#: back to the generic "rejected" code.
 _STATUS_REASONS: dict[int, str] = {
+    400: "speech_request_invalid",
     401: "speech_key_invalid",
     403: "speech_key_not_entitled",
     404: "speech_voice_not_found",
+    413: "speech_text_too_long",
     422: "speech_request_invalid",
     429: "speech_rate_limited",
 }
+
+
+def _reason_for(status_code: int) -> str:
+    """A named reason for any status, so nothing lands on the catch-all."""
+    if status_code in _STATUS_REASONS:
+        return _STATUS_REASONS[status_code]
+    # The provider's own fault, and it usually passes — worth retrying rather
+    # than tearing down the cloned voice.
+    if status_code >= 500:
+        return "speech_provider_unavailable"
+    return "speech_provider_rejected_request"
 
 
 class SpeechProviderError(RuntimeError):
@@ -77,9 +94,7 @@ def _classify(response: httpx.Response) -> SpeechProviderError:
     elif isinstance(detail, str):
         message = detail
 
-    reason = _PROVIDER_REASONS.get(name) or _STATUS_REASONS.get(
-        response.status_code, "speech_provider_rejected_request"
-    )
+    reason = _PROVIDER_REASONS.get(name) or _reason_for(response.status_code)
     return SpeechProviderError(reason, response.status_code, message or name)
 
 
@@ -159,6 +174,30 @@ class RealtimeGateway:
             )
             raise error
         return response.content
+
+    async def list_voices(self, limit: int = 25) -> list[dict[str, str]]:
+        """The voices this key can actually use.
+
+        When a synthesis fails on a voice id, the useful next question is
+        "then which ids do I have?" — answering it from the provider beats
+        asking someone to go and read a dashboard.
+        """
+        if not self.api_key:
+            raise RuntimeError("speech_not_configured")
+        response = await self.client.get("/v1/voices", headers={"xi-api-key": self.api_key})
+        if response.is_error:
+            raise _classify(response)
+        payload = response.json()
+        voices = payload.get("voices", []) if isinstance(payload, dict) else []
+        return [
+            {
+                "voice_id": str(voice.get("voice_id", "")),
+                "name": str(voice.get("name", "")),
+                "category": str(voice.get("category", "")),
+            }
+            for voice in voices[:limit]
+            if isinstance(voice, dict)
+        ]
 
     async def close(self) -> None:
         await self.client.aclose()

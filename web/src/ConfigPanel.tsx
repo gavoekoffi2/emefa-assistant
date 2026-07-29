@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from './App'
+import { describeSpeechFailure } from './voiceErrors.ts'
 
 export type AssistantProfile = {
   assistant_id: string; name: string; primary_language: string; interaction_style: string
@@ -10,11 +11,80 @@ type SchemaField = { field: string; label: string; long: boolean }
 type SchemaGroup = { group: string; title: string; fields: SchemaField[] }
 type Memory = { memory_id: string; category: string; content: string; created_at: string }
 type OnboardingTopic = { topic_id: string; title: string; status: string }
+type VoiceCheckResult = {
+  ok: boolean
+  configured: boolean
+  voice_id: string
+  reason: string
+  provider_status: number | null
+  provider_message: string
+  available_voices: { voice_id: string; name: string; category: string }[]
+}
 type OnboardingStatus = {
   completed: boolean; progress: number; topics: OnboardingTopic[]; known_field_count: number
   total_field_count: number
 }
 type ImportResult = { profile: BusinessProfile; pages_imported: number }
+
+/** Ask the provider directly why the cloned voice is refused.
+ *
+ * Added because diagnosing this from a mid-conversation error meant reading
+ * the server log, which the person who owns the provider account generally
+ * cannot do. The most common cause is a stale voice id, so a failure also
+ * lists the ids the key can actually use.
+ */
+function VoiceCheckRow() {
+  const [result, setResult] = useState<VoiceCheckResult | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState('')
+
+  const check = async () => {
+    setBusy(true)
+    setFailed('')
+    setResult(null)
+    try {
+      setResult(await api<VoiceCheckResult>('/v1/system/voice-check'))
+    } catch (cause) {
+      setFailed(cause instanceof Error ? cause.message : 'Vérification impossible.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="voice-check">
+      <button type="button" onClick={() => void check()} disabled={busy}>
+        {busy ? 'Vérification…' : 'Tester la voix clonée'}
+      </button>
+      {failed && <div className="form-error" role="alert">{failed}</div>}
+      {result?.ok && (
+        <p className="profile-saved" role="status">
+          La voix clonée répond correctement ({result.voice_id}).
+        </p>
+      )}
+      {result && !result.ok && (
+        <div className="form-error" role="alert">
+          <strong>{describeSpeechFailure(new Error(result.reason))}</strong>
+          {result.provider_message && (
+            <small>Réponse du fournisseur : {result.provider_message}</small>
+          )}
+          {result.available_voices.length > 0 && (
+            <>
+              <small>Voix disponibles avec cette clé :</small>
+              <ul>
+                {result.available_voices.map((voice) => (
+                  <li key={voice.voice_id}>
+                    {voice.name} — <code>{voice.voice_id}</code>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 const TOPIC_STATUS: Record<string, string> = {
   complet: 'Complet',
@@ -250,6 +320,9 @@ export function ConfigPanel({ open, onClose, onStartInterview }: {
                 </button>
               </details>
             ))}
+
+            <span className="profile-section">Voix clonée</span>
+            <VoiceCheckRow />
 
             <span className="profile-section">Souvenirs durables</span>
             {memories.length === 0 && (

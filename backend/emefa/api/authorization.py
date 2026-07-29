@@ -78,6 +78,10 @@ ROUTE_POLICY: dict[tuple[str, str], object] = {
     ("GET", "/v1/web/session"): Access.ACCOUNT,
     ("DELETE", "/v1/web/session"): Access.ACCOUNT,
     ("GET", "/v1/system/status"): Access.ACCOUNT,
+    # Returns the speech provider's own error message, which can quote account
+    # details. The provider account belongs to whoever runs the instance, so
+    # this is the owner's to see and nobody else's.
+    ("GET", "/v1/system/voice-check"): Permission.MANAGE_TENANT,
     ("GET", "/v1/demo/scenarios"): Access.ACCOUNT,
     # -- managing colleagues -----------------------------------------------
     ("GET", "/v1/auth/invitations"): Permission.MANAGE_MEMBERS,

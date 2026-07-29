@@ -51,6 +51,14 @@ def current_device(
             detail="Invalid device token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    # Bootstrap devices are intentionally useful only while no account exists.
+    # Once the owner boundary is established, every sensitive endpoint using
+    # this dependency fails closed for old/copied unbound device tokens.
+    if device.account_id is None and request.app.state.accounts.count() > 0:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Account session required",
+        )
     return device
 
 

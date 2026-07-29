@@ -48,10 +48,13 @@ class RealtimeGateway:
         response = await self.client.post(
             f"/v1/text-to-speech/{self.voice_id}",
             headers={"xi-api-key": self.api_key, "accept": "audio/mpeg"},
-            params={"output_format": "mp3_44100_128"},
+            params={
+                "output_format": "mp3_44100_128",
+                "optimize_streaming_latency": "3",
+            },
             json={
                 "text": text,
-                "model_id": "eleven_multilingual_v2",
+                "model_id": "eleven_turbo_v2_5",
                 "language_code": "fr",
                 "voice_settings": {
                     "stability": 0.52,

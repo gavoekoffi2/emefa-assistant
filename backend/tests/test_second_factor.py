@@ -429,3 +429,46 @@ async def test_approval_is_unaffected_when_no_factor_is_enrolled(tmp_path):
             f"/v1/agent/approvals/{run['action_id']}/decision", json={"approve": True}
         )
     assert decided.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_revoking_a_credential_requires_a_recent_step_up(tmp_path):
+    app = build_app(tmp_path, name="revoke-stepup.db")
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as web:
+        await signed_in(web, app)
+        account = app.state.accounts.by_email("koffi@example.com")
+        credential = app.state.second_factor.register(
+            "cred-delete", account.account_id, "public-key", "Téléphone"
+        )
+        refused = await web.delete(
+            f"/v1/auth/second-factor/{credential.credential_id}"
+        )
+        assert refused.status_code == 403
+        assert refused.json()["detail"] == "second_factor_required"
+        assert app.state.second_factor.get(credential.credential_id) is not None
+
+        device_id = (await web.get("/v1/web/session")).json()["device_id"]
+        app.state.second_factor.mark_verified(device_id)
+        assert (
+            await web.delete(f"/v1/auth/second-factor/{credential.credential_id}")
+        ).status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_mission_approval_uses_the_same_recent_step_up_guard(tmp_path):
+    app = build_app(tmp_path, name="mission-stepup.db")
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as web:
+        await signed_in(web, app)
+        account = app.state.accounts.by_email("koffi@example.com")
+        app.state.second_factor.register("cred-mission", account.account_id, "key")
+        refused = await web.post("/v1/missions/absent/steps/absent/approve")
+        assert refused.status_code == 403
+        assert refused.json()["detail"] == "second_factor_required"
+
+        device_id = (await web.get("/v1/web/session")).json()["device_id"]
+        app.state.second_factor.mark_verified(device_id)
+        assert (
+            await web.post("/v1/missions/absent/steps/absent/approve")
+        ).status_code == 404

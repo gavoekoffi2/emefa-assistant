@@ -190,7 +190,62 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         )
         """,
     ),
-    # 10 — memory kernel: atomic dated sourced facts (ADR-003).
+    # 10 — governed command center: user-managed initiatives, routines and
+    # auditable runs. This migration is intentionally compatible with the
+    # schema already deployed by origin/main: production may already be v10.
+    (
+        f"""
+        CREATE TABLE initiatives (
+            initiative_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            title TEXT NOT NULL,
+            objective TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'proposed',
+            priority TEXT NOT NULL DEFAULT 'normal',
+            risk TEXT NOT NULL DEFAULT 'low',
+            autonomy_level INTEGER NOT NULL DEFAULT 0,
+            next_action TEXT NOT NULL DEFAULT '',
+            due_date TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE INDEX idx_initiatives_status ON initiatives(user_id, status, priority, due_date)",
+        f"""
+        CREATE TABLE routines (
+            routine_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            name TEXT NOT NULL,
+            prompt TEXT NOT NULL,
+            schedule_kind TEXT NOT NULL DEFAULT 'manual',
+            schedule_hour INTEGER,
+            schedule_weekday INTEGER,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            requires_confirmation INTEGER NOT NULL DEFAULT 1,
+            last_run_at TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE INDEX idx_routines_enabled ON routines(user_id, enabled, schedule_kind)",
+        f"""
+        CREATE TABLE routine_runs (
+            run_id TEXT PRIMARY KEY,
+            routine_id TEXT NOT NULL REFERENCES routines(routine_id) ON DELETE CASCADE,
+            tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
+            user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
+            status TEXT NOT NULL,
+            result TEXT NOT NULL DEFAULT '',
+            action_id TEXT,
+            started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            finished_at TEXT
+        )
+        """,
+        "CREATE INDEX idx_routine_runs_recent ON routine_runs(routine_id, started_at)",
+    ),
+    # 11 — memory kernel: atomic dated sourced facts (ADR-003).
     #
     # Replaces the flat `memories` table. The old rows are copied in as
     # unstructured `note` facts, keeping their identifiers so existing API
@@ -289,7 +344,7 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         """,
         "ALTER TABLE memories RENAME TO memories_v1_archive",
     ),
-    # 11 — real accounts behind the device layer (ADR-002).
+    # 12 — real accounts behind the device layer (ADR-002).
     #
     # Devices stay the transport credential; what they now carry is an
     # identity. Existing devices are bound to the seeded user by the default,
@@ -314,7 +369,7 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         "CREATE INDEX idx_accounts_tenant ON accounts(tenant_id, status)",
         "ALTER TABLE devices ADD COLUMN account_id TEXT REFERENCES accounts(account_id)",
     ),
-    # 12 — per-assistant skill enablement.
+    # 13 — per-assistant skill enablement.
     #
     # The catalogue itself is files on disk, versioned with the deployment. It
     # is deliberately not a table: what belongs in the database is the user's
@@ -331,7 +386,7 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         )
         """,
     ),
-    # 13 — model usage accounting.
+    # 14 — model usage accounting.
     #
     # Tokens are always recorded; money only when a price is configured. An
     # invented price is worse than no price: it produces a budget report the
@@ -353,7 +408,8 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         """,
         "CREATE INDEX idx_usage_scope_day ON usage_entries(user_id, created_at, scope)",
     ),
-    # 14 — governed proactive initiatives.
+    # 15 — governed proactive initiatives, distinct from the command center's
+    # user-managed initiatives (different lifecycle, fields and public API).
     #
     # `dedupe_key` is unique among *open* initiatives only, enforced by a
     # partial index: a concern that persists for a week must produce one card,
@@ -361,7 +417,7 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
     # to survive for the audit.
     (
         f"""
-        CREATE TABLE initiatives (
+        CREATE TABLE proactive_initiatives (
             initiative_id TEXT PRIMARY KEY,
             tenant_id TEXT NOT NULL DEFAULT '{DEFAULT_TENANT_ID}',
             user_id TEXT NOT NULL DEFAULT '{DEFAULT_USER_ID}',
@@ -382,13 +438,13 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         )
         """,
         """
-        CREATE UNIQUE INDEX idx_initiatives_open_key
-        ON initiatives(user_id, dedupe_key)
+        CREATE UNIQUE INDEX idx_proactive_initiatives_open_key
+        ON proactive_initiatives(user_id, dedupe_key)
         WHERE status IN ('pending', 'approved', 'executing') AND dedupe_key <> ''
         """,
-        "CREATE INDEX idx_initiatives_status ON initiatives(user_id, status, created_at)",
+        "CREATE INDEX idx_proactive_initiatives_status ON proactive_initiatives(user_id, status, created_at)",
     ),
-    # 15 — durable missions.
+    # 16 — durable missions.
     #
     # State is written after every step, which is the entire point: a mission
     # that only exists in a request's memory cannot survive a deploy, and a
@@ -428,7 +484,7 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         """,
         "CREATE UNIQUE INDEX idx_mission_steps_order ON mission_steps(mission_id, position)",
     ),
-    # 16 — per-step success criteria, and how the plan was produced.
+    # 17 — per-step success criteria, and how the plan was produced.
     #
     # A step without a stated success criterion can only be verified
     # structurally: "the call returned something". Writing down what success
@@ -440,7 +496,7 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         # open questions must not be executed as if it were complete.
         "ALTER TABLE missions ADD COLUMN missing_information TEXT NOT NULL DEFAULT '[]'",
     ),
-    # 17 — the entity graph: projects, companies, people and what links them.
+    # 18 — the entity graph: projects, companies, people and what links them.
     #
     # Facts gain an owning entity, which is what separates business memory
     # from personal memory and makes "où en est le projet X" answerable by
@@ -503,7 +559,7 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         "ALTER TABLE memory_facts ADD COLUMN entity_id TEXT REFERENCES entities(entity_id)",
         "CREATE INDEX idx_memory_facts_entity ON memory_facts(entity_id, status)",
     ),
-    # 18 — WebAuthn second factor (ADR-005).
+    # 19 — WebAuthn second factor (ADR-005).
     #
     # No biometric data is stored here, and none ever reaches the server: a
     # credential is a public key. The face (or fingerprint) stays in the
@@ -538,6 +594,12 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         # session has never presented the second factor.
         "ALTER TABLE devices ADD COLUMN second_factor_at TEXT",
     ),
+    # 20 — exactly one instance owner.  The partial unique index is the
+    # database-level arbiter for concurrent bootstrap requests; an application
+    # count/check can never make that guarantee on its own.
+    (
+        "CREATE UNIQUE INDEX idx_accounts_single_owner ON accounts(role) WHERE role = 'owner'",
+    ),
 )
 
 
@@ -556,10 +618,25 @@ def run_migrations(database_path: Path) -> None:
         )
         row = connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
         current = int(row[0]) if row is not None and row[0] is not None else 0
-        for version, statements in enumerate(MIGRATIONS[current:], start=current + 1):
-            for statement in statements:
-                connection.execute(statement)
-            connection.execute("INSERT INTO schema_migrations (version) VALUES (?)", (version,))
+        if current >= len(MIGRATIONS):
+            return
+        # Python's sqlite3 does not automatically open a transaction for DDL.
+        # Without an explicit BEGIN, a process interruption can leave tables
+        # created while the migration version is still old, making the next
+        # startup retry fail on "table already exists".
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for version, statements in enumerate(MIGRATIONS[current:], start=current + 1):
+                for statement in statements:
+                    connection.execute(statement)
+                connection.execute(
+                    "INSERT INTO schema_migrations (version) VALUES (?)", (version,)
+                )
+        except Exception:
+            connection.rollback()
+            raise
+        else:
+            connection.commit()
 
 
 def schema_version(database_path: Path) -> int:

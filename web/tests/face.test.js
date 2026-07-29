@@ -26,6 +26,7 @@ import {
 import { applySubdivision, buildSubdivisionLevel, computeNormals } from '../src/face/subdivide.ts'
 import { hairlineAngle as hairline, scalpMask } from '../src/face/hair.ts'
 import { VOICE_RANGE_HZ, advanceVisemes, binForHz, createVisemeState, visemeTargets } from '../src/face/visemes.ts'
+import { remapAnalyserSpectrum } from '../src/face/audioSpectrum.ts'
 import { buildBraids, buildHeadClearance } from '../src/face/braids.ts'
 
 const objectText = readFileSync(new URL('../public/models/emefa-canonical-face.obj', import.meta.url), 'utf8')
@@ -389,6 +390,19 @@ test('the hairline drops from the forehead to the nape and no strand crosses the
 })
 
 // --- visemes ----------------------------------------------------------------
+
+test('raw Web Audio FFT is remapped into the same 100 Hz–8 kHz range as ElevenLabs', () => {
+  const sampleRate = 48_000
+  const raw = new Uint8Array(256)
+  const sourceBin = Math.round(600 / (sampleRate / (raw.length * 2)))
+  raw[sourceBin] = 255
+
+  const mapped = remapAnalyserSpectrum(raw, sampleRate, 128)
+  const expected = binForHz(600, mapped.length)
+  const strongest = mapped.indexOf(Math.max(...mapped))
+  assert.ok(Math.abs(strongest - expected) <= 2, `${strongest} should be near ${expected}`)
+  assert.ok(mapped[expected] > 100, 'the speech-band peak must survive remapping')
+})
 
 // Spectra are built in *hertz*, because the analyser buffer this code consumes
 // is not a raw FFT: the client resamples it into a 100 Hz–8 kHz voice range

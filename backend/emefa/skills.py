@@ -12,6 +12,7 @@ from datetime import date
 from typing import Any
 
 from emefa.domain.agent import AgentTool, ToolShelf
+from emefa.domain.command_center import InitiativeRepository, RoutineRepository
 from emefa.domain.documents import DocumentNotFoundError, DocumentStore
 from emefa.domain.entities import EntityKind, EntityStatus, Milestone, RelationKind
 from emefa.domain.email import EmailProvider
@@ -19,10 +20,11 @@ from emefa.domain.memories import CATEGORIES, MemoryRepository
 from emefa.domain.policy import ActionRisk
 from emefa.domain.profiles import ASSISTANT_FIELDS, BUSINESS_FIELDS, ProfileRepository
 from emefa.domain.prospects import STAGES, ProspectRepository
-from emefa.domain.uploaded_files import UploadedFileNotFoundError, UploadedFileStore
 from emefa.domain.tasks import TaskRepository
 from emefa.domain import office, visuals
 from emefa.domain.office import schemas as office_schemas
+from emefa.domain.uploaded_files import UploadedFileNotFoundError, UploadedFileStore
+from emefa.domain.vision import VisionAnalyzer
 from emefa.observability import audit
 
 
@@ -123,7 +125,10 @@ def build_tool_shelf(
     email_provider: EmailProvider | None = None,
     documents: DocumentStore | None = None,
     prospects: ProspectRepository | None = None,
+    initiatives: InitiativeRepository | None = None,
+    routines: RoutineRepository | None = None,
     uploaded_files: UploadedFileStore | None = None,
+    vision_analyzer: VisionAnalyzer | None = None,
     include_mailbox_read: bool = True,
 ) -> ToolShelf:
     """Assemble the governed tool shelf.
@@ -270,9 +275,13 @@ def build_tool_shelf(
     if documents is not None:
         _add_document_skills(shelf, documents)
     if uploaded_files is not None:
-        _add_uploaded_file_skills(shelf, uploaded_files)
+        _add_uploaded_file_skills(shelf, uploaded_files, vision_analyzer)
     if prospects is not None:
         _add_prospect_skills(shelf, prospects)
+    if initiatives is not None:
+        _add_initiative_skills(shelf, initiatives)
+    if routines is not None:
+        _add_routine_skills(shelf, routines)
     return shelf
 
 
@@ -440,7 +449,11 @@ def _add_document_skills(shelf: ToolShelf, documents: DocumentStore) -> None:
     ))
 
 
-def _add_uploaded_file_skills(shelf: ToolShelf, uploaded_files: UploadedFileStore) -> None:
+def _add_uploaded_file_skills(
+    shelf: ToolShelf,
+    uploaded_files: UploadedFileStore,
+    vision_analyzer: VisionAnalyzer | None = None,
+) -> None:
     def list_files(arguments: Mapping[str, Any]) -> dict[str, Any]:
         limit = max(1, min(int(arguments.get("limit", 20)), 50))
         entries = uploaded_files.list(limit=limit)
@@ -489,6 +502,54 @@ def _add_uploaded_file_skills(shelf: ToolShelf, uploaded_files: UploadedFileStor
         },
         handler=read_file,
     ))
+    if vision_analyzer is not None:
+        async def analyze_image(arguments: Mapping[str, Any]) -> dict[str, Any]:
+            file_id = str(arguments.get("file_id", "")).strip()
+            question = str(arguments.get("question", "")).strip()[:2_000]
+            if not question:
+                question = "Décris précisément cette image en français."
+            try:
+                record = uploaded_files.describe(file_id)
+                if not record.content_type.startswith("image/"):
+                    return {"error": "file_is_not_an_image"}
+                analysis = await vision_analyzer.analyze(
+                    uploaded_files.get_path(file_id), record.content_type, question
+                )
+            except UploadedFileNotFoundError:
+                return {"error": "file_not_found"}
+            audit("skill_image_analyzed", file_id=file_id)
+            return {
+                "file_id": file_id,
+                "filename": record.filename,
+                "analysis": analysis,
+            }
+
+        shelf.add(AgentTool(
+            name="image_analyze",
+            description=(
+                "Analyse visuellement une image envoyée à EMEFA. Utilise file_list pour "
+                "retrouver son file_id, puis cet outil pour décrire la scène, lire le texte "
+                "visible, examiner un document photographié ou répondre à une question sur "
+                "l'image. L'image est transmise au fournisseur visuel configuré."
+            ),
+            risk=ActionRisk.PERSONAL_READ,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "file_id": {
+                        "type": "string",
+                        "description": "Identifiant UUID de l'image envoyée",
+                    },
+                    "question": {
+                        "type": "string",
+                        "description": "Question précise à propos de l'image",
+                    },
+                },
+                "required": ["file_id"],
+                "additionalProperties": False,
+            },
+            handler=analyze_image,
+        ))
 
 
 def _add_email_skills(
@@ -1910,3 +1971,133 @@ def add_office_skills(
             handler=office_deck,
         )
     )
+def _add_initiative_skills(shelf: ToolShelf, initiatives: InitiativeRepository) -> None:
+    def create(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        title = str(arguments.get("title", "")).strip()
+        if not title:
+            return {"error": "title_required"}
+        try:
+            autonomy = max(0, min(int(arguments.get("autonomy_level", 0)), 3))
+        except (TypeError, ValueError):
+            autonomy = 0
+        item = initiatives.add(
+            title,
+            objective=str(arguments.get("objective", "")),
+            status=str(arguments.get("status", "proposed")),
+            priority=str(arguments.get("priority", "normal")),
+            risk=str(arguments.get("risk", "low")),
+            autonomy_level=autonomy,
+            next_action=str(arguments.get("next_action", "")),
+            due_date=str(arguments["due_date"]) if arguments.get("due_date") else None,
+        )
+        audit("skill_initiative_created", initiative_id=item.initiative_id)
+        return {"initiative": asdict(item)}
+
+    def list_items(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        include_closed = bool(arguments.get("include_closed", False))
+        items = initiatives.list(include_closed=include_closed)
+        return {"count": len(items), "initiatives": [asdict(item) for item in items]}
+
+    def update(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        initiative_id = str(arguments.get("initiative_id", "")).strip()
+        allowed = {
+            "title", "objective", "status", "priority", "risk",
+            "autonomy_level", "next_action", "due_date",
+        }
+        item = initiatives.update(
+            initiative_id,
+            {key: value for key, value in arguments.items() if key in allowed},
+        )
+        if item is None:
+            return {"error": "initiative_not_found"}
+        audit("skill_initiative_updated", initiative_id=initiative_id)
+        return {"initiative": asdict(item)}
+
+    common = {
+        "title": {"type": "string"},
+        "objective": {"type": "string"},
+        "status": {"type": "string", "enum": ["proposed", "active", "paused", "completed", "cancelled"]},
+        "priority": {"type": "string", "enum": ["low", "normal", "high", "critical"]},
+        "risk": {"type": "string", "enum": ["low", "medium", "high"]},
+        "autonomy_level": {"type": "integer", "minimum": 0, "maximum": 3},
+        "next_action": {"type": "string"},
+        "due_date": {"type": "string", "description": "Date AAAA-MM-JJ"},
+    }
+    shelf.add(AgentTool(
+        name="create_initiative",
+        description="Crée une initiative ou un projet suivi avec objectif, priorité, risque et prochaine action.",
+        risk=ActionRisk.LOCAL_WRITE,
+        parameters={"type": "object", "properties": common, "required": ["title"], "additionalProperties": False},
+        handler=create,
+    ))
+    shelf.add(AgentTool(
+        name="list_initiatives",
+        description="Liste les initiatives suivies, leur priorité, état, risque et prochaine action.",
+        risk=ActionRisk.PERSONAL_READ,
+        parameters={"type": "object", "properties": {"include_closed": {"type": "boolean"}}, "additionalProperties": False},
+        handler=list_items,
+    ))
+    shelf.add(AgentTool(
+        name="update_initiative",
+        description="Met à jour l'état, la priorité, le risque ou la prochaine action d'une initiative existante.",
+        risk=ActionRisk.LOCAL_WRITE,
+        parameters={"type": "object", "properties": {"initiative_id": {"type": "string"}, **common}, "required": ["initiative_id"], "additionalProperties": False},
+        handler=update,
+    ))
+
+
+def _add_routine_skills(shelf: ToolShelf, routines: RoutineRepository) -> None:
+    def create(arguments: Mapping[str, Any]) -> dict[str, Any]:
+        name = str(arguments.get("name", "")).strip()
+        prompt = str(arguments.get("prompt", "")).strip()
+        kind = str(arguments.get("schedule_kind", "manual"))
+        if not name or not prompt:
+            return {"error": "name_and_prompt_required"}
+        hour = arguments.get("schedule_hour")
+        weekday = arguments.get("schedule_weekday")
+        if kind in {"daily", "weekly"} and hour is None:
+            return {"error": "schedule_hour_required"}
+        if kind == "weekly" and weekday is None:
+            return {"error": "schedule_weekday_required"}
+        item = routines.add(
+            name,
+            prompt,
+            schedule_kind=kind,
+            schedule_hour=int(hour) if hour is not None else None,
+            schedule_weekday=int(weekday) if weekday is not None else None,
+            enabled=bool(arguments.get("enabled", True)),
+        )
+        audit("skill_routine_created", routine_id=item.routine_id)
+        return {
+            "routine": asdict(item),
+            "governance": "Les actions sensibles resteront soumises à approbation.",
+        }
+
+    def list_items(_arguments: Mapping[str, Any]) -> dict[str, Any]:
+        items = routines.list()
+        return {"count": len(items), "routines": [asdict(item) for item in items]}
+
+    properties = {
+        "name": {"type": "string"},
+        "prompt": {"type": "string", "description": "Instruction à exécuter"},
+        "schedule_kind": {"type": "string", "enum": ["manual", "daily", "weekly"]},
+        "schedule_hour": {"type": "integer", "minimum": 0, "maximum": 23},
+        "schedule_weekday": {"type": "integer", "minimum": 0, "maximum": 6},
+        "enabled": {"type": "boolean"},
+    }
+    shelf.add(AgentTool(
+        name="create_routine",
+        description=(
+            "Crée une routine manuelle, quotidienne ou hebdomadaire. Les actions externes "
+            "ou sensibles préparées par une routine attendront toujours l'approbation de l'utilisateur."
+        ),
+        risk=ActionRisk.LOCAL_WRITE,
+        parameters={"type": "object", "properties": properties, "required": ["name", "prompt"], "additionalProperties": False},
+        handler=create,
+    ))
+    shelf.add(AgentTool(
+        name="list_routines",
+        description="Liste les routines configurées, leurs horaires, état et dernière exécution.",
+        risk=ActionRisk.PERSONAL_READ,
+        handler=list_items,
+    ))

@@ -1,5 +1,7 @@
 """Account authentication (ADR-002)."""
 
+from concurrent.futures import ThreadPoolExecutor
+
 import httpx
 import pytest
 
@@ -257,3 +259,77 @@ async def test_password_change_over_http(tmp_path):
                 json={"email": "koffi@example.com", "password": "un-autre-secret"},
             )
         ).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_device_is_bound_and_other_unlinked_device_is_rejected(tmp_path):
+    app = build_app(tmp_path, "device-boundary.db")
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as current:
+        assert (
+            await current.post(
+                "/v1/web/session",
+                json={"name": "Courant", "enrollment_code": "CODE-SECRET"},
+            )
+        ).status_code == 201
+        other = app.state.devices.enroll("Ancien téléphone")[1]
+        assert (
+            await current.post(
+                "/v1/auth/register",
+                json={
+                    "email": "koffi@example.com",
+                    "password": PASSWORD,
+                    "enrollment_code": "CODE-SECRET",
+                },
+            )
+        ).status_code == 201
+        assert (await current.get("/v1/auth/me")).status_code == 200
+        assert app.state.devices.count() == 2
+        refused = await current.get(
+            "/v1/memories", headers={"Authorization": f"Bearer {other}"}
+        )
+    assert refused.status_code == 401
+    assert refused.json()["detail"] == "Account session required"
+
+
+def test_first_owner_creation_is_atomic_under_race(tmp_path):
+    accounts = AccountRepository(tmp_path / "owner-race.db")
+
+    def create(index):
+        try:
+            return accounts.create_first_owner(f"owner{index}@example.com", PASSWORD).account_id
+        except ValueError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(create, range(2)))
+    assert sum(result is not None for result in results) == 1
+    assert accounts.count() == 1
+
+
+@pytest.mark.asyncio
+async def test_password_change_revokes_other_devices_but_keeps_current(tmp_path):
+    app = build_app(tmp_path, "pwd-devices.db")
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as current:
+        await current.post(
+            "/v1/auth/register",
+            json={
+                "email": "koffi@example.com",
+                "password": PASSWORD,
+                "enrollment_code": "CODE-SECRET",
+            },
+        )
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as other:
+            await other.post(
+                "/v1/auth/login",
+                json={"email": "koffi@example.com", "password": PASSWORD},
+            )
+            assert (await other.get("/v1/auth/me")).status_code == 200
+            changed = await current.post(
+                "/v1/auth/password",
+                json={"current_password": PASSWORD, "new_password": "secret-rotation-2026"},
+            )
+            assert changed.status_code == 204
+            assert (await current.get("/v1/auth/me")).status_code == 200
+            assert (await other.get("/v1/auth/me")).status_code == 401

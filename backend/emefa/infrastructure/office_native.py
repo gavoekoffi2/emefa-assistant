@@ -63,6 +63,40 @@ _NUMBER_FORMATS = {
     ColumnFormat.DATE: "yyyy-mm-dd",
 }
 
+_SAFE_FORMULA_FUNCTIONS = {"ABS", "IF", "MAX", "MIN", "ROUND", "SUM"}
+_FORMULA_TOKEN = re.compile(
+    r"\s+|\$?[A-Z]{1,3}\$?(?:\d+|\{row\})|\d+(?:\.\d+)?|"
+    r"[A-Z_][A-Z0-9_]*|<=|>=|<>|[=+\-*/^%(),:<>]",
+    re.IGNORECASE,
+)
+_CELL_TOKEN = re.compile(r"\$?[A-Z]{1,3}\$?(?:\d+|\{row\})", re.IGNORECASE)
+
+
+def validate_local_formula(formula: str) -> str:
+    """Allow only local cell arithmetic and a small safe function subset."""
+    value = formula.strip()
+    if not value.startswith("=") or len(value) > 200:
+        raise OfficeError("formule Excel refusée : syntaxe non sûre")
+    position = 0
+    words: list[tuple[str, int]] = []
+    for match in _FORMULA_TOKEN.finditer(value):
+        if match.start() != position:
+            raise OfficeError("formule Excel refusée : référence externe ou caractère interdit")
+        token = match.group(0)
+        if (
+            re.fullmatch(r"[A-Z_][A-Z0-9_]*", token, re.IGNORECASE)
+            and not _CELL_TOKEN.fullmatch(token)
+        ):
+            words.append((token.upper(), match.end()))
+        position = match.end()
+    if position != len(value):
+        raise OfficeError("formule Excel refusée : référence externe ou caractère interdit")
+    for word, end in words:
+        following = value[end:].lstrip()
+        if word not in _SAFE_FORMULA_FUNCTIONS or not following.startswith("("):
+            raise OfficeError("formule Excel refusée : fonction non autorisée")
+    return value
+
 
 def _rgb(value: str) -> RGBColor:
     cleaned = re.sub(r"[^0-9A-Fa-f]", "", value or "")[:6].ljust(6, "0")
@@ -241,6 +275,10 @@ class NativeOfficeProvider:
     def build_workbook(self, spec: WorkbookSpec) -> BuiltArtifact:
         if not spec.sheets:
             raise OfficeError("un classeur sans feuille n'a rien à montrer")
+        for sheet in spec.sheets:
+            for column in sheet.columns:
+                if column.formula:
+                    validate_local_formula(column.formula)
 
         workbook = Workbook()
         workbook.remove(workbook.active)

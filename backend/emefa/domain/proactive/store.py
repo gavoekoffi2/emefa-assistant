@@ -50,7 +50,7 @@ class InitiativeRepository:
         with self._connect() as connection:
             try:
                 connection.execute(
-                    f"INSERT INTO initiatives ({_COLUMNS}) "
+                    f"INSERT INTO proactive_initiatives ({_COLUMNS}) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         initiative.initiative_id,
@@ -76,7 +76,7 @@ class InitiativeRepository:
     def get(self, initiative_id: str) -> Initiative | None:
         with self._connect() as connection:
             row = connection.execute(
-                f"SELECT {_COLUMNS} FROM initiatives WHERE initiative_id = ?",
+                f"SELECT {_COLUMNS} FROM proactive_initiatives WHERE initiative_id = ?",
                 (initiative_id,),
             ).fetchone()
         return _from_row(row) if row is not None else None
@@ -85,7 +85,7 @@ class InitiativeRepository:
         placeholders = ",".join("?" * len(OPEN_STATUSES))
         with self._connect() as connection:
             rows = connection.execute(
-                f"SELECT {_COLUMNS} FROM initiatives WHERE status IN ({placeholders}) "
+                f"SELECT {_COLUMNS} FROM proactive_initiatives WHERE status IN ({placeholders}) "
                 "ORDER BY created_at DESC LIMIT ?",
                 (*OPEN_STATUSES, limit),
             ).fetchall()
@@ -94,7 +94,7 @@ class InitiativeRepository:
     def history(self, limit: int = 50) -> list[Initiative]:
         with self._connect() as connection:
             rows = connection.execute(
-                f"SELECT {_COLUMNS} FROM initiatives ORDER BY created_at DESC LIMIT ?",
+                f"SELECT {_COLUMNS} FROM proactive_initiatives ORDER BY created_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
         return [_from_row(row) for row in rows]
@@ -103,7 +103,7 @@ class InitiativeRepository:
         resolved = _now() if status in CLOSED_STATUSES else None
         with self._connect() as connection:
             updated = connection.execute(
-                "UPDATE initiatives SET status = ?, resolved_at = ? WHERE initiative_id = ?",
+                "UPDATE proactive_initiatives SET status = ?, resolved_at = ? WHERE initiative_id = ?",
                 (status.value, resolved, initiative_id),
             ).rowcount
         return self.get(initiative_id) if updated else None
@@ -119,7 +119,7 @@ class InitiativeRepository:
         placeholders = ",".join("?" * len(OPEN_STATUSES))
         with self._connect() as connection:
             expired = connection.execute(
-                f"UPDATE initiatives SET status = ?, resolved_at = ? "
+                f"UPDATE proactive_initiatives SET status = ?, resolved_at = ? "
                 f"WHERE status IN ({placeholders}) AND deadline IS NOT NULL "
                 "AND deadline < ?",
                 (InitiativeStatus.EXPIRED.value, reference, *OPEN_STATUSES, reference),
@@ -129,7 +129,7 @@ class InitiativeRepository:
     def counts(self) -> dict[str, int]:
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT status, COUNT(*) AS total FROM initiatives GROUP BY status"
+                "SELECT status, COUNT(*) AS total FROM proactive_initiatives GROUP BY status"
             ).fetchall()
         return {row["status"]: int(row["total"]) for row in rows}
 

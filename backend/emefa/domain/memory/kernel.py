@@ -143,6 +143,59 @@ class MemoryKernel:
             for row in rows
         ]
 
+    def oldest_events_after(
+        self, since: str, limit: int = 50, *, exclude_type: str | None = None
+    ) -> list[MemoryEvent]:
+        """Return the oldest pending events after a durable watermark.
+
+        Consolidation must drain a backlog from the front. Selecting the newest
+        ``limit`` rows and then advancing a watermark would permanently skip
+        older rows whenever more than one pass worth of events accumulated.
+        """
+        query = (
+            "SELECT event_id, type, source, content, metadata, created_at "
+            "FROM memory_events WHERE created_at > ?"
+        )
+        parameters: list[Any] = [since]
+        if exclude_type is not None:
+            query += " AND type != ?"
+            parameters.append(exclude_type)
+        query += " ORDER BY created_at ASC, event_id ASC LIMIT ?"
+        parameters.append(limit)
+        with self._connect() as connection:
+            rows = connection.execute(query, parameters).fetchall()
+        return [
+            MemoryEvent(
+                event_id=row["event_id"],
+                type=row["type"],
+                source=row["source"],
+                content=row["content"],
+                created_at=row["created_at"],
+                metadata=json.loads(row["metadata"] or "{}"),
+            )
+            for row in rows
+        ]
+
+    def latest_event(self, event_type: str) -> MemoryEvent | None:
+        """Return the latest event of one type without a shallow scan limit."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT event_id, type, source, content, metadata, created_at "
+                "FROM memory_events WHERE type = ? "
+                "ORDER BY created_at DESC, event_id DESC LIMIT 1",
+                (event_type,),
+            ).fetchone()
+        if row is None:
+            return None
+        return MemoryEvent(
+            event_id=row["event_id"],
+            type=row["type"],
+            source=row["source"],
+            content=row["content"],
+            created_at=row["created_at"],
+            metadata=json.loads(row["metadata"] or "{}"),
+        )
+
     def count_events(self) -> int:
         with self._connect() as connection:
             return int(connection.execute("SELECT COUNT(*) FROM memory_events").fetchone()[0])
@@ -400,27 +453,81 @@ class MemoryKernel:
         return self.get_fact(fact_id)
 
     def forget(self, fact_id: str) -> bool:
-        """Hard-delete a fact at the user's request — the one exception to the
-        never-delete rule, required by CLAUDE.md §26. Observations and
-        relations go with it; the originating events stay, because they are the
-        record of the conversation, not of the belief."""
+        """Hard-delete a fact and erase the personal source material it owns.
+
+        Event rows are retained as provenance anchors. If another fact still
+        references the same event, only the forgotten fact's text fragments are
+        redacted; otherwise the event payload is fully blanked. Legacy archive
+        rows are deleted because they are duplicate personal content, not an
+        audit dependency.
+        """
         with self._connect() as connection:
-            deleted = connection.execute(
-                "DELETE FROM memory_facts WHERE fact_id = ?", (fact_id,)
-            ).rowcount
-            if deleted:
+            row = connection.execute(
+                f"SELECT {_FACT_COLUMNS} FROM memory_facts WHERE fact_id = ?", (fact_id,)
+            ).fetchone()
+            if row is None:
+                return False
+            fact = _row_to_fact(row)
+            event_ids = {
+                item[0]
+                for item in connection.execute(
+                    "SELECT event_id FROM memory_fact_observations "
+                    "WHERE fact_id = ? AND event_id IS NOT NULL",
+                    (fact_id,),
+                ).fetchall()
+            }
+            if fact.source_event_id:
+                event_ids.add(fact.source_event_id)
+
+            connection.execute("DELETE FROM memory_facts WHERE fact_id = ?", (fact_id,))
+            connection.execute(
+                "DELETE FROM memory_fact_observations WHERE fact_id = ?", (fact_id,)
+            )
+            connection.execute(
+                "DELETE FROM memory_fact_relations WHERE from_fact_id = ? OR to_fact_id = ?",
+                (fact_id, fact_id),
+            )
+            connection.execute("DELETE FROM memory_facts_fts WHERE fact_id = ?", (fact_id,))
+
+            # Migrated v1 rows duplicate the complete user text. They have no
+            # live foreign-key consumers and must not survive definitive erase.
+            archive_exists = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memories_v1_archive'"
+            ).fetchone()
+            if archive_exists:
                 connection.execute(
-                    "DELETE FROM memory_fact_observations WHERE fact_id = ?", (fact_id,)
+                    "DELETE FROM memories_v1_archive WHERE memory_id = ?", (fact_id,)
                 )
-                connection.execute(
-                    "DELETE FROM memory_fact_relations "
-                    "WHERE from_fact_id = ? OR to_fact_id = ?",
-                    (fact_id, fact_id),
-                )
-                connection.execute(
-                    "DELETE FROM memory_facts_fts WHERE fact_id = ?", (fact_id,)
-                )
-        return bool(deleted)
+
+            fragments = sorted(
+                {value.strip() for value in (fact.object, fact.subject, fact.predicate) if len(value.strip()) >= 3},
+                key=len,
+                reverse=True,
+            )
+            for event_id in event_ids:
+                remaining = connection.execute(
+                    "SELECT 1 FROM memory_facts WHERE source_event_id = ? LIMIT 1", (event_id,)
+                ).fetchone() or connection.execute(
+                    "SELECT 1 FROM memory_fact_observations WHERE event_id = ? LIMIT 1", (event_id,)
+                ).fetchone()
+                if remaining:
+                    event = connection.execute(
+                        "SELECT content FROM memory_events WHERE event_id = ?", (event_id,)
+                    ).fetchone()
+                    content = event[0] if event else ""
+                    for fragment in fragments:
+                        content = content.replace(fragment, "[effacé]")
+                    connection.execute(
+                        "UPDATE memory_events SET content = ? WHERE event_id = ?",
+                        (content, event_id),
+                    )
+                else:
+                    connection.execute(
+                        "UPDATE memory_events SET content = '[contenu effacé]', metadata = '{}' "
+                        "WHERE event_id = ?",
+                        (event_id,),
+                    )
+        return True
 
     # ── search ────────────────────────────────────────────────────────────
 

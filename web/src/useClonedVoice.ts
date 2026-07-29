@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { remapAnalyserSpectrum } from './face/audioSpectrum.ts'
+import { createPlaybackLatch, type PlaybackLatch } from './voicePlayback.ts'
 
 type QueuedAudio = {
   generation: number
@@ -18,6 +20,7 @@ export function useClonedVoice({ onFailure }: ClonedVoiceOptions) {
   const analyserRef = useRef<AnalyserNode | null>(null)
   const gainRef = useRef<GainNode | null>(null)
   const sourceRef = useRef<AudioBufferSourceNode | null>(null)
+  const playbackLatchRef = useRef<PlaybackLatch | null>(null)
   const queueRef = useRef<QueuedAudio[]>([])
   const controllersRef = useRef(new Set<AbortController>())
   const generationRef = useRef(0)
@@ -33,8 +36,10 @@ export function useClonedVoice({ onFailure }: ClonedVoiceOptions) {
       context = new AudioContext()
       const analyser = context.createAnalyser()
       const gain = context.createGain()
-      analyser.fftSize = 256
-      analyser.smoothingTimeConstant = 0.62
+      analyser.fftSize = 512
+      // Keep enough temporal detail for consonants; the viseme solver performs
+      // its own short attack/release smoothing after frequency classification.
+      analyser.smoothingTimeConstant = 0.18
       analyser.connect(gain)
       gain.connect(context.destination)
       contextRef.current = context
@@ -52,6 +57,10 @@ export function useClonedVoice({ onFailure }: ClonedVoiceOptions) {
     controllersRef.current.clear()
     const source = sourceRef.current
     sourceRef.current = null
+    // `source.stop()` cannot release the drain promise after `onended` is
+    // cleared. Settle it explicitly so a barge-in never blocks later turns.
+    playbackLatchRef.current?.settle()
+    playbackLatchRef.current = null
     if (source) {
       source.onended = null
       try { source.stop() } catch { /* already stopped */ }
@@ -93,19 +102,25 @@ export function useClonedVoice({ onFailure }: ClonedVoiceOptions) {
     const context = await ensureAudioGraph()
     const analyser = analyserRef.current
     if (!analyser) throw new Error('Sortie audio indisponible.')
-    await new Promise<void>((resolve) => {
-      const source = context.createBufferSource()
-      source.buffer = buffer
-      source.connect(analyser)
-      sourceRef.current = source
-      setIsSpeaking(true)
-      source.onended = () => {
-        source.disconnect()
-        if (sourceRef.current === source) sourceRef.current = null
-        resolve()
-      }
+    const source = context.createBufferSource()
+    const latch = createPlaybackLatch()
+    source.buffer = buffer
+    source.connect(analyser)
+    sourceRef.current = source
+    playbackLatchRef.current = latch
+    setIsSpeaking(true)
+    source.onended = () => {
+      source.disconnect()
+      if (sourceRef.current === source) sourceRef.current = null
+      if (playbackLatchRef.current === latch) playbackLatchRef.current = null
+      latch.settle()
+    }
+    try {
       source.start()
-    })
+      await latch.promise
+    } finally {
+      if (playbackLatchRef.current === latch) playbackLatchRef.current = null
+    }
   }, [ensureAudioGraph])
 
   const drain = useCallback(async () => {
@@ -176,7 +191,10 @@ export function useClonedVoice({ onFailure }: ClonedVoiceOptions) {
     if (!analyser || !sourceRef.current) return EMPTY_FREQUENCIES
     const frequencies = new Uint8Array(analyser.frequencyBinCount)
     analyser.getByteFrequencyData(frequencies)
-    return frequencies
+    const context = contextRef.current
+    return context
+      ? remapAnalyserSpectrum(frequencies, context.sampleRate, EMPTY_FREQUENCIES.length)
+      : EMPTY_FREQUENCIES
   }, [])
 
   useEffect(() => () => {

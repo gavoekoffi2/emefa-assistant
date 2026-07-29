@@ -63,6 +63,22 @@ class DeviceRepository:
         with self._connect() as connection:
             connection.execute("DELETE FROM devices WHERE device_id = ?", (device_id,))
 
+    def bind(self, device_id: str, account_id: str) -> Device | None:
+        """Bind an existing bootstrap device to the newly created owner."""
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE devices SET account_id = ? WHERE device_id = ? AND account_id IS NULL",
+                (account_id, device_id),
+            )
+        return self.find_by_id(device_id)
+
+    def revoke_other_account_devices(self, account_id: str, current_device_id: str) -> int:
+        with self._connect() as connection:
+            return connection.execute(
+                "DELETE FROM devices WHERE account_id = ? AND device_id <> ?",
+                (account_id, current_device_id),
+            ).rowcount
+
     def find_by_id(self, device_id: str) -> Device | None:
         with self._connect() as connection:
             row = connection.execute(

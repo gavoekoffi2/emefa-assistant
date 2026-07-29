@@ -40,6 +40,18 @@ export function SecurityPanel({ open, onClose }: { open: boolean; onClose: () =>
     } finally { setBusy('') }
   }
 
+  const removeCredential = async (credentialId: string) => {
+    setBusy(credentialId); setError(''); setNotice('')
+    try {
+      await stepUp()
+      await revoke(credentialId)
+      setNotice('Identité vérifiée. Empreinte supprimée.')
+      reload()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Vérification ou suppression impossible.')
+    } finally { setBusy('') }
+  }
+
   return (
     <div className="profile-overlay" role="dialog" aria-modal="true" aria-labelledby="security-title">
       <section className="profile-panel">
@@ -82,10 +94,10 @@ export function SecurityPanel({ open, onClose }: { open: boolean; onClose: () =>
                   </small>
                 </div>
                 <button
-                  onClick={() => void run(credential.credential_id, () => revoke(credential.credential_id), 'Empreinte supprimée.')}
+                  onClick={() => void removeCredential(credential.credential_id)}
                   disabled={busy === credential.credential_id}
                 >
-                  Retirer
+                  {busy === credential.credential_id ? 'Vérification…' : 'Vérifier et retirer'}
                 </button>
               </div>
             ))}

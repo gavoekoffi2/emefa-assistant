@@ -92,8 +92,51 @@ def test_forget_is_the_only_path_that_removes_rows(tmp_path):
     assert repository.forget(saved.memory_id) is False
     assert repository.kernel.get_fact(saved.memory_id) is None
     assert repository.kernel.search("oublier") == []
-    # The originating event survives: it records the conversation, not the belief.
+    # The provenance anchor survives, but its personal payload does not.
     assert repository.kernel.count_events() >= 1
+    with storage.connect(tmp_path / "forget.db") as connection:
+        content = connection.execute("SELECT content FROM memory_events").fetchone()[0]
+    assert "À oublier" not in content
+
+
+def test_forget_redacts_shared_event_without_breaking_other_fact_provenance(tmp_path):
+    database = tmp_path / "privacy.db"
+    repository = MemoryRepository(database)
+    event = repository.log_event(
+        "exchange", "voice", "Mon code client est SECRET-778 et mon marché est Lomé"
+    )
+    secret, _ = repository.record_fact(
+        "utilisateur", "note", "SECRET-778", "other", event_id=event.event_id
+    )
+    market, _ = repository.record_fact(
+        "entreprise", "cible", "Lomé", "market", event_id=event.event_id
+    )
+    assert repository.forget(secret.fact_id)
+    assert repository.get(market.fact_id) is not None
+    assert repository.kernel.list_observations(market.fact_id)
+    with storage.connect(database) as connection:
+        content = connection.execute(
+            "SELECT content FROM memory_events WHERE event_id = ?", (event.event_id,)
+        ).fetchone()[0]
+    assert "SECRET-778" not in content
+    assert "Lomé" in content
+
+
+def test_forget_deletes_duplicate_legacy_archive_content(tmp_path):
+    database = tmp_path / "archive-privacy.db"
+    repository = MemoryRepository(database)
+    saved = repository.remember("Identifiant privé ABC-999", "other")
+    with storage.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO memories_v1_archive (memory_id, category, content, source) "
+            "VALUES (?, 'other', ?, 'legacy')",
+            (saved.memory_id, "Identifiant privé ABC-999"),
+        )
+    assert repository.forget(saved.memory_id)
+    with storage.connect(database) as connection:
+        assert connection.execute(
+            "SELECT 1 FROM memories_v1_archive WHERE memory_id = ?", (saved.memory_id,)
+        ).fetchone() is None
 
 
 def test_decay_ranks_a_stale_commitment_below_a_durable_identity(tmp_path):
@@ -194,7 +237,7 @@ def test_legacy_memories_are_migrated_into_facts(tmp_path):
 
     repository = MemoryRepository(database)
 
-    assert storage.schema_version(database) == 18
+    assert storage.schema_version(database) == 20
     migrated = repository.get("mem_ancien")
     assert migrated is not None, "existing memory ids must keep resolving"
     assert migrated.content == "Réunions le matin"

@@ -162,13 +162,28 @@ def register(
         raise HTTPException(status_code=403, detail="Invalid activation code")
 
     try:
-        account = accounts.create(payload.email, payload.password, payload.display_name)
+        account = accounts.create_first_owner(payload.email, payload.password, payload.display_name)
     except WeakPasswordError:
         raise HTTPException(status_code=422, detail="password_too_short") from None
     except ValueError:
+        # A concurrent request may have won after the advisory count above.
+        if accounts.count() > 0:
+            raise HTTPException(status_code=409, detail="An owner account already exists") from None
         raise HTTPException(status_code=422, detail="invalid_email") from None
 
-    device = _open_session(request, response, account, payload.device_name)
+    bootstrap = None
+    token = request.cookies.get(SESSION_COOKIE)
+    if token:
+        bootstrap = request.app.state.devices.authenticate(
+            token, max_age_seconds=settings.session_max_age_seconds
+        )
+    if bootstrap is not None and bootstrap.account_id is None:
+        device = request.app.state.devices.bind(bootstrap.device_id, account.account_id)
+        assert device is not None
+        # Keep the current opaque token/cookie: only its server-side principal
+        # changes, avoiding an unnecessary second browser row.
+    else:
+        device = _open_session(request, response, account, payload.device_name)
     audit(
         "owner_account_created",
         account_id=account.account_id,
@@ -229,6 +244,7 @@ def change_password(
     payload: PasswordChangeRequest,
     request: Request,
     account: Annotated[Account, Depends(current_account)],
+    device: Annotated[Device, Depends(current_device)],
 ) -> Response:
     try:
         changed = request.app.state.accounts.change_password(
@@ -238,5 +254,8 @@ def change_password(
         raise HTTPException(status_code=422, detail="password_too_short") from None
     if not changed:
         raise HTTPException(status_code=403, detail="current_password_invalid")
-    audit("password_changed", account_id=account.account_id)
+    revoked = request.app.state.devices.revoke_other_account_devices(
+        account.account_id, device.device_id
+    )
+    audit("password_changed", account_id=account.account_id, revoked_devices=revoked)
     return Response(status_code=204)

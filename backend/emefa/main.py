@@ -12,18 +12,20 @@ from emefa import __version__
 from emefa.api.agent import router as agent_router
 from emefa.api.auth import router as auth_router
 from emefa.api.briefings import router as briefings_router
+from emefa.api.command_center import router as command_center_router
 from emefa.api.demo import router as demo_router
 from emefa.api.devices import router as devices_router
 from emefa.api.documents import router as documents_router
 from emefa.api.entities import router as entities_router
+from emefa.api.files import router as files_router
+from emefa.api.livekit import router as livekit_router
+from emefa.api.memories import router as memories_router
 from emefa.api.profile import router as profile_router
 from emefa.api.prospects import router as prospects_router
 from emefa.api.initiatives import router as initiatives_router
 from emefa.api.realtime import router as realtime_router
 from emefa.api.secondfactor import router as second_factor_router
 from emefa.api.skills import router as skills_router
-from emefa.api.files import router as files_router
-from emefa.api.memories import router as memories_router
 from emefa.api.missions import router as missions_router
 from emefa.api.system import router as system_router
 from emefa.api.tasks import router as tasks_router
@@ -35,6 +37,10 @@ from emefa.domain.agent import AgentEngine, AgentStep, Brain
 from emefa.domain.approvals import ApprovalRepository
 from emefa.domain.briefings import BriefingRepository
 from emefa.domain.budget import BudgetGuard, UsageTracker
+from emefa.domain.command_center import (
+    InitiativeRepository as CommandInitiativeRepository,
+    RoutineRepository,
+)
 from emefa.domain.conversations import VOICE_CONVERSATION_ID, ConversationStore
 from emefa.domain.devices import DeviceRepository
 from emefa.domain.entities import EntityGraph, EntityRepository, TimelineBuilder
@@ -43,7 +49,7 @@ from emefa.domain.documents import DocumentStore
 from emefa.domain.proactive import (
     AutonomyLevel,
     Curator,
-    InitiativeRepository,
+    InitiativeRepository as ProactiveInitiativeRepository,
     ProactiveEngine,
     default_collectors,
 )
@@ -60,17 +66,20 @@ from emefa.domain.missions import (
     TemplatePlanner,
     default_checks,
 )
+
 from emefa.domain.prospects import ProspectRepository
-from emefa.domain.uploaded_files import UploadedFileStore
 from emefa.domain.ratelimit import FailureLimiter
 from emefa.domain.secondfactor import SecondFactorRepository
 from emefa.domain.skills import SkillRegistry
 from emefa.domain.tasks import TaskRepository
+from emefa.domain.uploaded_files import UploadedFileStore
 from emefa.infrastructure.deepseek import DeepSeekBrain
 from emefa.infrastructure.email import HimalayaEmailProvider
 from emefa.infrastructure.extraction import LLMFactExtractor
 from emefa.infrastructure.planner import LLMPlanner
+from emefa.infrastructure.livekit import LiveKitBroker
 from emefa.infrastructure.realtime import RealtimeGateway
+from emefa.infrastructure.vision import OpenRouterVisionAnalyzer
 from emefa.infrastructure.voice_llm import VoiceLLMProxy
 from emefa.infrastructure.office_native import NativeOfficeProvider
 from emefa.infrastructure.website_profile import WebsiteProfileImporter
@@ -93,6 +102,7 @@ from emefa.skills import (
     add_visual_skills,
     build_tool_shelf,
 )
+from emefa.routine_runner import routine_scheduler_loop
 
 request_logger = logging.getLogger("emefa.request")
 
@@ -138,6 +148,9 @@ def create_app(
         },
         bus,
     )
+    command_initiatives = CommandInitiativeRepository(active_settings.database_path)
+    routines = RoutineRepository(active_settings.database_path)
+    approvals = ApprovalRepository(active_settings.database_path)
     active_email_provider = email_provider
     if active_email_provider is None and active_settings.email_account:
         active_email_provider = HimalayaEmailProvider(
@@ -145,6 +158,21 @@ def create_app(
             binary=active_settings.himalaya_binary,
             config=active_settings.himalaya_config,
         )
+
+    openrouter_key = (
+        active_settings.openrouter_api_key.get_secret_value().strip()
+        if active_settings.openrouter_api_key is not None
+        else ""
+    )
+    vision_analyzer = (
+        OpenRouterVisionAnalyzer(
+            api_key=openrouter_key,
+            model=active_settings.vision_model,
+            base_url=active_settings.openrouter_base_url,
+        )
+        if openrouter_key
+        else None
+    )
 
     def make_shelf(include_mailbox_read: bool = True):
         shelf = build_tool_shelf(
@@ -154,7 +182,10 @@ def create_app(
             active_email_provider,
             documents,
             prospects,
+            initiatives=command_initiatives,
+            routines=routines,
             uploaded_files=uploaded_files,
+            vision_analyzer=vision_analyzer,
             include_mailbox_read=include_mailbox_read,
         )
         add_entity_skills(shelf, entity_graph, timeline)
@@ -173,9 +204,9 @@ def create_app(
         frozenset(tool["name"] for tool in tool_shelf.describe()),
     )
 
-    initiatives = InitiativeRepository(active_settings.database_path)
+    proactive_initiatives = ProactiveInitiativeRepository(active_settings.database_path)
     proactive = ProactiveEngine(
-        initiatives,
+        proactive_initiatives,
         default_collectors(tasks, prospects, memories),
         budget=budget,
         bus=bus,
@@ -183,7 +214,7 @@ def create_app(
             min(max(active_settings.max_autonomy_level, 0), int(AutonomyLevel.EXTERNAL_ACTION))
         ),
     )
-    curator = Curator(memories, initiatives, budget, skills)
+    curator = Curator(memories, proactive_initiatives, budget, skills)
     missions = MissionRepository(active_settings.database_path)
     mission_orchestrator = MissionOrchestrator(
         missions,
@@ -231,6 +262,9 @@ def create_app(
                 for item in tracked
             )
             parts.append("\n".join(lines))
+        initiative_block = command_initiatives.context_block()
+        if initiative_block:
+            parts.append(initiative_block)
         files = uploaded_files.list(limit=8)
         if files:
             lines = [
@@ -281,11 +315,8 @@ def create_app(
         and active_settings.deepseek_api_key.get_secret_value().strip()
     ):
         llm_api_key = active_settings.deepseek_api_key.get_secret_value().strip()
-    elif (
-        active_settings.openrouter_api_key is not None
-        and active_settings.openrouter_api_key.get_secret_value().strip()
-    ):
-        llm_api_key = active_settings.openrouter_api_key.get_secret_value().strip()
+    elif openrouter_key:
+        llm_api_key = openrouter_key
         llm_model = active_settings.openrouter_model
         llm_base_url = active_settings.openrouter_base_url
 
@@ -358,6 +389,23 @@ def create_app(
         agent_id=active_settings.elevenlabs_agent_id,
         voice_id=active_settings.elevenlabs_voice_id,
     )
+    livekit_key = (
+        active_settings.livekit_api_key.get_secret_value().strip()
+        if active_settings.livekit_api_key is not None
+        else None
+    )
+    livekit_secret = (
+        active_settings.livekit_api_secret.get_secret_value().strip()
+        if active_settings.livekit_api_secret is not None
+        else None
+    )
+    livekit_broker = LiveKitBroker(
+        url=active_settings.livekit_url,
+        api_key=livekit_key,
+        api_secret=livekit_secret,
+        agent_name=active_settings.livekit_agent_name,
+        token_ttl_seconds=active_settings.livekit_token_ttl_seconds,
+    )
 
     @asynccontextmanager
     async def lifespan(_application: FastAPI):
@@ -392,11 +440,22 @@ def create_app(
                     )
                 )
             )
+        routine_task = asyncio.create_task(
+            routine_scheduler_loop(
+                routines,
+                application.state.agent,
+                approvals,
+                timezone_name=active_settings.routine_timezone,
+            )
+        )
         yield
         for task in background:
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
+        routine_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await routine_task
         close = getattr(selected_brain, "close", None)
         if close is not None:
             await close()
@@ -405,7 +464,10 @@ def create_app(
         if llm_planner is not None:
             await llm_planner.close()
         await voice_llm_proxy.close()
+        if vision_analyzer is not None:
+            await vision_analyzer.close()
         await realtime_gateway.close()
+        await livekit_broker.close()
 
     application = FastAPI(
         title="EMEFA",
@@ -435,6 +497,9 @@ def create_app(
     application.state.background_tasks = set()
     application.state.prospects = prospects
     application.state.briefings = briefings
+    application.state.command_initiatives = command_initiatives
+    application.state.proactive_initiatives = proactive_initiatives
+    application.state.routines = routines
     application.state.conversations = conversations
     application.state.documents = documents
     application.state.uploaded_files = uploaded_files
@@ -446,12 +511,12 @@ def create_app(
     application.state.bus = bus
     application.state.usage = usage
     application.state.budget = budget
-    application.state.initiatives = initiatives
     application.state.proactive = proactive
     application.state.curator = curator
     application.state.missions = missions
     application.state.mission_orchestrator = mission_orchestrator
     application.state.planner = planner
+    application.state.vision = vision_analyzer
     application.state.website_importer = WebsiteProfileImporter()
     application.state.compose_context = compose_context
     application.state.compose_text_context = compose_text_context
@@ -465,9 +530,10 @@ def create_app(
     application.state.voice_agent = AgentEngine(
         selected_brain, make_shelf(include_mailbox_read=False), memory=conversations
     )
-    application.state.approvals = ApprovalRepository(active_settings.database_path)
+    application.state.approvals = approvals
     application.state.brain_configured = brain_configured
     application.state.realtime = realtime_gateway
+    application.state.livekit = livekit_broker
     application.state.activation_limiter = FailureLimiter(
         max_failures=active_settings.activation_max_failures,
         window_seconds=active_settings.activation_window_seconds,
@@ -503,11 +569,18 @@ def create_app(
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Permissions-Policy"] = "camera=(), geolocation=(), microphone=(self)"
+        livekit_connect_source = (
+            f" {active_settings.livekit_url.strip()}"
+            if active_settings.livekit_url
+            and active_settings.livekit_url.strip().startswith(("wss://", "ws://"))
+            else ""
+        )
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self'; "
             "style-src 'self' https://fonts.googleapis.com; "
             "font-src https://fonts.gstatic.com; img-src 'self' data:; "
-            "connect-src 'self' https://api.elevenlabs.io wss://api.elevenlabs.io; "
+            "connect-src 'self' https://api.elevenlabs.io wss://api.elevenlabs.io"
+            f"{livekit_connect_source}; "
             "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
         )
         if request.url.path.startswith("/v1/"):
@@ -538,6 +611,7 @@ def create_app(
     application.include_router(agent_router)
     application.include_router(profile_router)
     application.include_router(briefings_router)
+    application.include_router(command_center_router)
     application.include_router(demo_router)
     application.include_router(memories_router)
     application.include_router(missions_router)
@@ -548,6 +622,7 @@ def create_app(
     application.include_router(tasks_router)
     application.include_router(voice_llm_router)
     application.include_router(realtime_router)
+    application.include_router(livekit_router)
     if active_settings.web_dist_path is not None and active_settings.web_dist_path.is_dir():
         application.mount(
             "/",

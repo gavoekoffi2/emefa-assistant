@@ -14,9 +14,9 @@ the user's money while they sleep (CLAUDE.md §34):
 * it only looks at events since the last consolidation, never the whole log;
 * it processes at most `MAX_EVENTS` of them, oldest first;
 * it groups them into a small number of batches;
-* it records its own completion as an event, so a crashed pass resumes from
-  where it stopped rather than re-reading — and so the watermark needs no
-  extra table.
+* it records its own completion as an event, with the timestamp of the last
+  successfully processed source event as its watermark. A failed batch never
+  advances that cursor, and a backlog is drained oldest-first without gaps.
 """
 
 from __future__ import annotations
@@ -60,29 +60,31 @@ class ConsolidationPass:
         self.ingestor = ingestor
 
     def watermark(self, now: datetime | None = None) -> str:
-        """Timestamp of the last completed pass, or the start of the first-run
-        window when there has never been one."""
+        """Timestamp through which source events were successfully processed.
+
+        Markers written by older releases did not carry an explicit source
+        cursor, so their own timestamp remains the compatibility fallback.
+        """
         reference = now or datetime.now(timezone.utc)
-        for event in self.memories.kernel.recent_events(limit=50):
-            if event.type == CONSOLIDATION_EVENT:
-                return event.created_at
+        event = self.memories.kernel.latest_event(CONSOLIDATION_EVENT)
+        if event is not None:
+            return str(event.metadata.get("through_created_at") or event.created_at)
         return (reference - timedelta(days=FIRST_RUN_WINDOW_DAYS)).isoformat()
 
     async def run(self, now: datetime | None = None) -> ConsolidationReport:
         reference = now or datetime.now(timezone.utc)
         since = self.watermark(reference)
-        events = [
-            event
-            for event in self.memories.kernel.recent_events(limit=MAX_EVENTS, since=since)
-            if event.type != CONSOLIDATION_EVENT
-        ]
+        events = self.memories.kernel.oldest_events_after(
+            since,
+            limit=MAX_EVENTS,
+            exclude_type=CONSOLIDATION_EVENT,
+        )
         if not events:
-            self._mark_complete(0, 0)
             return ConsolidationReport()
 
-        events.reverse()  # oldest first, so a claim reads in the order it was made
         created = reinforced = superseded = 0
         batches = 0
+        events_read = 0
         error: str | None = None
 
         for start in range(0, len(events), BATCH_SIZE):
@@ -97,15 +99,26 @@ class ConsolidationPass:
                 scope="consolidation",
             )
             batches += 1
+            events_read += len(batch)
             created += result.created
             reinforced += result.reinforced
             superseded += result.superseded
             if result.error is not None:
                 error = result.error
+                # Do not move the cursor past a failed batch. A later pass must
+                # retry it and everything after it rather than silently losing
+                # memory. Successful prior batches may be idempotently
+                # reinforced on retry, which is preferable to a gap.
+                break
 
-        self._mark_complete(len(events), created + reinforced + superseded)
+        if error is None:
+            self._mark_complete(
+                events_read,
+                created + reinforced + superseded,
+                through_created_at=events[-1].created_at,
+            )
         return ConsolidationReport(
-            events_read=len(events),
+            events_read=events_read,
             batches=batches,
             created=created,
             reinforced=reinforced,
@@ -113,10 +126,16 @@ class ConsolidationPass:
             error=error,
         )
 
-    def _mark_complete(self, events_read: int, facts_touched: int) -> None:
+    def _mark_complete(
+        self, events_read: int, facts_touched: int, *, through_created_at: str
+    ) -> None:
         self.memories.log_event(
             type=CONSOLIDATION_EVENT,
             source="scheduler",
             content=f"{events_read} évènements relus, {facts_touched} faits mis à jour",
-            metadata={"events_read": events_read, "facts_touched": facts_touched},
+            metadata={
+                "events_read": events_read,
+                "facts_touched": facts_touched,
+                "through_created_at": through_created_at,
+            },
         )

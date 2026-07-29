@@ -224,6 +224,47 @@ async def test_consolidation_is_bounded_and_batched(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_consolidation_drains_backlog_oldest_first_without_skipping(tmp_path):
+    memories = MemoryRepository(tmp_path / "backlog.db")
+    extractor = StubExtractor([])
+    consolidation = ConsolidationPass(memories, MemoryIngestor(memories, extractor))
+
+    for index in range(MAX_EVENTS + 40):
+        memories.log_event("exchange", "chat", f"Échange backlog {index} avec contenu.")
+
+    first = await consolidation.run()
+    first_calls = list(extractor.calls)
+    second = await consolidation.run()
+    second_calls = extractor.calls[len(first_calls) :]
+
+    assert first.events_read == MAX_EVENTS
+    assert second.events_read == 40
+    assert "backlog 0 " in first_calls[0]
+    assert "backlog 119 " in first_calls[-1]
+    assert "backlog 120 " in second_calls[0]
+    assert "backlog 159 " in second_calls[-1]
+
+
+@pytest.mark.asyncio
+async def test_consolidation_advances_watermark_only_after_success(tmp_path):
+    memories = MemoryRepository(tmp_path / "failed-watermark.db")
+    memories.log_event("exchange", "chat", "Échange assez long pour être consolidé plus tard.")
+    failing = StubExtractor([], error=httpx.ConnectError("down"))
+    consolidation = ConsolidationPass(memories, MemoryIngestor(memories, failing))
+
+    failed = await consolidation.run()
+    assert failed.error == "ConnectError"
+    assert memories.kernel.latest_event(CONSOLIDATION_EVENT) is None
+
+    succeeding = StubExtractor([])
+    consolidation.ingestor = MemoryIngestor(memories, succeeding)
+    retried = await consolidation.run()
+    assert retried.events_read == 1
+    assert len(succeeding.calls) == 1
+    assert memories.kernel.latest_event(CONSOLIDATION_EVENT) is not None
+
+
+@pytest.mark.asyncio
 async def test_first_ever_pass_does_not_reread_all_of_history(tmp_path):
     memories = MemoryRepository(tmp_path / "window.db")
     consolidation = ConsolidationPass(

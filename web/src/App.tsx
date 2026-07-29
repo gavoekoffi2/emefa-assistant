@@ -207,6 +207,11 @@ function App() {
       try {
         const status = await api<AuthStatus>('/v1/auth/status')
         setRegistered(status.registered)
+        if (status.registered && !status.authenticated) {
+          setSession(null)
+          setChecking(false)
+          return
+        }
       } catch { setRegistered(false) }
       try { setSession(await api<Session>('/v1/web/session')) } catch { setSession(null) }
       setChecking(false)

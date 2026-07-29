@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from emefa.api.devices import current_device
+from emefa.api.secondfactor import require_recent_step_up
 from emefa.domain.devices import Device
 from emefa.domain.missions import MAX_STEPS
 from emefa.observability import audit
@@ -149,6 +150,7 @@ async def approve_step(
     request: Request,
     device: Annotated[Device, Depends(current_device)],
 ) -> dict[str, Any]:
+    require_recent_step_up(request, device)
     outcome = await request.app.state.mission_orchestrator.approve_step(mission_id, step_id)
     if outcome is None or outcome.mission is None:
         raise HTTPException(status_code=404, detail="mission_not_found")

@@ -99,9 +99,46 @@ def test_token_stays_valid_without_max_age(tmp_path):
 
 def test_schema_migrations_are_tracked(tmp_path):
     repository = DeviceRepository(tmp_path / "migrated.db")
-    assert repository.schema_version() == 18
+    assert repository.schema_version() == 20
     again = DeviceRepository(tmp_path / "migrated.db")
-    assert again.schema_version() == 18
+    assert again.schema_version() == 20
+
+
+def test_live_v10_command_center_database_upgrades_without_data_loss(tmp_path):
+    """Production already has command-center migration 10 applied."""
+    from emefa.domain import storage
+
+    database = tmp_path / "live-v10.db"
+    with storage.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE schema_migrations "
+            "(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+        for version, statements in enumerate(storage.MIGRATIONS[:10], start=1):
+            for statement in statements:
+                connection.execute(statement)
+            connection.execute(
+                "INSERT INTO schema_migrations (version) VALUES (?)", (version,)
+            )
+        connection.execute(
+            "INSERT INTO initiatives (initiative_id, title) VALUES (?, ?)",
+            ("ini_live", "Initiative command center existante"),
+        )
+
+    storage.run_migrations(database)
+
+    assert storage.schema_version(database) == 20
+    with storage.connect(database) as connection:
+        assert connection.execute(
+            "SELECT title FROM initiatives WHERE initiative_id = 'ini_live'"
+        ).fetchone()[0] == "Initiative command center existante"
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+    assert {"initiatives", "proactive_initiatives", "memory_events", "missions"} <= tables
 
 
 @pytest.mark.asyncio
@@ -132,3 +169,25 @@ async def test_web_shell_is_never_cached_but_hashed_assets_can_be_cached(tmp_pat
         asset = await web_client.get("/assets/index-version.css")
     assert shell.headers["Cache-Control"] == "no-store, must-revalidate"
     assert asset.headers["Cache-Control"] == "public, max-age=31536000, immutable"
+
+
+@pytest.mark.asyncio
+async def test_csp_allows_only_the_configured_livekit_websocket_origin(tmp_path):
+    app = create_app(
+        Settings(
+            enrollment_code="CODE-SECRET",
+            database_path=tmp_path / "csp.db",
+            cookie_secure=False,
+            livekit_url="wss://emefa-pilot.livekit.cloud",
+            livekit_api_key="key-id",
+            livekit_api_secret="signing-secret-signing-secret-32-bytes-minimum",
+        )
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as web_client:
+        response = await web_client.get("/health")
+
+    csp = response.headers["Content-Security-Policy"]
+    assert "wss://emefa-pilot.livekit.cloud" in csp
+    assert "wss://*.livekit.cloud" not in csp

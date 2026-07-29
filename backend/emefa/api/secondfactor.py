@@ -25,6 +25,17 @@ from emefa.observability import audit
 router = APIRouter(prefix="/v1/auth/second-factor", tags=["second-factor"])
 
 
+def require_recent_step_up(request: Request, device: Device) -> None:
+    """Fail closed when an enrolled account has not recently proved presence."""
+    factors = request.app.state.second_factor
+    if (
+        device.account_id
+        and factors.enrolled(device.account_id)
+        and not factors.verified_recently(device.device_id)
+    ):
+        raise HTTPException(status_code=403, detail="second_factor_required")
+
+
 class CeremonyResponse(BaseModel):
     credential: dict[str, Any]
     label: str = Field(default="", max_length=80)
@@ -186,6 +197,7 @@ def revoke(
     device: Annotated[Device, Depends(current_device)],
 ) -> None:
     factors = request.app.state.second_factor
+    require_recent_step_up(request, device)
     if not factors.revoke(credential_id, account.account_id):
         raise HTTPException(status_code=404, detail="credential_not_found")
     # Removing the factor also drops the step-up it granted, so a stolen

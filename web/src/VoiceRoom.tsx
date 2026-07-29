@@ -6,12 +6,14 @@ import { TasksPanel } from './TasksPanel'
 import { MemoryPanel } from './MemoryPanel'
 import { PipelinePanel } from './PipelinePanel'
 import { SkillsPanel } from './SkillsPanel'
-import { CommandCenterPanel } from './CommandCenterPanel'
+import { CommandCenterPanel, ProactiveInitiativesPanel } from './CommandCenterPanel'
 import { VisualCards, type VisualCardData } from './VisualCard'
 import { SecurityPanel } from './SecurityPanel'
 import { DeliverablesPanel } from './DeliverablesPanel'
 import type { DeliverableRecord, SourceFileRecord } from './DeliverablesPanel'
 import { useClonedVoice } from './useClonedVoice'
+import { useLiveKitVoice, type LiveKitTicket } from './useLiveKitVoice'
+import { splitSpeakableText } from './voiceText.ts'
 
 // three.js is heavy. Both 3D surfaces load as their own chunks so the
 // activation shell never downloads a renderer it will not use — splitting only
@@ -49,6 +51,8 @@ const scenarioStatusLabel: Record<DemoScenario['status'], string> = {
 type SystemStatus = {
   brain_configured: boolean
   voice_configured: boolean
+  voice_transport: 'elevenlabs' | 'livekit'
+  livekit_configured: boolean
   skills: Array<{ name: string; risk: string }>
   open_task_count: number
   schema_version: number
@@ -72,32 +76,6 @@ const agentErrorCopy: Record<string, string> = {
   invalid_brain_step: 'Le moteur a renvoyé une réponse invalide. Réessayez.',
 }
 
-function splitSpeakableText(text: string, force = false) {
-  const segments: string[] = []
-  let remainder = text
-  while (remainder.length > 0) {
-    const sentence = remainder.match(/^([\s\S]{18,}?[.!?…;:])(?:\s+|$)/)
-    if (sentence) {
-      segments.push(sentence[1].trim())
-      remainder = remainder.slice(sentence[0].length)
-      continue
-    }
-    if (remainder.length > 220) {
-      const boundary = remainder.lastIndexOf(' ', 200)
-      const cut = boundary > 80 ? boundary : 200
-      segments.push(remainder.slice(0, cut).trim())
-      remainder = remainder.slice(cut).trimStart()
-      continue
-    }
-    break
-  }
-  if (force && remainder.trim()) {
-    segments.push(remainder.trim())
-    remainder = ''
-  }
-  return { segments, remainder }
-}
-
 async function getVoiceTicket(): Promise<SignedSession> {
   const response = await fetch('/v1/realtime/session', { credentials: 'include' })
   if (!response.ok) {
@@ -105,6 +83,15 @@ async function getVoiceTicket(): Promise<SignedSession> {
     throw new Error(body?.detail || `Connexion vocale refusée (${response.status}).`)
   }
   return response.json() as Promise<SignedSession>
+}
+
+async function getLiveKitTicket(): Promise<LiveKitTicket> {
+  const response = await fetch('/v1/livekit/session', { method: 'POST', credentials: 'include' })
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as { detail?: string } | null
+    throw new Error(body?.detail || `Connexion LiveKit refusée (${response.status}).`)
+  }
+  return response.json() as Promise<LiveKitTicket>
 }
 
 export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: () => void }) {
@@ -124,6 +111,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   const [commandOpen, setCommandOpen] = useState(false)
   const [securityOpen, setSecurityOpen] = useState(false)
   const [deliverablesOpen, setDeliverablesOpen] = useState(false)
+  const [commandCenterOpen, setCommandCenterOpen] = useState(false)
   const [firstRun, setFirstRun] = useState(false)
   const [approval, setApproval] = useState<PendingApproval | null>(null)
   const [deciding, setDeciding] = useState(false)
@@ -138,15 +126,48 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   const [deliverablesRefresh, setDeliverablesRefresh] = useState(0)
   const [visualMode, setVisualMode] = useState<'face' | 'core'>('face')
   const [cloneFailed, setCloneFailed] = useState(false)
+  const [screenSharing, setScreenSharing] = useState(false)
+  const [screenCapturing, setScreenCapturing] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const screenVideoRef = useRef<HTMLVideoElement>(null)
+  const screenStreamRef = useRef<MediaStream | null>(null)
   const streamedResponseRef = useRef(false)
   const responseBufferRef = useRef('')
   const bargeInFramesRef = useRef(0)
+
+  const stopScreenShare = useCallback(() => {
+    const stream = screenStreamRef.current
+    if (stream) stream.getTracks().forEach((track) => track.stop())
+    screenStreamRef.current = null
+    if (screenVideoRef.current) screenVideoRef.current.srcObject = null
+    setScreenSharing(false)
+    setScreenCapturing(false)
+  }, [])
+
+  useEffect(() => {
+    return () => stopScreenShare()
+  }, [stopScreenShare])
 
   const clonedVoice = useClonedVoice({
     onFailure: (message) => {
       setCloneFailed(true)
       setNotice(message)
+    },
+  })
+  const livekitVoice = useLiveKitVoice({
+    onUserTranscript: (text) => {
+      setTranscript(text)
+      setHistory((current) => [...current.slice(-7), { id: crypto.randomUUID(), role: 'user', text }])
+      setState('thinking')
+    },
+    onAgentTranscript: (text) => {
+      setAnswer(text)
+      setHistory((current) => [...current.slice(-7), { id: crypto.randomUUID(), role: 'assistant', text }])
+      setActiveNodes([0, 1 + Math.floor(Math.random() * (graphNodes.length - 1))])
+    },
+    onError: (message) => {
+      setState('error')
+      setNotice(`LiveKit : ${message}`)
     },
   })
 
@@ -166,7 +187,18 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   }, [])
 
   const closeWorkspacePanels = () => {
-    setProfileOpen(false); setTasksOpen(false); setMemoryOpen(false); setPipelineOpen(false); setDeliverablesOpen(false); setSkillsOpen(false); setCommandOpen(false); setSecurityOpen(false)
+    setProfileOpen(false); setTasksOpen(false); setMemoryOpen(false); setPipelineOpen(false); setDeliverablesOpen(false); setSkillsOpen(false); setCommandOpen(false); setCommandCenterOpen(false); setSecurityOpen(false)
+  }
+
+  const openCommandCenter = () => {
+    closeWorkspacePanels()
+    setCommandCenterOpen(true)
+  }
+
+  const refreshApprovals = () => {
+    api<PendingApproval[]>('/v1/agent/approvals')
+      .then((pending) => setApproval(pending[0] ?? null))
+      .catch(() => undefined)
   }
 
   const openDeliverables = () => {
@@ -305,7 +337,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
         setState('thinking')
       } else {
         // Older provider sessions may omit progressive response events.
-        if (!streamedResponseRef.current) clonedVoice.enqueue(text)
+        if (!streamedResponseRef.current) splitSpeakableText(text, true).segments.forEach(clonedVoice.enqueue)
         setAnswer(text)
         setHistory((current) => [...current.slice(-7), { id: crypto.randomUUID(), role: 'assistant', text }])
         setActiveNodes([0, 1 + Math.floor(Math.random() * (graphNodes.length - 1))])
@@ -323,8 +355,8 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
         bargeInFramesRef.current = 0
         return
       }
-      bargeInFramesRef.current = vadScore >= 0.78 ? bargeInFramesRef.current + 1 : 0
-      if (bargeInFramesRef.current >= 2) {
+      bargeInFramesRef.current = vadScore >= 0.9 ? bargeInFramesRef.current + 1 : 0
+      if (bargeInFramesRef.current >= 6) {
         clonedVoice.interrupt()
         bargeInFramesRef.current = 0
         responseBufferRef.current = ''
@@ -360,7 +392,10 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
     }
   }, [cloneFailed, conversation.status, setConversationVolume])
 
-  const live = conversation.status !== 'disconnected'
+  const livekitEnabled = system?.voice_transport === 'livekit'
+  const live = livekitEnabled
+    ? livekitVoice.status !== 'disconnected'
+    : conversation.status !== 'disconnected'
 
   // During a live voice session, actions prepared orally create pending
   // approvals server-side; poll so the card surfaces without a reload.
@@ -375,16 +410,28 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   }, [live])
 
   useEffect(() => {
+    if (livekitEnabled) {
+      if (livekitVoice.status === 'connecting') setState('thinking')
+      else if (livekitVoice.status === 'speaking') setState('speaking')
+      else if (livekitVoice.status === 'listening') setState('listening')
+      else setState((current) => current === 'error' ? current : 'idle')
+      return
+    }
     if (conversation.status === 'connecting') setState('thinking')
     else if (conversation.status === 'connected') setState(conversation.isSpeaking || clonedVoice.isSpeaking ? 'speaking' : 'listening')
     else setState((current) => current === 'error' ? current : 'idle')
-  }, [conversation.status, conversation.isSpeaking, clonedVoice.isSpeaking])
+  }, [livekitEnabled, livekitVoice.status, conversation.status, conversation.isSpeaking, clonedVoice.isSpeaking])
 
   const startRealtime = async () => {
     setNotice(''); setState('thinking')
     try {
       const permissionStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
       permissionStream.getTracks().forEach((track) => track.stop())
+      if (livekitEnabled) {
+        const ticket = await getLiveKitTicket()
+        await livekitVoice.start(ticket)
+        return true
+      }
       setCloneFailed(false)
       await clonedVoice.activate()
       const ticket = await getVoiceTicket()
@@ -421,6 +468,27 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
               return `Erreur réseau: ${error instanceof Error ? error.message : 'Impossible de contacter le serveur EMEFA.'}`
             }
           },
+          emefa_send_email: async ({ to, subject, body }: { to: string; subject: string; body: string }) => {
+            try {
+              const run = await api<AgentRun>('/v1/agent/actions/email-send', {
+                method: 'POST',
+                body: JSON.stringify({ to, subject, body }),
+                credentials: 'include',
+              })
+              if (run.status === 'confirmation_required' && run.action_id) {
+                setApproval({
+                  action_id: run.action_id,
+                  name: 'email_send',
+                  arguments: { to, subject, body },
+                })
+                return run.answer || 'L’e-mail est prêt. Demandez à Claude de valider la carte d’approbation.'
+              }
+              if (run.error) return `Erreur: ${agentErrorCopy[run.error] || run.error}`
+              return run.answer || 'L’e-mail n’a pas pu être préparé.'
+            } catch (error) {
+              return `Erreur réseau: ${error instanceof Error ? error.message : 'Impossible de préparer l’e-mail.'}`
+            }
+          },
         },
       })
       return true
@@ -434,7 +502,12 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   }
 
   const toggleLive = async () => {
-    if (live) { clonedVoice.disable(); await conversation.endSession(); return }
+    if (live) {
+      clonedVoice.disable()
+      if (livekitEnabled) await livekitVoice.stop()
+      else await conversation.endSession()
+      return
+    }
     await startRealtime()
   }
 
@@ -515,6 +588,81 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
     }
   }
 
+  const startScreenShare = async () => {
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      setNotice("Ce navigateur ne permet pas encore le partage d'écran.")
+      return
+    }
+    setNotice('')
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: { ideal: 5, max: 5 } },
+        audio: false,
+      })
+      stopScreenShare()
+      screenStreamRef.current = stream
+      const video = screenVideoRef.current
+      if (!video) {
+        stream.getTracks().forEach((track) => track.stop())
+        throw new Error("L'aperçu de l'écran n'est pas disponible.")
+      }
+      video.srcObject = stream
+      video.muted = true
+      await video.play()
+      const track = stream.getVideoTracks()[0]
+      track.addEventListener('ended', stopScreenShare)
+      setScreenSharing(true)
+    } catch (cause) {
+      stopScreenShare()
+      const denied = cause instanceof DOMException && ['NotAllowedError', 'PermissionDeniedError'].includes(cause.name)
+      setNotice(denied
+        ? "Le partage d'écran a été annulé. EMEFA ne voit rien."
+        : cause instanceof Error ? cause.message : "Le partage d'écran n'a pas pu démarrer.")
+    }
+  }
+
+  const captureAndAnalyzeScreen = async () => {
+    const video = screenVideoRef.current
+    if (!screenSharing || !video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || screenCapturing) return
+    setScreenCapturing(true)
+    setNotice('')
+    try {
+      const scale = Math.min(1, 1440 / video.videoWidth)
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(video.videoWidth * scale))
+      canvas.height = Math.max(1, Math.round(video.videoHeight * scale))
+      const context = canvas.getContext('2d')
+      if (!context) throw new Error("La capture d'écran n'est pas disponible.")
+      context.drawImage(video, 0, 0, canvas.width, canvas.height)
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((value) => value ? resolve(value) : reject(new Error("La capture d'écran a échoué.")), 'image/jpeg', 0.82)
+      })
+      const form = new FormData()
+      form.append('file', new File([blob], `capture-ecran-${Date.now()}.jpg`, { type: 'image/jpeg' }))
+      const response = await fetch('/v1/files', { method: 'POST', body: form, credentials: 'include' })
+      if (!response.ok) {
+        const body = await response.json().catch(() => null) as { detail?: string } | null
+        throw new Error(body?.detail || `Capture refusée (${response.status}).`)
+      }
+      const uploaded = await response.json() as SourceFileRecord
+      setUploadedFiles((current) => [uploaded, ...current])
+      setDeliverablesRefresh((value) => value + 1)
+      if (conversation.status === 'connected') {
+        conversation.sendContextualUpdate(
+          `Capture d'écran volontaire reçue : ${uploaded.filename} (file_id ${uploaded.file_id}). Utilise emefa_execute et image_analyze uniquement si l'utilisateur demande son analyse.`,
+        )
+      }
+      await sendMessage(
+        `Analyse la capture actuelle de mon écran avec image_analyze (file_id : ${uploaded.file_id}). Décris ce qui est visible et réponds en français.`,
+      )
+    } catch (cause) {
+      setState('error')
+      setNotice(cause instanceof Error ? cause.message : "L'écran n'a pas pu être analysé.")
+    } finally {
+      setScreenCapturing(false)
+    }
+  }
+
   const askBrief = () => void sendMessage('Qu’est-ce qui mérite mon attention aujourd’hui ?')
 
   const runScenario = (scenario: DemoScenario) => {
@@ -533,7 +681,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       <div className="space-vignette" />
       <header className="jarvis-header">
         <div className="brand-row"><BrandMark /><div><strong>EMEFA</strong><small>INTELLIGENCE COGNITIVE</small></div></div>
-        <nav><button className={profileOpen || tasksOpen || memoryOpen || pipelineOpen || deliverablesOpen || skillsOpen || commandOpen || securityOpen ? '' : 'nav-active'} onClick={closeWorkspacePanels}>Univers</button><button className={deliverablesOpen ? 'nav-active' : ''} onClick={openDeliverables}>Livrables{deliverableCount > 0 ? ` (${deliverableCount})` : ''}</button><button className={tasksOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setTasksOpen(true) }}>Tâches</button><button className={pipelineOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setPipelineOpen(true) }}>Pipeline</button><button className={memoryOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setMemoryOpen(true) }}>Mémoire</button><button className={commandOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setCommandOpen(true) }}>Initiatives</button><button className={skillsOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setSkillsOpen(true) }}>Compétences</button><button className={profileOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setProfileOpen(true) }}>Profil</button><button className={securityOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setSecurityOpen(true) }}>Sécurité</button></nav>
+        <nav><button className={profileOpen || tasksOpen || memoryOpen || pipelineOpen || deliverablesOpen || skillsOpen || commandOpen || commandCenterOpen || securityOpen ? '' : 'nav-active'} onClick={closeWorkspacePanels}>Univers</button><button className={commandCenterOpen ? 'nav-active' : ''} onClick={openCommandCenter}>Pilotage</button><button className={commandOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setCommandOpen(true) }}>Initiatives</button><button className={deliverablesOpen ? 'nav-active' : ''} onClick={openDeliverables}>Livrables{deliverableCount > 0 ? ` (${deliverableCount})` : ''}</button><button className={tasksOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setTasksOpen(true) }}>Tâches</button><button className={pipelineOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setPipelineOpen(true) }}>Pipeline</button><button className={memoryOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setMemoryOpen(true) }}>Mémoire</button><button className={skillsOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setSkillsOpen(true) }}>Compétences</button><button className={profileOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setProfileOpen(true) }}>Profil</button><button className={securityOpen ? 'nav-active' : ''} onClick={() => { closeWorkspacePanels(); setSecurityOpen(true) }}>Sécurité</button></nav>
         <div className="header-right"><span className="system-clock"><b>SYS</b> EN LIGNE</span><span className="privacy-status"><i /> {window.location.protocol === 'https:' ? 'CHIFFREMENT ACTIF' : 'CONNEXION LOCALE'}</span><button className="profile-button" onClick={onLogout} title={`Déconnecter ${session.name}`}>CG</button></div>
       </header>
       <aside className="space-sidebar">
@@ -558,7 +706,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
           {visualMode === 'face'
             ? (
               <Suspense fallback={<VoiceOrb state={state} onClick={() => void toggleLive()} />}>
-                <EMEFAFace state={state} onClick={() => void toggleLive()} getOutputVolume={cloneFailed ? conversation.getOutputVolume : clonedVoice.getOutputVolume} getOutputFrequencyData={cloneFailed ? conversation.getOutputByteFrequencyData : clonedVoice.getOutputByteFrequencyData} />
+                <EMEFAFace state={state} onClick={() => void toggleLive()} getOutputVolume={livekitEnabled ? livekitVoice.getOutputVolume : cloneFailed ? conversation.getOutputVolume : clonedVoice.getOutputVolume} getOutputFrequencyData={livekitEnabled ? livekitVoice.getOutputByteFrequencyData : cloneFailed ? conversation.getOutputByteFrequencyData : clonedVoice.getOutputByteFrequencyData} />
               </Suspense>
             )
             : <VoiceOrb state={state} onClick={() => void toggleLive()} />}
@@ -570,8 +718,31 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
           >{visualMode === 'face' ? 'NOYAU' : 'VISAGE'}</button>
           <div className="core-readout right"><span>LATENCE</span><strong>TEMPS RÉEL</strong></div>
         </div>
-        <div className="voice-copy"><p className="heard">{state === 'listening' && transcript ? `« ${transcript} »` : latestUser ? `« ${latestUser} »` : live ? 'Parlez, je vous écoute…' : visualMode === 'face' ? 'Touchez le visage pour commencer à parler' : 'Touchez le noyau pour commencer à parler'}</p><p className="answer">{answer}</p><VisualCards cards={cards} /></div>
+        <section className="conversation-widget" aria-live="polite" aria-label="Dernier échange avec EMEFA">
+          <header className="conversation-widget-head">
+            <span><i aria-hidden="true" />CONVERSATION</span>
+            <small>{live ? 'EN DIRECT' : 'DERNIER ÉCHANGE'}</small>
+          </header>
+          <div className="conversation-turn user-turn">
+            <span className="turn-speaker">VOUS</span>
+            <p>{state === 'listening' && transcript ? transcript : latestUser || (live ? 'Parlez, je vous écoute…' : visualMode === 'face' ? 'Touchez le visage pour commencer à parler' : 'Touchez le noyau pour commencer à parler')}</p>
+          </div>
+          <div className="conversation-turn assistant-turn">
+            <span className="turn-speaker">EMEFA</span>
+            <p>{answer}</p>
+          </div>
+          <VisualCards cards={cards} />
+        </section>
         <div className="voice-controls"><button className={live ? 'danger' : ''} onClick={() => void toggleLive()}><span className="mic-symbol">⌁</span>{live ? 'Terminer la conversation' : 'Initialiser la liaison vocale'}</button><small>{live ? 'Conversation continue · interrompez EMEFA à tout moment' : 'Activation unique · échange vocal naturel'}</small></div>
+        <section className="screen-share-panel" hidden={!screenSharing} aria-live="polite" aria-label="Partage d’écran EMEFA">
+          <video ref={screenVideoRef} className="screen-share-preview" autoPlay muted playsInline aria-hidden="true" />
+          <span className="screen-share-indicator"><i />PARTAGE D’ÉCRAN ACTIF</span>
+          <small>Le flux reste dans ce navigateur. Seule une capture ponctuelle est envoyée quand vous le demandez.</small>
+          <div className="screen-share-actions">
+            <button onClick={() => void captureAndAnalyzeScreen()} disabled={screenCapturing}>{screenCapturing ? 'Analyse…' : 'Analyser l’écran'}</button>
+            <button className="screen-share-stop" onClick={stopScreenShare}>Arrêter le partage</button>
+          </div>
+        </section>
       </main>
       {scenariosOpen && scenarios.length > 0 && (
         <div className="scenario-tray" role="menu" aria-label="Scénarios de démonstration">
@@ -596,7 +767,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
           <button className="file-strip-close" onClick={() => setFileStripOpen(false)} aria-label="Fermer la confirmation de fichier">✕</button>
         </div>
       )}
-      <section className="command-dock"><button className="dock-deliverables" onClick={openDeliverables} aria-label={`Ouvrir les livrables${deliverableCount ? `, ${deliverableCount} disponibles` : ''}`} title="Résultats et fichiers"><span aria-hidden="true">▣</span>{deliverableCount > 0 && <b>{deliverableCount > 99 ? '99+' : deliverableCount}</b>}</button><button className={`dock-scenarios${scenariosOpen ? ' active' : ''}`} onClick={() => setScenariosOpen((open) => !open)} disabled={scenarios.length === 0} aria-label="Parcours guidés" title="Parcours guidés">✦</button><input ref={fileInputRef} className="sr-only" type="file" multiple onChange={(event) => void uploadFiles(event.currentTarget.files)} aria-label="Envoyer des fichiers à EMEFA" /><button className="dock-upload" onClick={() => fileInputRef.current?.click()} disabled={uploading} aria-label="Envoyer des fichiers à EMEFA" title="Envoyer PDF, Word, images ou autres fichiers">{uploading ? '…' : '📎'}</button><span className="dock-prompt">›</span><input value={typed} onChange={(event) => { setTyped(event.target.value); if (live) conversation.sendUserActivity() }} onKeyDown={(event) => { if (event.key === 'Enter') void submitTyped() }} placeholder="Écrire à EMEFA — avec ou sans la voix…" aria-label="Écrire une demande" /><button className="dock-send" onClick={() => void submitTyped()} disabled={!typed.trim()}>TRANSMETTRE</button></section>
+      <section className="command-dock"><button className="dock-deliverables" onClick={openDeliverables} aria-label={`Ouvrir les livrables${deliverableCount ? `, ${deliverableCount} disponibles` : ''}`} title="Résultats et fichiers"><span aria-hidden="true">▣</span>{deliverableCount > 0 && <b>{deliverableCount > 99 ? '99+' : deliverableCount}</b>}</button><button className={`dock-scenarios${scenariosOpen ? ' active' : ''}`} onClick={() => setScenariosOpen((open) => !open)} disabled={scenarios.length === 0} aria-label="Parcours guidés" title="Parcours guidés">✦</button><button className={`dock-screen${screenSharing ? ' active' : ''}`} onClick={() => screenSharing ? stopScreenShare() : void startScreenShare()} aria-pressed={screenSharing} aria-label={screenSharing ? "Arrêter le partage d'écran" : "Partager mon écran avec EMEFA"} title={screenSharing ? "Arrêter le partage d'écran" : "Partager mon écran"}>▱</button><input ref={fileInputRef} className="sr-only" type="file" multiple onChange={(event) => void uploadFiles(event.currentTarget.files)} aria-label="Envoyer des fichiers à EMEFA" /><button className="dock-upload" onClick={() => fileInputRef.current?.click()} disabled={uploading} aria-label="Envoyer des fichiers à EMEFA" title="Envoyer PDF, Word, images ou autres fichiers">{uploading ? '…' : '📎'}</button><span className="dock-prompt">›</span><input value={typed} onChange={(event) => { setTyped(event.target.value); if (live) conversation.sendUserActivity() }} onKeyDown={(event) => { if (event.key === 'Enter') void submitTyped() }} placeholder="Écrire à EMEFA — avec ou sans la voix…" aria-label="Écrire une demande" /><button className="dock-send" onClick={() => void submitTyped()} disabled={!typed.trim()}>TRANSMETTRE</button></section>
       <div className="model-pill"><span>PROTOCOLE</span><strong>VOICE·LIVE</strong><i>●</i></div>
       {notice && <div className="voice-notice" role="alert">{notice}</div>}
       {morningBrief && (
@@ -625,8 +796,9 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       <MemoryPanel open={memoryOpen} onClose={() => setMemoryOpen(false)} />
       <PipelinePanel open={pipelineOpen} onClose={() => setPipelineOpen(false)} />
       <SkillsPanel open={skillsOpen} onClose={() => setSkillsOpen(false)} />
-      <CommandCenterPanel open={commandOpen} onClose={() => setCommandOpen(false)} />
+      <ProactiveInitiativesPanel open={commandOpen} onClose={() => setCommandOpen(false)} />
       <SecurityPanel open={securityOpen} onClose={() => setSecurityOpen(false)} />
+      <CommandCenterPanel open={commandCenterOpen} onClose={() => setCommandCenterOpen(false)} onApprovalCreated={refreshApprovals} />
       <DeliverablesPanel open={deliverablesOpen} refreshToken={deliverablesRefresh} onClose={() => setDeliverablesOpen(false)} onCounts={handleDeliverableCounts} />
     </div>
   )

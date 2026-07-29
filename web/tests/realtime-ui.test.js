@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { splitSpeakableText } from '../src/voiceText.ts'
 
 const source = readFileSync(new URL('../src/VoiceRoom.tsx', import.meta.url), 'utf8')
 const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
@@ -11,6 +12,8 @@ const deliverablesPanel = readFileSync(new URL('../src/DeliverablesPanel.tsx', i
 const face = readFileSync(new URL('../src/EMEFAFace.tsx', import.meta.url), 'utf8')
 const faceCss = readFileSync(new URL('../src/EMEFAFace.css', import.meta.url), 'utf8')
 const clonedVoice = readFileSync(new URL('../src/useClonedVoice.ts', import.meta.url), 'utf8')
+const livekitVoice = readFileSync(new URL('../src/useLiveKitVoice.ts', import.meta.url), 'utf8')
+const packageJson = readFileSync(new URL('../package.json', import.meta.url), 'utf8')
 
 test('voice room uses ElevenLabs continuous live conversation SDK', () => {
   assert.match(source, /useConversation/)
@@ -21,6 +24,21 @@ test('voice room uses ElevenLabs continuous live conversation SDK', () => {
   assert.match(source, /\/v1\/realtime\/session/)
   assert.match(source, /getUserMedia/)
   assert.match(app, /ConversationProvider/)
+})
+
+test('LiveKit stays behind the server transport flag while ElevenLabs remains the rollback path', () => {
+  assert.match(packageJson, /"livekit-client"/)
+  assert.match(source, /voice_transport: 'elevenlabs' \| 'livekit'/)
+  assert.match(source, /system\?\.voice_transport === 'livekit'/)
+  assert.match(source, /\/v1\/livekit\/session/)
+  assert.match(source, /livekitVoice\.start/)
+  assert.match(source, /conversation\.startSession/)
+  assert.match(livekitVoice, /new Room/)
+  assert.match(livekitVoice, /RoomEvent\.TrackSubscribed/)
+  assert.match(livekitVoice, /RoomEvent\.TranscriptionReceived/)
+  assert.match(livekitVoice, /setMicrophoneEnabled\(true\)/)
+  assert.match(livekitVoice, /createMediaElementSource/)
+  assert.match(livekitVoice, /analyser\.connect\(context\.destination\)/)
 })
 
 test('voice room uses provider VAD and true barge-in instead of browser speech APIs', () => {
@@ -43,13 +61,36 @@ test('cloned voice replaces only TTS while preserving the realtime agent transpo
   assert.match(clonedVoice, /decodeAudioData/)
   assert.match(clonedVoice, /AbortController/)
   assert.match(clonedVoice, /getByteFrequencyData/)
+  assert.match(clonedVoice, /remapAnalyserSpectrum/)
   assert.doesNotMatch(clonedVoice, /speechSynthesis|SpeechRecognition|MediaRecorder/)
+})
+
+test('streamed replies become speakable before a full long sentence is complete', () => {
+  const comma = splitSpeakableText('Je comprends exactement votre demande, et je commence la correction maintenant')
+  assert.deepEqual(comma.segments, ['Je comprends exactement votre demande,'])
+
+  const unpunctuated = splitSpeakableText('Cette réponse sans aucune ponctuation contient assez de mots pour que la voix commence sans attendre une phrase entière beaucoup trop longue')
+  assert.equal(unpunctuated.segments.length, 1)
+  assert.ok(unpunctuated.segments[0].length < 100)
+  assert.ok(unpunctuated.remainder.length > 0)
+
+  assert.deepEqual(splitSpeakableText('Réponse courte', true).segments, ['Réponse courte'])
+})
+
+test('non-progressive provider replies are also chunked before cloned TTS', () => {
+  assert.match(source, /splitSpeakableText\(text, true\)\.segments\.forEach\(clonedVoice\.enqueue\)/)
+  assert.doesNotMatch(source, /if \(!streamedResponseRef\.current\) clonedVoice\.enqueue\(text\)/)
+})
+
+test('local acoustic barge-in requires sustained high-confidence speech', () => {
+  assert.match(source, /vadScore >= 0\.9/)
+  assert.match(source, /bargeInFramesRef\.current >= 6/)
 })
 
 test('3D holographic face mesh follows real assistant output audio', () => {
   assert.match(source, /EMEFAFace/)
-  assert.match(source, /getOutputVolume=\{cloneFailed \? conversation\.getOutputVolume : clonedVoice\.getOutputVolume\}/)
-  assert.match(source, /getOutputFrequencyData=\{cloneFailed \? conversation\.getOutputByteFrequencyData : clonedVoice\.getOutputByteFrequencyData\}/)
+  assert.match(source, /getOutputVolume=\{livekitEnabled \? livekitVoice\.getOutputVolume : cloneFailed \? conversation\.getOutputVolume : clonedVoice\.getOutputVolume\}/)
+  assert.match(source, /getOutputFrequencyData=\{livekitEnabled \? livekitVoice\.getOutputByteFrequencyData : cloneFailed \? conversation\.getOutputByteFrequencyData : clonedVoice\.getOutputByteFrequencyData\}/)
   assert.match(source, /visualMode/)
   assert.match(face, /outputRef\.current\(\)/)
   assert.match(face, /frequencyRef\.current\(\)/)
@@ -125,6 +166,19 @@ test('voice room supports a continuous session, typed turns, and clean shutdown'
   assert.match(source, /Conversation continue · interrompez EMEFA à tout moment/)
 })
 
+test('the latest exchange is isolated in a compact responsive conversation widget', () => {
+  assert.match(source, /<section className="conversation-widget"/)
+  assert.match(source, /aria-label="Dernier échange avec EMEFA"/)
+  assert.match(source, /className="conversation-turn user-turn"/)
+  assert.match(source, /className="conversation-turn assistant-turn"/)
+  assert.match(source, />VOUS</)
+  assert.match(source, />EMEFA</)
+  assert.doesNotMatch(source, /className="voice-copy"/)
+  assert.match(holographicCss, /\.conversation-widget\{[^}]*max-height:148px[^}]*overflow:hidden/)
+  assert.match(holographicCss, /\.assistant-turn p\{[^}]*overflow-y:auto/)
+  assert.match(holographicCss, /@media\(max-width:800px\)[\s\S]*\.conversation-widget\{width:92vw/)
+})
+
 test('typed input reaches the EMEFA runtime when the voice session is offline', () => {
   assert.match(source, /\/v1\/agent\/runs/)
   assert.match(source, /confirmation_required/)
@@ -139,6 +193,13 @@ test('live voice can execute governed EMEFA actions through the authenticated cl
   assert.match(source, /credentials: 'include'/)
   assert.match(source, /setApproval\(\{[\s\S]*action_id: run\.action_id/)
   assert.match(source, /conversation\.sendContextualUpdate\(run\.answer\)/)
+})
+
+test('live voice has a deterministic structured email-send tool', () => {
+  assert.match(source, /emefa_send_email:/)
+  assert.match(source, /\/v1\/agent\/actions\/email-send/)
+  assert.match(source, /JSON\.stringify\(\{ to, subject, body \}\)/)
+  assert.match(source, /setApproval\(\{[\s\S]*name: 'email_send'/)
 })
 
 test('HUD telemetry reflects real system state instead of decorative numbers', () => {
@@ -287,4 +348,25 @@ test('upload confirmation can be closed and cannot cover mobile voice controls',
   assert.match(holographicCss, /\.file-strip\{position:fixed;[^}]*top:/)
   assert.match(holographicCss, /bottom:auto/)
   assert.doesNotMatch(appCss, /\.file-strip\{[^}]*pointer-events:none/)
+})
+
+test('screen vision is explicit, visible, one-shot, and immediately stoppable', () => {
+  assert.match(source, /navigator\.mediaDevices\.getDisplayMedia/)
+  assert.match(source, /video:\s*\{\s*frameRate:/)
+  assert.match(source, /audio:\s*false/)
+  assert.match(source, /track\.addEventListener\('ended', stopScreenShare/)
+  assert.match(source, /getTracks\(\)\.forEach\(\(track\) => track\.stop\(\)\)/)
+  assert.match(source, /return \(\) => stopScreenShare\(\)/)
+  assert.match(source, /canvas\.toBlob/)
+  assert.match(source, /image\/jpeg/)
+  assert.match(source, /Analyser l’écran/)
+  assert.match(source, /Arrêter le partage/)
+  assert.match(source, /PARTAGE D’ÉCRAN ACTIF/)
+  assert.match(source, /aria-live="polite"/)
+  assert.match(source, /aria-pressed=\{screenSharing\}/)
+  assert.match(source, /\/v1\/files/)
+  assert.match(source, /file_id/)
+  assert.doesNotMatch(source, /setInterval\([^)]*capture/i)
+  assert.match(holographicCss, /\.screen-share-panel/)
+  assert.match(holographicCss, /\.screen-share-indicator/)
 })

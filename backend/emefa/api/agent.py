@@ -1,10 +1,11 @@
 """Authenticated agent execution and approval API."""
 
 import asyncio
+import re
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from emefa.api.devices import current_device
 from emefa.domain.agent import AgentReply, RequestedAction
@@ -18,6 +19,28 @@ router = APIRouter(prefix="/v1/agent", tags=["agent"])
 
 class RunRequest(BaseModel):
     message: str = Field(min_length=1, max_length=20_000)
+
+
+class EmailSendRequest(BaseModel):
+    to: str = Field(min_length=3, max_length=320)
+    subject: str = Field(min_length=1, max_length=998)
+    body: str = Field(min_length=1, max_length=50_000)
+
+    @field_validator("to")
+    @classmethod
+    def validate_recipient(cls, value: str) -> str:
+        recipient = value.strip()
+        if not re.fullmatch(r"[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+", recipient):
+            raise ValueError("invalid recipient email address")
+        return recipient
+
+    @field_validator("subject", "body")
+    @classmethod
+    def strip_content(cls, value: str) -> str:
+        content = value.strip()
+        if not content:
+            raise ValueError("email content cannot be blank")
+        return content
 
 
 class PendingActionResponse(BaseModel):
@@ -139,6 +162,31 @@ async def run_agent(
     response = _register_pending(request, device, serialize_reply(reply))
     response.cards = [VisualCardResponse(**card) for card in cards]
     return response
+
+
+@router.post("/actions/email-send", response_model=RunResponse)
+def prepare_email_send(
+    payload: EmailSendRequest,
+    request: Request,
+    device: Annotated[Device, Depends(current_device)],
+) -> RunResponse:
+    """Prepare a governed email action without another nondeterministic LLM pass."""
+    action = RequestedAction(name="email_send", arguments=payload.model_dump())
+    response = RunResponse(
+        status="confirmation_required",
+        turns=0,
+        answer="L’e-mail est prêt. Validez la carte d’approbation pour l’envoyer.",
+        pending_action=PendingActionResponse(
+            name=action.name,
+            arguments=action.arguments,
+        ),
+    )
+    audit(
+        "email_send_prepared",
+        device_id=device.device_id,
+        recipient_configured=True,
+    )
+    return _register_pending(request, device, response)
 
 
 @router.delete("/conversation", status_code=204)

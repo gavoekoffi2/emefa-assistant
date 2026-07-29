@@ -155,6 +155,15 @@ class AccountRepository:
         assert found is not None
         return found
 
+    def create_first_owner(self, email: str, password: str, display_name: str = "") -> Account:
+        """Atomically claim the single owner slot.
+
+        The v20 partial unique index is the final authority.  This method keeps
+        validation/hash work outside no security boundary and maps every race
+        loser to one stable error for the API.
+        """
+        return self.create(email, password, display_name, role="owner")
+
     def get(self, account_id: str) -> Account | None:
         with self._connect() as connection:
             row = connection.execute(

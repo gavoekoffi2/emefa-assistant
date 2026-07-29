@@ -27,7 +27,7 @@ def list_initiatives(
     device: Annotated[Device, Depends(current_device)],
     history: bool = False,
 ) -> dict[str, Any]:
-    repository = request.app.state.initiatives
+    repository = request.app.state.proactive_initiatives
     # Expiring on read as well as on the scheduled pass: an initiative whose
     # moment has passed must not still be showing because the loop has not
     # come round yet.

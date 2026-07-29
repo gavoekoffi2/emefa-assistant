@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from emefa import __version__
 from emefa.api.agenda import router as agenda_router
 from emefa.api.auth import router as auth_router
+from emefa.api.authorization import GLOBAL_DEPENDENCIES
 from emefa.api.agent import router as agent_router
 from emefa.api.briefings import router as briefings_router
 from emefa.api.command_center import router as command_center_router
@@ -411,6 +412,10 @@ def create_app(
         version=__version__,
         description="Private API for the EMEFA personal assistant",
         lifespan=lifespan,
+        # Authorisation is installed once, for every route that exists or
+        # will exist, and refuses anything it has no policy for. See
+        # emefa/api/authorization.py.
+        dependencies=GLOBAL_DEPENDENCIES,
     )
     application.state.settings = active_settings
     application.state.devices = DeviceRepository(active_settings.database_path)

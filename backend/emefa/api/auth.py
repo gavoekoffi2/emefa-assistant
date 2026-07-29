@@ -26,7 +26,7 @@ from emefa.domain.accounts import (
     InvalidTokenError,
 )
 from emefa.domain.devices import Device
-from emefa.domain.roles import INVITABLE_ROLES, Permission, Role, allows, describe
+from emefa.domain.roles import INVITABLE_ROLES, Role, describe
 from emefa.observability import audit
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
@@ -155,29 +155,6 @@ def current_account(
 
 CurrentAccount = Annotated[Account, Depends(current_account)]
 
-
-def require(permission: Permission):
-    """Dependency factory: refuse the request unless the seat grants this.
-
-    Server-side and mandatory. The frontend hiding a control is a convenience;
-    this is the barrier.
-    """
-
-    def guard(account: CurrentAccount) -> Account:
-        if not allows(account.role, permission):
-            audit(
-                "permission_denied",
-                user_id=account.user_id,
-                role=account.role.value,
-                permission=permission.value,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Votre rôle ({account.role.label}) ne permet pas cette action.",
-            )
-        return account
-
-    return guard
 
 
 # -- signup and sign-in ----------------------------------------------------
@@ -443,7 +420,7 @@ def list_roles(_: CurrentAccount) -> list[dict[str, object]]:
 def invite_member(
     payload: InviteRequest,
     request: Request,
-    account: Annotated[Account, Depends(require(Permission.MANAGE_MEMBERS))],
+    account: CurrentAccount,
 ) -> dict[str, Any]:
     accounts = request.app.state.accounts
     try:
@@ -494,7 +471,7 @@ def invite_member(
 @router.get("/invitations")
 def list_invitations(
     request: Request,
-    account: Annotated[Account, Depends(require(Permission.MANAGE_MEMBERS))],
+    account: CurrentAccount,
 ) -> list[dict[str, Any]]:
     return [
         {
@@ -513,7 +490,7 @@ def list_invitations(
 def revoke_invitation(
     invitation_id: str,
     request: Request,
-    account: Annotated[Account, Depends(require(Permission.MANAGE_MEMBERS))],
+    account: CurrentAccount,
 ) -> Response:
     if not request.app.state.accounts.revoke_invitation(account.tenant_id, invitation_id):
         raise HTTPException(status_code=404, detail="Invitation introuvable.")
@@ -576,7 +553,7 @@ def set_member_role(
     user_id: str,
     payload: RoleRequest,
     request: Request,
-    account: Annotated[Account, Depends(require(Permission.MANAGE_MEMBERS))],
+    account: CurrentAccount,
 ) -> dict[str, Any]:
     if user_id == account.user_id:
         raise HTTPException(status_code=422, detail="Vous ne pouvez pas changer votre propre rôle.")
@@ -613,7 +590,7 @@ def set_member_status(
     user_id: str,
     payload: StatusRequest,
     request: Request,
-    account: Annotated[Account, Depends(require(Permission.MANAGE_MEMBERS))],
+    account: CurrentAccount,
 ) -> dict[str, Any]:
     if user_id == account.user_id:
         raise HTTPException(status_code=422, detail="Vous ne pouvez pas vous suspendre.")

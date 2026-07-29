@@ -607,6 +607,80 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         # A device belongs to the account that signed in on it.
         "CREATE INDEX idx_devices_user ON devices(user_id)",
     ),
+    # 20 — uniqueness that includes the tenant.
+    #
+    # Scoping every *read* is not sufficient on its own: a UNIQUE constraint
+    # that omits tenant_id is still shared across companies. These three
+    # tables keyed their rows on a date or a user alone, so the first company
+    # to generate a report on a given day made that day unavailable to every
+    # other company on the instance — a cross-tenant failure that no amount
+    # of correct WHERE clauses would have prevented.
+    #
+    # SQLite cannot alter a primary key, so each table is rebuilt in place.
+    # The daily reports are personal, hence (tenant, user, date).
+    (
+        """
+        CREATE TABLE briefings_v2 (
+            tenant_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            brief_date TEXT NOT NULL,
+            content TEXT NOT NULL,
+            emailed INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (tenant_id, user_id, brief_date)
+        )
+        """,
+        """
+        INSERT INTO briefings_v2 (tenant_id, user_id, brief_date, content, emailed, created_at)
+        SELECT tenant_id, user_id, brief_date, content, emailed, created_at FROM briefings
+        """,
+        "DROP TABLE briefings",
+        "ALTER TABLE briefings_v2 RENAME TO briefings",
+        """
+        CREATE TABLE evening_reports_v2 (
+            tenant_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            brief_date TEXT NOT NULL,
+            content TEXT NOT NULL,
+            emailed INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (tenant_id, user_id, brief_date)
+        )
+        """,
+        """
+        INSERT INTO evening_reports_v2
+            (tenant_id, user_id, brief_date, content, emailed, created_at)
+        SELECT tenant_id, user_id, brief_date, content, emailed, created_at FROM evening_reports
+        """,
+        "DROP TABLE evening_reports",
+        "ALTER TABLE evening_reports_v2 RENAME TO evening_reports",
+        """
+        CREATE TABLE report_preferences_v2 (
+            tenant_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            morning_sections TEXT NOT NULL DEFAULT '',
+            evening_sections TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (tenant_id, user_id)
+        )
+        """,
+        """
+        INSERT INTO report_preferences_v2
+            (tenant_id, user_id, morning_sections, evening_sections, updated_at)
+        SELECT tenant_id, user_id, morning_sections, evening_sections, updated_at
+        FROM report_preferences
+        """,
+        "DROP TABLE report_preferences",
+        "ALTER TABLE report_preferences_v2 RENAME TO report_preferences",
+        # Imported calendar events were unique on (source, external_id) alone.
+        # Two companies syncing the same shared calendar — or two providers
+        # that happen to mint the same id — would have collided, and the
+        # second sync would have failed rather than kept its own copy. This
+        # matters before any calendar connector is switched on, not after.
+        "DROP INDEX idx_events_external",
+        "CREATE UNIQUE INDEX idx_events_external "
+        "ON events(tenant_id, user_id, source, external_id)",
+    ),
 )
 
 

@@ -245,6 +245,72 @@ def test_the_unscoped_tables_are_the_ones_we_think_they_are(tmp_path):
     )
 
 
+def test_no_uniqueness_constraint_forgets_the_tenant(tmp_path):
+    """Scoped reads are not enough: a shared UNIQUE key is a shared resource.
+
+    ``briefings`` and ``evening_reports`` were keyed on the date alone, so the
+    first company to generate a report on a given day made that day
+    unavailable to every other company on the instance. No WHERE clause would
+    have caught it — the constraint itself was the leak.
+    """
+    database = tmp_path / "constraints.db"
+    storage.run_migrations(database)
+    offenders: list[str] = []
+    with storage.connect(database) as connection:
+        tables = [
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+        ]
+        for table in tables:
+            columns = connection.execute(f"PRAGMA table_info({table})").fetchall()
+            if not any(column[1] == "tenant_id" for column in columns):
+                continue
+            if table in IDENTITY_TABLES:
+                continue
+            # A single-column primary key that is not the tenant is shared.
+            primary_key = [column[1] for column in columns if column[5]]
+            if primary_key and "tenant_id" not in primary_key:
+                # Acceptable only when the key is a globally unique id: a
+                # UUID cannot collide between companies. A date or a name can.
+                sample = primary_key[0]
+                if not sample.endswith("_id"):
+                    offenders.append(f"{table}: PRIMARY KEY {primary_key}")
+            for index in connection.execute(f"PRAGMA index_list({table})").fetchall():
+                if not index[2]:  # not unique
+                    continue
+                indexed = [
+                    row[2]
+                    for row in connection.execute(f"PRAGMA index_info({index[1]})").fetchall()
+                ]
+                if "tenant_id" in indexed or all(
+                    name.endswith("_id") for name in indexed if name
+                ):
+                    continue
+                offenders.append(f"{table}: UNIQUE {indexed}")
+
+    assert not offenders, (
+        "these constraints are shared across companies, so one tenant can "
+        f"block or overwrite another: {offenders}. Add tenant_id to the key."
+    )
+
+
+def test_two_companies_can_produce_a_report_on_the_same_day(tmp_path):
+    """The regression the constraint above exists to prevent."""
+    from emefa.domain.briefings import BriefingRepository
+
+    database = tmp_path / "same_day.db"
+    jean = BriefingRepository(database, scope=JEAN)
+    amina = BriefingRepository(database, scope=AMINA)
+
+    jean.save("2026-08-03", {"headline": "Journée de Jean"})
+    amina.save("2026-08-03", {"headline": "Journée d'Amina"})
+
+    assert jean.get("2026-08-03").content["headline"] == "Journée de Jean"
+    assert amina.get("2026-08-03").content["headline"] == "Journée d'Amina"
+
+
 def test_identity_tables_are_only_reachable_by_unguessable_keys(tmp_path):
     """The exempt tables must not be *searchable* across tenants.
 

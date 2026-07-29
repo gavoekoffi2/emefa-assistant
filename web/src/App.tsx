@@ -1,6 +1,7 @@
 /* oxlint-disable react/only-export-components */
 import { useEffect, useRef, useState } from 'react'
 import { ConversationProvider } from '@elevenlabs/react'
+import { Auth, type Account } from './Auth'
 import { VoiceRoom } from './VoiceRoom'
 import './App.css'
 import './Holographic.css'
@@ -66,29 +67,6 @@ const graphLinks: GraphLink[] = [
 
 export function BrandMark() { return <span className="brand-mark" aria-hidden="true">E</span> }
 
-function Activation({ onActivated }: { onActivated: (session: Session) => void }) {
-  const [name, setName] = useState('Navigateur de Claude')
-  const [code, setCode] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault(); setBusy(true); setError('')
-    try {
-      onActivated(await api<Session>('/v1/web/session', { method: 'POST', body: JSON.stringify({ name: name.trim(), enrollment_code: code }) }))
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Activation impossible.') }
-    finally { setBusy(false) }
-  }
-  return (
-    <main className="activation-page">
-      <section className="activation-intro">
-        <div className="brand-row"><BrandMark /><strong>EMEFA</strong></div>
-        <div className="intro-copy"><span className="eyebrow">Assistante personnelle vocale</span><h1>Une conversation.<br />Pas un chatbot.</h1><p>Parlez naturellement à EMEFA. Elle vous écoute, répond à voix haute et garde le fil de la conversation.</p></div>
-        <div className="privacy-note"><span className="privacy-dot" /><div><strong>Accès privé</strong><small>Votre espace reste lié à ce navigateur.</small></div></div>
-      </section>
-      <section className="activation-panel" aria-labelledby="activation-title"><div className="activation-card"><BrandMark /><h2 id="activation-title">Activer EMEFA</h2><p>Entrez votre code privé pour ouvrir l’interface vocale.</p><form onSubmit={submit}><label htmlFor="browser-name">Nom de ce navigateur</label><input id="browser-name" value={name} onChange={(event) => setName(event.target.value)} required /><label htmlFor="activation-code">Code d’activation</label><input id="activation-code" type="password" value={code} onChange={(event) => setCode(event.target.value)} required placeholder="Votre code privé" />{error && <div className="form-error" role="alert">{error}</div>}<button className="primary-button" disabled={busy || !name.trim() || !code}>{busy ? 'Activation…' : 'Entrer dans EMEFA'}</button></form></div></section>
-    </main>
-  )
-}
 
 export function KnowledgeGalaxy({ activeNodes, voiceState }: { activeNodes: number[]; voiceState: VoiceState }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -146,12 +124,26 @@ export function VoiceOrb({ state, onClick }: { state: VoiceState; onClick: () =>
 }
 
 function App() {
-  const [session, setSession] = useState<Session | null>(null)
+  const [account, setAccount] = useState<Account | null>(null)
   const [checking, setChecking] = useState(true)
-  useEffect(() => { api<Session>('/v1/web/session').then(setSession).catch(() => setSession(null)).finally(() => setChecking(false)) }, [])
-  const logout = async () => { try { await api<void>('/v1/web/session', { method: 'DELETE' }) } finally { setSession(null) } }
+  // The session cookie is the only source of truth; ask the server who it
+  // belongs to rather than trusting anything kept in the browser.
+  useEffect(() => {
+    api<Account>('/v1/auth/me').then(setAccount).catch(() => setAccount(null)).finally(() => setChecking(false))
+  }, [])
+  const logout = async () => {
+    try { await api<void>('/v1/auth/signout', { method: 'POST' }) } finally { setAccount(null) }
+  }
   if (checking) return <div className="splash"><BrandMark /><span>EMEFA</span><i className="spinner" /></div>
-  return session ? <ConversationProvider><VoiceRoom session={session} onLogout={() => void logout()} /></ConversationProvider> : <Activation onActivated={setSession} />
+  if (!account) return <Auth onSignedIn={setAccount} />
+  return (
+    <ConversationProvider>
+      <VoiceRoom
+        session={{ device_id: account.user_id, name: account.display_name }}
+        onLogout={() => void logout()}
+      />
+    </ConversationProvider>
+  )
 }
 
 export default App

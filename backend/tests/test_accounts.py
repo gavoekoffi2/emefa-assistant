@@ -770,3 +770,19 @@ def test_signing_up_twice_on_one_address_leaves_no_orphan_company(tmp_path):
     with storage.connect(database) as connection:
         names = [row[0] for row in connection.execute("SELECT name FROM tenants")]
     assert "Alpha bis" not in names
+
+
+def test_the_signup_result_describes_the_row_that_was_written(tmp_path):
+    """The returned account must be read back, not assembled from intent.
+
+    An earlier version built it in Python and reported status "pending" while
+    the row said "active" — the API contradicting its own database.
+    """
+    accounts = AccountRepository(tmp_path / "readback.db")
+    created = accounts.sign_up(
+        email="jean@alpha.tg", password="motdepasse-solide",
+        display_name="Jean", company_name="Alpha",
+    )
+    stored = accounts.get(created.account.user_id)
+    assert stored == created.account
+    assert created.account.status == "active"

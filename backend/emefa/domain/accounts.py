@@ -254,15 +254,11 @@ class AccountRepository:
                 ttl=_VERIFICATION_TTL,
             )
 
-        account = Account(
-            user_id=user_id,
-            tenant_id=tenant_id,
-            email=address,
-            display_name=display_name.strip(),
-            role=Role.OWNER,
-            status="pending",
-            email_verified=False,
-        )
+        # Read back rather than describing what we think was written: the
+        # status here is the row's, so the API cannot report one thing while
+        # the database holds another.
+        account = self.get(user_id)
+        assert account is not None
         return SignUp(account=account, company_name=company, verification_token=token)
 
     # -- tokens ------------------------------------------------------------

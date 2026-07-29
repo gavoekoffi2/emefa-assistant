@@ -5,6 +5,7 @@ import logging
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
+from starlette.exceptions import HTTPException
 from fastapi.staticfiles import StaticFiles
 
 from emefa import __version__
@@ -77,6 +78,38 @@ from emefa.scheduler import brief_scheduler_loop, evening_scheduler_loop
 from emefa.skills import build_tool_shelf
 
 request_logger = logging.getLogger("emefa.request")
+
+
+class SinglePageApp(StaticFiles):
+    """Serve the built frontend, falling back to index.html for app routes.
+
+    The account emails link to client-side routes — /verifier-email,
+    /nouveau-mot-de-passe, /rejoindre — which exist only inside the bundle.
+    Plain StaticFiles answers 404 for them, which would silently break every
+    verification, reset and invitation link in production while the app looked
+    perfectly healthy to anyone testing from the home page.
+
+    Only genuinely missing *files* fall through: a request carrying a file
+    extension still 404s, so a mistyped asset is reported rather than served a
+    page of HTML with a 200.
+    """
+
+    async def get_response(self, path: str, scope):
+        try:
+            response = await super().get_response(path, scope)
+        except HTTPException as missing:
+            # Starlette raises rather than returns for a missing file.
+            if missing.status_code != 404 or not self._is_app_route(path):
+                raise
+            return await super().get_response("index.html", scope)
+        if response.status_code == 404 and self._is_app_route(path):
+            return await super().get_response("index.html", scope)
+        return response
+
+    @staticmethod
+    def _is_app_route(path: str) -> bool:
+        """A path with no file extension is a client-side route, not an asset."""
+        return "." not in path.rsplit("/", 1)[-1]
 
 
 class NotConfiguredBrain:
@@ -579,7 +612,7 @@ def create_app(
     if active_settings.web_dist_path is not None and active_settings.web_dist_path.is_dir():
         application.mount(
             "/",
-            StaticFiles(directory=str(active_settings.web_dist_path), html=True),
+            SinglePageApp(directory=str(active_settings.web_dist_path), html=True),
             name="web",
         )
     return application

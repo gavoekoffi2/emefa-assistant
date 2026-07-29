@@ -18,6 +18,8 @@ from emefa.domain.briefings import BriefingRepository
 from emefa.domain.crm import CrmRepository
 from emefa.domain.email import EmailProvider
 from emefa.domain.meetings import MeetingRepository
+from emefa.domain.memory.consolidation import ConsolidationPass
+from emefa.domain.proactive import ProactiveEngine
 from emefa.domain.profiles import ProfileRepository
 from emefa.domain.prospects import ProspectRepository
 from emefa.domain.reports import (
@@ -197,3 +199,48 @@ async def evening_scheduler_loop(
         except Exception:
             audit("evening_job_failed")
         await asyncio.sleep(60)
+
+
+async def consolidation_scheduler_loop(
+    hour: int,
+    consolidation: ConsolidationPass,
+) -> None:
+    """Run the bounded factual-memory consolidation pass once a night."""
+    while True:
+        await asyncio.sleep(seconds_until_hour(hour, datetime.now()))
+        try:
+            report = await consolidation.run()
+        except Exception:
+            audit("memory_consolidation_failed")
+        else:
+            audit(
+                "memory_consolidation_completed",
+                events_read=report.events_read,
+                created=report.created,
+                reinforced=report.reinforced,
+                superseded=report.superseded,
+                error=report.error,
+            )
+        await asyncio.sleep(60)
+
+
+async def proactive_scheduler_loop(
+    interval_minutes: int,
+    engine: ProactiveEngine,
+) -> None:
+    """Run bounded proactive collection passes on a fixed interval."""
+    delay = max(60.0, interval_minutes * 60.0)
+    while True:
+        await asyncio.sleep(delay)
+        try:
+            report = engine.run()
+        except Exception:
+            audit("proactive_pass_failed")
+        else:
+            audit(
+                "proactive_pass",
+                raised=report.raised,
+                duplicates=report.duplicates,
+                expired=report.expired,
+                skipped_budget=report.skipped_budget,
+            )

@@ -8,7 +8,7 @@ from pptx import Presentation
 
 from emefa.config import Settings
 from emefa.domain.documents import DocumentStore
-from emefa.domain.office import parse_content
+from emefa.domain.office.legacy import parse_content
 from emefa.main import create_app
 
 

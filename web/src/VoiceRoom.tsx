@@ -9,8 +9,11 @@ import { OnboardingCard } from './OnboardingCard'
 import { TasksPanel } from './TasksPanel'
 import { MemoryPanel } from './MemoryPanel'
 import { PipelinePanel } from './PipelinePanel'
+import { SkillsPanel } from './SkillsPanel'
+import { CommandCenterPanel, ProactiveInitiativesPanel } from './CommandCenterPanel'
+import { VisualCards, type VisualCardData } from './VisualCard'
+import { SecurityPanel } from './SecurityPanel'
 import { DeliverablesPanel } from './DeliverablesPanel'
-import { CommandCenterPanel } from './CommandCenterPanel'
 import type { DeliverableRecord, SourceFileRecord } from './DeliverablesPanel'
 import { useClonedVoice } from './useClonedVoice'
 import { useLiveKitVoice, type LiveKitTicket } from './useLiveKitVoice'
@@ -38,6 +41,7 @@ type AgentRun = {
   error?: string | null
   pending_action?: { name: string; arguments: Record<string, unknown> } | null
   action_id?: string | null
+  cards?: VisualCardData[]
 }
 type PendingApproval = { action_id: string; name: string; arguments: Record<string, unknown> }
 type DemoScenario = { id: string; title: string; prompt: string; status: 'live' | 'assisted' | 'preview'; note: string }
@@ -97,6 +101,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   const [state, setState] = useState<VoiceState>('idle')
   const [transcript, setTranscript] = useState('')
   const [answer, setAnswer] = useState('Bonsoir Claude. Je suis prête lorsque vous l’êtes.')
+  const [cards, setCards] = useState<VisualCardData[]>([])
   const [notice, setNotice] = useState('')
   const [history, setHistory] = useState<ConversationTurn[]>([])
   const [activeNodes, setActiveNodes] = useState<number[]>([0])
@@ -108,6 +113,9 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   const [tasksOpen, setTasksOpen] = useState(false)
   const [memoryOpen, setMemoryOpen] = useState(false)
   const [pipelineOpen, setPipelineOpen] = useState(false)
+  const [skillsOpen, setSkillsOpen] = useState(false)
+  const [commandOpen, setCommandOpen] = useState(false)
+  const [securityOpen, setSecurityOpen] = useState(false)
   const [deliverablesOpen, setDeliverablesOpen] = useState(false)
   const [commandCenterOpen, setCommandCenterOpen] = useState(false)
   const [approval, setApproval] = useState<PendingApproval | null>(null)
@@ -186,7 +194,8 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   const closeWorkspacePanels = () => {
     setConfigOpen(false); setTasksOpen(false); setMemoryOpen(false); setPipelineOpen(false)
     setDeliverablesOpen(false); setCommandCenterOpen(false); setDayOpen(false)
-    setClientsOpen(false); setMeetingsOpen(false)
+    setClientsOpen(false); setMeetingsOpen(false); setSkillsOpen(false)
+    setCommandOpen(false); setSecurityOpen(false)
   }
 
   // One opener for every work surface: exactly one panel is ever open, so
@@ -280,6 +289,9 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
     } else if (run.status === 'blocked') { text = 'Cette action est bloquée par la politique de sécurité d’EMEFA.'; outcome = 'error' }
     else { text = agentErrorCopy[run.error ?? ''] || 'La demande n’a pas abouti.'; outcome = 'error' }
     setAnswer(text)
+    // Cards belong to the reply that raised them: a turn with nothing to show
+    // clears the previous one rather than leaving a stale chart on screen.
+    setCards(run.cards ?? [])
     setHistory((current) => [...current.slice(-7), { id: crypto.randomUUID(), role: 'assistant', text }])
     settleState(outcome)
     refreshSystem()
@@ -680,7 +692,8 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
   const latestUser = useMemo(() => [...history].reverse().find((turn) => turn.role === 'user')?.text, [history])
 
   const anyPanelOpen = configOpen || tasksOpen || memoryOpen || pipelineOpen || deliverablesOpen
-    || commandCenterOpen || dayOpen || clientsOpen || meetingsOpen
+    || commandCenterOpen || dayOpen || clientsOpen || meetingsOpen || skillsOpen
+    || commandOpen || securityOpen
   const secondarySpaces = [
     { label: 'Livrables', accent: 'Documents', open: deliverablesOpen, count: deliverableCount, onOpen: openDeliverables },
     { label: 'Tâches', accent: 'Projets', open: tasksOpen, count: system?.open_task_count ?? 0, onOpen: openPanel(setTasksOpen) },
@@ -704,7 +717,15 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
           <button className={dayOpen ? 'nav-active' : ''} onClick={openPanel(setDayOpen)}>Journée</button>
           <button className={clientsOpen ? 'nav-active' : ''} onClick={openPanel(setClientsOpen)}>Clients</button>
           <button className={meetingsOpen ? 'nav-active' : ''} onClick={openPanel(setMeetingsOpen)}>Réunions</button>
+          <button className={commandCenterOpen ? 'nav-active' : ''} onClick={openCommandCenter}>Pilotage</button>
+          <button className={commandOpen ? 'nav-active' : ''} onClick={openPanel(setCommandOpen)}>Initiatives</button>
+          <button className={deliverablesOpen ? 'nav-active' : ''} onClick={openDeliverables}>Livrables{deliverableCount > 0 ? ` (${deliverableCount})` : ''}</button>
+          <button className={tasksOpen ? 'nav-active' : ''} onClick={openPanel(setTasksOpen)}>Tâches</button>
+          <button className={pipelineOpen ? 'nav-active' : ''} onClick={openPanel(setPipelineOpen)}>Pipeline</button>
+          <button className={memoryOpen ? 'nav-active' : ''} onClick={openPanel(setMemoryOpen)}>Mémoire</button>
+          <button className={skillsOpen ? 'nav-active' : ''} onClick={openPanel(setSkillsOpen)}>Compétences</button>
           <button className={configOpen ? 'nav-active' : ''} onClick={openPanel(setConfigOpen)}>Configuration</button>
+          <button className={securityOpen ? 'nav-active' : ''} onClick={openPanel(setSecurityOpen)}>Sécurité</button>
         </nav>
         <div className="header-right"><span className="system-clock"><b>SYS</b> EN LIGNE</span><span className="privacy-status"><i /> {window.location.protocol === 'https:' ? 'CHIFFREMENT ACTIF' : 'CONNEXION LOCALE'}</span><button className="profile-button" onClick={onLogout} title={`Déconnecter ${session.name}`}>CG</button></div>
       </header>
@@ -761,6 +782,7 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
             <span className="turn-speaker">EMEFA</span>
             <p>{answer}</p>
           </div>
+          <VisualCards cards={cards} />
         </section>
         <div className="voice-controls"><button className={live ? 'danger' : ''} onClick={() => void toggleLive()}><span className="mic-symbol">⌁</span>{live ? 'Terminer la conversation' : 'Initialiser la liaison vocale'}</button><small>{live ? 'Conversation continue · interrompez EMEFA à tout moment' : 'Activation unique · échange vocal naturel'}</small></div>
         <section className="screen-share-panel" hidden={!screenSharing} aria-live="polite" aria-label="Partage d’écran EMEFA">
@@ -834,6 +856,9 @@ export function VoiceRoom({ session, onLogout }: { session: Session; onLogout: (
       <TasksPanel open={tasksOpen} onClose={() => setTasksOpen(false)} onAskBrief={askBrief} />
       <MemoryPanel open={memoryOpen} onClose={() => setMemoryOpen(false)} />
       <PipelinePanel open={pipelineOpen} onClose={() => setPipelineOpen(false)} />
+      <SkillsPanel open={skillsOpen} onClose={() => setSkillsOpen(false)} />
+      <ProactiveInitiativesPanel open={commandOpen} onClose={() => setCommandOpen(false)} />
+      <SecurityPanel open={securityOpen} onClose={() => setSecurityOpen(false)} />
       <CommandCenterPanel open={commandCenterOpen} onClose={() => setCommandCenterOpen(false)} onApprovalCreated={refreshApprovals} />
       <DeliverablesPanel open={deliverablesOpen} refreshToken={deliverablesRefresh} onClose={() => setDeliverablesOpen(false)} onCounts={handleDeliverableCounts} />
     </div>

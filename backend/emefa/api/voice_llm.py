@@ -8,6 +8,7 @@ engine remains the fallback for tests or deployments without a provider proxy.
 from __future__ import annotations
 
 import hmac
+import asyncio
 import json
 from typing import Any
 
@@ -82,6 +83,35 @@ def _persist_voice_exchange(request: Request, payload: dict[str, Any], answer: s
         {"role": "assistant", "content": answer[:2_000], "channel": "voice"}
     )
     memory.extend(VOICE_CONVERSATION_ID, entries)
+    _schedule_voice_ingestion(request, last_user or "", answer)
+
+
+def _schedule_voice_ingestion(request: Request, user_text: str, answer: str) -> None:
+    """Feed finalized voice turns to factual memory without delaying audio."""
+    ingestor = getattr(request.app.state, "memory_ingestor", None)
+    if (
+        ingestor is None
+        or not getattr(request.app.state, "live_extraction", False)
+        or not user_text.strip()
+        or not answer.strip()
+    ):
+        return
+    transcript = f"[utilisateur, voix] {user_text.strip()}\n[EMEFA] {answer.strip()}"
+    tasks: set[asyncio.Task[Any]] = request.app.state.background_tasks
+    task = asyncio.create_task(ingestor.ingest(transcript, source="voice"))
+    tasks.add(task)
+
+    def finished(done: asyncio.Task[Any]) -> None:
+        tasks.discard(done)
+        try:
+            result = done.result()
+            audit("voice_memory_ingested", facts=getattr(result, "total", 0))
+        except Exception as error:
+            # Background memory must never surface as a streaming/response
+            # failure, but failures remain observable instead of disappearing.
+            audit("voice_memory_ingestion_failed", error=type(error).__name__)
+
+    task.add_done_callback(finished)
 
 
 def _collect_sse_answer(raw: bytes) -> str:
@@ -294,6 +324,8 @@ async def voice_chat_completions(request: Request):
         stream=bool(payload.get("stream")),
     )
     text = _spoken_reply(request, reply)
+    if reply.status == "completed":
+        _schedule_voice_ingestion(request, message, text)
     if payload.get("stream"):
         return StreamingResponse(_sse_stream(text), media_type="text/event-stream")
     return JSONResponse(_completion_json(text))

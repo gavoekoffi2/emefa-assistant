@@ -13,7 +13,7 @@ from emefa.domain import storage
 from emefa.domain.crm import CrmRepository
 from emefa.domain.documents import DocumentStore
 from emefa.domain.memories import MemoryRepository
-from emefa.domain.office import DocumentSpec, PythonOfficeProvider, parse_content
+from emefa.domain.office.legacy import DocumentSpec, PythonOfficeProvider, parse_content
 from emefa.domain.onboarding import OnboardingRepository
 from emefa.domain.profiles import ProfileRepository
 from emefa.domain.prospects import ProspectRepository

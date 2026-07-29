@@ -118,3 +118,14 @@ async def voice_check(request: Request) -> VoiceCheck:
         )
     audit("voice_check_succeeded", bytes_returned=len(audio))
     return VoiceCheck(ok=True, configured=True, voice_id=gateway.voice_id)
+@router.get("/budget")
+def budget_report(
+    request: Request,
+    device: Annotated[Device, Depends(current_device)],
+) -> dict:
+    """Today's token spend per scope.
+
+    `pricing_configured` is false until the owner enters their provider's real
+    prices; the UI must then show tokens rather than a confident 0,00 $.
+    """
+    return request.app.state.budget.report()

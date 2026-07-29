@@ -32,6 +32,16 @@ class Device:
     user_id: str = storage.DEFAULT_USER_ID
     tenant_id: str = storage.DEFAULT_TENANT_ID
 
+    @property
+    def account_id(self) -> str:
+        """Compatibility name used by WebAuthn.
+
+        SaaS identity is canonical in ``users.user_id``; second-factor rows
+        bind to that same opaque identifier rather than introducing a parallel
+        singleton-account identity.
+        """
+        return self.user_id
+
     def scope(self) -> "AccountScope":
         from emefa.domain.credentials import AccountScope
 
@@ -117,6 +127,9 @@ class DeviceRepository:
                 (user_id, keep_device_id),
             )
         return cursor.rowcount
+
+    def revoke_other_account_devices(self, account_id: str, keep_device_id: str) -> int:
+        return self.revoke_for_user(account_id, keep_device_id)
 
     def find_by_id(self, device_id: str) -> Device | None:
         with self._connect() as connection:

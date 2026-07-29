@@ -53,6 +53,9 @@ ROUTE_POLICY: dict[tuple[str, str], object] = {
     # -- getting in --------------------------------------------------------
     ("POST", "/v1/auth/signup"): Access.PUBLIC,
     ("POST", "/v1/auth/signin"): Access.PUBLIC,
+    ("GET", "/v1/auth/status"): Access.PUBLIC,
+    ("POST", "/v1/auth/register"): Access.PUBLIC,
+    ("POST", "/v1/auth/login"): Access.PUBLIC,
     ("POST", "/v1/auth/verify-email"): Access.PUBLIC,
     ("POST", "/v1/auth/password/forgot"): Access.PUBLIC,
     ("POST", "/v1/auth/password/reset"): Access.PUBLIC,
@@ -66,11 +69,19 @@ ROUTE_POLICY: dict[tuple[str, str], object] = {
     # -- one's own identity and sessions -----------------------------------
     ("GET", "/v1/auth/me"): Access.ACCOUNT,
     ("POST", "/v1/auth/signout"): Access.ACCOUNT,
+    ("POST", "/v1/auth/logout"): Access.ACCOUNT,
+    ("POST", "/v1/auth/password"): Access.ACCOUNT,
     ("POST", "/v1/auth/verify-email/resend"): Access.ACCOUNT,
     ("POST", "/v1/auth/password/change"): Access.ACCOUNT,
     ("GET", "/v1/auth/sessions"): Access.ACCOUNT,
     ("DELETE", "/v1/auth/sessions/{device_id}"): Access.ACCOUNT,
     ("GET", "/v1/auth/roles"): Access.ACCOUNT,
+    ("GET", "/v1/auth/second-factor"): Access.ACCOUNT,
+    ("POST", "/v1/auth/second-factor/register/options"): Access.ACCOUNT,
+    ("POST", "/v1/auth/second-factor/register"): Access.ACCOUNT,
+    ("POST", "/v1/auth/second-factor/verify/options"): Access.ACCOUNT,
+    ("POST", "/v1/auth/second-factor/verify"): Access.ACCOUNT,
+    ("DELETE", "/v1/auth/second-factor/{credential_id}"): Access.ACCOUNT,
     # Seeing who you work with is not privileged; changing them is.
     ("GET", "/v1/auth/members"): Access.ACCOUNT,
     ("GET", "/v1/devices/me"): Access.ACCOUNT,
@@ -78,6 +89,7 @@ ROUTE_POLICY: dict[tuple[str, str], object] = {
     ("GET", "/v1/web/session"): Access.ACCOUNT,
     ("DELETE", "/v1/web/session"): Access.ACCOUNT,
     ("GET", "/v1/system/status"): Access.ACCOUNT,
+    ("GET", "/v1/system/budget"): Access.ACCOUNT,
     # Returns the speech provider's own error message, which can quote account
     # details. The provider account belongs to whoever runs the instance, so
     # this is the owner's to see and nobody else's.
@@ -180,7 +192,35 @@ ROUTE_POLICY: dict[tuple[str, str], object] = {
     # not DELETE_BUSINESS, which is about the company's records.
     ("GET", "/v1/memories"): Permission.USE_ASSISTANT,
     ("GET", "/v1/memories/export"): Permission.USE_ASSISTANT,
+    ("GET", "/v1/memories/stats"): Permission.USE_ASSISTANT,
+    ("GET", "/v1/memories/search"): Permission.USE_ASSISTANT,
+    ("GET", "/v1/memories/{memory_id}/history"): Permission.USE_ASSISTANT,
+    ("PATCH", "/v1/memories/{memory_id}"): Permission.USE_ASSISTANT,
     ("DELETE", "/v1/memories/{memory_id}"): Permission.USE_ASSISTANT,
+    # -- executive knowledge graph -----------------------------------------
+    ("GET", "/v1/entities"): Permission.READ_BUSINESS,
+    ("GET", "/v1/entities/{entity_id}"): Permission.READ_BUSINESS,
+    ("GET", "/v1/entities/{entity_id}/story"): Permission.READ_BUSINESS,
+    ("POST", "/v1/entities"): Permission.WRITE_BUSINESS,
+    ("POST", "/v1/entities/{entity_id}/links"): Permission.WRITE_BUSINESS,
+    ("POST", "/v1/entities/{entity_id}/milestones"): Permission.WRITE_BUSINESS,
+    # -- durable missions ---------------------------------------------------
+    ("GET", "/v1/missions"): Permission.USE_ASSISTANT,
+    ("GET", "/v1/missions/{mission_id}"): Permission.USE_ASSISTANT,
+    ("POST", "/v1/missions"): Permission.USE_ASSISTANT,
+    ("POST", "/v1/missions/plan"): Permission.USE_ASSISTANT,
+    ("POST", "/v1/missions/{mission_id}/advance"): Permission.USE_ASSISTANT,
+    ("POST", "/v1/missions/{mission_id}/steps/{step_id}/approve"): Permission.APPROVE_ACTIONS,
+    ("POST", "/v1/missions/{mission_id}/cancel"): Permission.USE_ASSISTANT,
+    # -- proactive intelligence and skills ---------------------------------
+    ("GET", "/v1/initiatives"): Permission.READ_BUSINESS,
+    ("GET", "/v1/initiatives/curator"): Permission.READ_BUSINESS,
+    ("POST", "/v1/initiatives/refresh"): Permission.WRITE_BUSINESS,
+    ("POST", "/v1/initiatives/{initiative_id}/approve"): Permission.APPROVE_ACTIONS,
+    ("POST", "/v1/initiatives/{initiative_id}/dismiss"): Permission.WRITE_BUSINESS,
+    ("GET", "/v1/skills"): Permission.READ_BUSINESS,
+    ("POST", "/v1/skills/{name}/enable"): Permission.MANAGE_TENANT,
+    ("POST", "/v1/skills/{name}/disable"): Permission.MANAGE_TENANT,
     ("GET", "/v1/connections"): Permission.MANAGE_OWN_CONNECTIONS,
     ("GET", "/v1/connections/mailbox"): Permission.MANAGE_OWN_CONNECTIONS,
     ("POST", "/v1/connections"): Permission.MANAGE_OWN_CONNECTIONS,

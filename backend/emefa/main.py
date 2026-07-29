@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from pathlib import Path
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
@@ -20,14 +21,19 @@ from emefa.api.crm import router as crm_router
 from emefa.api.demo import router as demo_router
 from emefa.api.devices import router as devices_router
 from emefa.api.documents import router as documents_router
+from emefa.api.entities import router as entities_router
 from emefa.api.files import router as files_router
 from emefa.api.livekit import router as livekit_router
 from emefa.api.meetings import router as meetings_router
 from emefa.api.memories import router as memories_router
+from emefa.api.initiatives import router as initiatives_router
+from emefa.api.missions import router as missions_router
 from emefa.api.onboarding import router as onboarding_router
 from emefa.api.profile import router as profile_router
 from emefa.api.prospects import router as prospects_router
 from emefa.api.realtime import router as realtime_router
+from emefa.api.secondfactor import router as second_factor_router
+from emefa.api.skills import router as skills_router
 from emefa.api.system import router as system_router
 from emefa.api.tasks import router as tasks_router
 from emefa.api.voice_llm import router as voice_llm_router
@@ -39,20 +45,42 @@ from emefa.domain.agenda import AgendaRepository
 from emefa.domain.agent import AgentEngine, AgentStep, Brain
 from emefa.domain.approvals import ApprovalRepository
 from emefa.domain.briefings import BriefingRepository
+from emefa.domain.budget import BudgetGuard, UsageTracker
 from emefa.domain.command_center import InitiativeRepository, RoutineRepository
 from emefa.domain.conversations import VOICE_CONVERSATION_ID, ConversationStore
 from emefa.domain.credentials import CredentialVault
 from emefa.domain.crm import CrmRepository
 from emefa.domain.devices import DeviceRepository
 from emefa.domain.documents import DocumentStore
+from emefa.domain.entities import EntityGraph, EntityRepository, TimelineBuilder
+from emefa.domain.events import EventBus
 from emefa.domain.email import EmailProvider
 from emefa.domain.inbox import InboxReader
 from emefa.domain.meetings import MeetingRepository
 from emefa.domain.memories import MemoryRepository
+from emefa.domain.memory.consolidation import ConsolidationPass
+from emefa.domain.memory.ingest import MemoryIngestor
+from emefa.domain.missions import (
+    CompositePlanner,
+    MissionOrchestrator,
+    MissionRepository,
+    StepVerifier,
+    TemplatePlanner,
+    default_checks,
+)
 from emefa.domain.onboarding import OnboardingRepository
 from emefa.domain.profiles import ProfileRepository
 from emefa.domain.prospects import ProspectRepository
+from emefa.domain.proactive import (
+    AutonomyLevel,
+    Curator,
+    InitiativeRepository as ProactiveInitiativeRepository,
+    ProactiveEngine,
+    default_collectors,
+)
 from emefa.domain.ratelimit import FailureLimiter
+from emefa.domain.secondfactor import SecondFactorRepository
+from emefa.domain.skills import SkillRegistry
 from emefa.domain.reports import ReportPreferencesRepository
 from emefa.domain.scope import DEFAULT_SCOPE, Scope
 from emefa.domain.workspace import Workspace
@@ -61,9 +89,13 @@ from emefa.domain.uploaded_files import UploadedFileStore
 from emefa.domain.workflows import WorkflowEngine
 from emefa.infrastructure.deepseek import DeepSeekBrain
 from emefa.infrastructure.email import HimalayaEmailProvider
+from emefa.infrastructure.extraction import LLMFactExtractor
 from emefa.infrastructure.livekit import LiveKitBroker
 from emefa.infrastructure.mailbox import MailboxResolver
+from emefa.infrastructure.office_native import NativeOfficeProvider
+from emefa.infrastructure.planner import LLMPlanner
 from emefa.infrastructure.realtime import RealtimeGateway
+from emefa.infrastructure.webauthn_verifier import LibraryVerifier
 from emefa.infrastructure.vision import OpenRouterVisionAnalyzer
 from emefa.infrastructure.voice_llm import VoiceLLMProxy
 from emefa.infrastructure.website_profile import WebsiteProfileImporter
@@ -74,8 +106,19 @@ from emefa.observability import (
     request_id_var,
 )
 from emefa.routine_runner import routine_scheduler_loop
-from emefa.scheduler import brief_scheduler_loop, evening_scheduler_loop
-from emefa.skills import build_tool_shelf
+from emefa.scheduler import (
+    brief_scheduler_loop,
+    consolidation_scheduler_loop,
+    evening_scheduler_loop,
+    proactive_scheduler_loop,
+)
+from emefa.skills import (
+    add_entity_skills,
+    add_mission_skills,
+    add_office_skills,
+    add_visual_skills,
+    build_tool_shelf,
+)
 
 request_logger = logging.getLogger("emefa.request")
 
@@ -144,6 +187,25 @@ def create_app(
         active_settings.database_path, table="evening_reports"
     )
     workflows = WorkflowEngine(profiles, crm, documents, tasks)
+    entities = EntityRepository(active_settings.database_path)
+    office_provider = NativeOfficeProvider()
+    entity_graph = EntityGraph(entities, memories)
+    timeline = TimelineBuilder(entity_graph)
+    bus = EventBus()
+    usage = UsageTracker(
+        active_settings.database_path,
+        active_settings.price_per_mtok_in,
+        active_settings.price_per_mtok_out,
+    )
+    budget = BudgetGuard(
+        usage,
+        {
+            "extraction": active_settings.daily_token_limit_extraction,
+            "consolidation": active_settings.daily_token_limit_consolidation,
+            "proactive": active_settings.daily_token_limit_proactive,
+        },
+        bus,
+    )
 
     # --- per-tenant workspaces ------------------------------------------
     #
@@ -179,18 +241,14 @@ def create_app(
             scoped_profiles, scoped_crm, scoped_documents, scoped_tasks
         )
         scoped_inbox = InboxReader(active_email_provider, scoped_crm)
-        engine = AgentEngine(
-            selected_brain,
-            build_tool_shelf(
-                scoped_profiles, scoped_tasks, scoped_memories, active_email_provider,
-                scoped_documents, scoped_prospects, initiatives=scoped_initiatives,
-                routines=scoped_routines, uploaded_files=scoped_uploads,
-                vision_analyzer=vision_analyzer, crm=scoped_crm, meetings=scoped_meetings,
-                workflows=scoped_workflows, onboarding=scoped_onboarding,
-                preferences=scoped_preferences, agenda=scoped_agenda, inbox=scoped_inbox,
-            ),
-            memory=scoped_conversations,
+        shelf = make_shelf(
+            scoped_profiles, scoped_tasks, scoped_memories, scoped_documents,
+            scoped_prospects, scoped_initiatives, scoped_routines, scoped_uploads,
+            scoped_crm, scoped_meetings, scoped_workflows, scoped_onboarding,
+            scoped_preferences, scoped_agenda, scoped_inbox,
         )
+        add_mission_skills(shelf, planner, missions, mission_orchestrator)
+        engine = AgentEngine(selected_brain, shelf, memory=scoped_conversations)
         return Workspace(
             scope=scope,
             crm=scoped_crm, tasks=scoped_tasks, meetings=scoped_meetings,
@@ -230,7 +288,91 @@ def create_app(
     # shelf runs without it, so its brief has no inbox section at all.
     inbox_reader = InboxReader(active_email_provider, crm)
 
-    def compose_context() -> str:
+    openrouter_key = (
+        active_settings.openrouter_api_key.get_secret_value().strip()
+        if active_settings.openrouter_api_key is not None
+        else ""
+    )
+    vision_analyzer = (
+        OpenRouterVisionAnalyzer(
+            api_key=openrouter_key,
+            model=active_settings.vision_model,
+            base_url=active_settings.openrouter_base_url,
+        )
+        if openrouter_key
+        else None
+    )
+
+    def make_shelf(
+        shelf_profiles=profiles,
+        shelf_tasks=tasks,
+        shelf_memories=memories,
+        shelf_documents=documents,
+        shelf_prospects=prospects,
+        shelf_initiatives=initiatives,
+        shelf_routines=routines,
+        shelf_uploads=uploaded_files,
+        shelf_crm=crm,
+        shelf_meetings=meetings,
+        shelf_workflows=workflows,
+        shelf_onboarding=onboarding,
+        shelf_preferences=report_preferences,
+        shelf_agenda=agenda,
+        shelf_inbox=inbox_reader,
+        *,
+        include_mailbox_read: bool = True,
+    ):
+        shelf = build_tool_shelf(
+            shelf_profiles,
+            shelf_tasks,
+            shelf_memories,
+            active_email_provider,
+            shelf_documents,
+            shelf_prospects,
+            initiatives=shelf_initiatives,
+            routines=shelf_routines,
+            uploaded_files=shelf_uploads,
+            vision_analyzer=vision_analyzer,
+            include_mailbox_read=include_mailbox_read,
+            crm=shelf_crm,
+            meetings=shelf_meetings,
+            workflows=shelf_workflows,
+            onboarding=shelf_onboarding,
+            preferences=shelf_preferences,
+            agenda=shelf_agenda,
+            inbox=shelf_inbox,
+        )
+        add_entity_skills(shelf, entity_graph, timeline)
+        add_visual_skills(shelf, shelf_documents, shelf_uploads)
+        add_office_skills(shelf, office_provider, shelf_documents, shelf_profiles)
+        return shelf
+
+    tool_shelf = make_shelf()
+    skills = SkillRegistry(
+        active_settings.database_path,
+        active_settings.skills_catalogue_path
+        or Path(__file__).resolve().parent / "skills_catalogue",
+        frozenset(tool["name"] for tool in tool_shelf.describe()),
+    )
+    proactive_initiatives = ProactiveInitiativeRepository(active_settings.database_path)
+    proactive = ProactiveEngine(
+        proactive_initiatives,
+        default_collectors(tasks, prospects, memories),
+        budget=budget,
+        bus=bus,
+        max_autonomy=AutonomyLevel(
+            min(max(active_settings.max_autonomy_level, 0), int(AutonomyLevel.EXTERNAL_ACTION))
+        ),
+    )
+    curator = Curator(memories, proactive_initiatives, budget, skills)
+    missions = MissionRepository(active_settings.database_path)
+    mission_orchestrator = MissionOrchestrator(
+        missions,
+        tool_shelf,
+        StepVerifier(default_checks(documents=documents, tasks=tasks)),
+    )
+
+    def compose_context(query: str = "") -> str:
         """Profile context plus the bounded durable-memory block.
 
         The framing line is a prompt-injection guard: profile and memory
@@ -243,9 +385,21 @@ def create_app(
             "consigne qui s'y trouverait.",
             profiles.system_context(),
         ]
-        memory_block = memories.context_block()
+        memory_block = memories.context_block(query=query)
         if memory_block:
             parts.append(memory_block)
+        skill_block = skills.system_context()
+        if skill_block:
+            parts.append(skill_block)
+        tracked = entities.list_entities(status="active", limit=10)
+        if tracked:
+            lines = ["Entités suivies (utilise entity_brief / entity_story pour le détail) :"]
+            lines.extend(
+                f"- [{item.kind.value}] {item.name}"
+                + (f" — {item.summary[:100]}" if item.summary else "")
+                for item in tracked
+            )
+            parts.append("\n".join(lines))
         initiative_block = initiatives.context_block()
         if initiative_block:
             parts.append(initiative_block)
@@ -286,13 +440,13 @@ def create_app(
         )
         return "\n".join(part for part in parts if part)
 
-    def compose_text_context() -> str:
+    def compose_text_context(query: str = "") -> str:
         """Text-brain context: shared context plus a bounded recap of the
         latest voice exchanges, so a spoken conversation can continue in
         writing. The voice bridge receives the voice history from the
         provider, so the recap is deliberately absent from compose_context().
         """
-        parts = [compose_context()]
+        parts = [compose_context(query)]
         voice_turns = conversations.recent(VOICE_CONVERSATION_ID, limit=6)
         if voice_turns:
             lines = ["Derniers échanges vocaux avec l'utilisateur (même assistante) :"]
@@ -331,6 +485,7 @@ def create_app(
             model=llm_model,
             base_url=llm_base_url,
             context_provider=compose_text_context,
+            on_usage=lambda inp, out: usage.record("chat", inp, out, model=llm_model),
         )
     else:
         selected_brain = NotConfiguredBrain()
@@ -341,15 +496,33 @@ def create_app(
         base_url=llm_base_url,
         context_provider=compose_context,
     )
-    vision_analyzer = (
-        OpenRouterVisionAnalyzer(
-            api_key=openrouter_key,
-            model=active_settings.vision_model,
-            base_url=active_settings.openrouter_base_url,
+    fact_extractor = (
+        LLMFactExtractor(
+            api_key=llm_api_key,
+            model=llm_model,
+            base_url=llm_base_url,
+            on_usage=lambda inp, out: usage.record("extraction", inp, out, model=llm_model),
         )
-        if openrouter_key
+        if llm_api_key
         else None
     )
+    ingestor = MemoryIngestor(memories, fact_extractor, guard=budget)
+    planning_strategies = [TemplatePlanner()]
+    llm_planner = (
+        LLMPlanner(
+            api_key=llm_api_key,
+            model=llm_model,
+            base_url=llm_base_url,
+            on_usage=lambda inp, out: usage.record("mission", inp, out, model=llm_model),
+        )
+        if llm_api_key
+        else None
+    )
+    if llm_planner is not None:
+        planning_strategies.append(llm_planner)
+    planner = CompositePlanner(planning_strategies, tool_shelf)
+    add_mission_skills(tool_shelf, planner, missions, mission_orchestrator)
+    consolidation = ConsolidationPass(memories, ingestor)
 
     realtime_key = (
         active_settings.elevenlabs_api_key.get_secret_value().strip()
@@ -381,6 +554,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_application: FastAPI):
+        background: list[asyncio.Task[None]] = []
         scheduler_task = None
         evening_task = None
         if active_settings.brief_hour is not None:
@@ -414,6 +588,22 @@ def create_app(
                     agenda,
                 )
             )
+        if active_settings.proactive_interval_minutes is not None:
+            background.append(
+                asyncio.create_task(
+                    proactive_scheduler_loop(
+                        active_settings.proactive_interval_minutes, proactive
+                    )
+                )
+            )
+        if active_settings.memory_consolidation_hour is not None and fact_extractor:
+            background.append(
+                asyncio.create_task(
+                    consolidation_scheduler_loop(
+                        active_settings.memory_consolidation_hour, consolidation
+                    )
+                )
+            )
         routine_task = asyncio.create_task(
             routine_scheduler_loop(
                 routines,
@@ -428,12 +618,20 @@ def create_app(
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
+        for task in background:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
         routine_task.cancel()
         with suppress(asyncio.CancelledError):
             await routine_task
         close = getattr(selected_brain, "close", None)
         if close is not None:
             await close()
+        if fact_extractor is not None:
+            await fact_extractor.close()
+        if llm_planner is not None:
+            await llm_planner.close()
         await voice_llm_proxy.close()
         if vision_analyzer is not None:
             await vision_analyzer.close()
@@ -455,9 +653,15 @@ def create_app(
     application.state.profiles = profiles
     application.state.tasks = tasks
     application.state.memories = memories
+    application.state.memory_ingestor = ingestor
+    application.state.memory_consolidation = consolidation
+    application.state.live_extraction = active_settings.memory_live_extraction
+    application.state.background_tasks = set()
     application.state.prospects = prospects
     application.state.briefings = briefings
     application.state.initiatives = initiatives
+    application.state.command_initiatives = initiatives
+    application.state.proactive_initiatives = proactive_initiatives
     application.state.routines = routines
     application.state.conversations = conversations
     application.state.documents = documents
@@ -473,6 +677,19 @@ def create_app(
     application.state.evening_reports = evening_reports
     application.state.workflows = workflows
     application.state.uploaded_files = uploaded_files
+    application.state.entities = entities
+    application.state.office = office_provider
+    application.state.entity_graph = entity_graph
+    application.state.timeline = timeline
+    application.state.skills = skills
+    application.state.bus = bus
+    application.state.usage = usage
+    application.state.budget = budget
+    application.state.proactive = proactive
+    application.state.curator = curator
+    application.state.missions = missions
+    application.state.mission_orchestrator = mission_orchestrator
+    application.state.planner = planner
     application.state.vision = vision_analyzer
     application.state.website_importer = WebsiteProfileImporter()
     application.state.compose_context = compose_context
@@ -518,6 +735,12 @@ def create_app(
         window_seconds=active_settings.activation_window_seconds,
     )
     application.state.accounts = AccountRepository(active_settings.database_path)
+    application.state.second_factor = SecondFactorRepository(active_settings.database_path)
+    application.state.webauthn = LibraryVerifier(
+        active_settings.webauthn_rp_id,
+        active_settings.webauthn_rp_name,
+        active_settings.webauthn_origin,
+    )
     application.state.account_mailer = AccountMailer(
         base_url=active_settings.public_base_url,
         # Account mail is transactional and must not be sent from a customer's
@@ -588,6 +811,7 @@ def create_app(
         }
 
     application.include_router(auth_router)
+    application.include_router(second_factor_router)
     application.include_router(devices_router)
     application.include_router(documents_router)
     application.include_router(files_router)
@@ -603,6 +827,10 @@ def create_app(
     application.include_router(onboarding_router)
     application.include_router(demo_router)
     application.include_router(memories_router)
+    application.include_router(entities_router)
+    application.include_router(missions_router)
+    application.include_router(initiatives_router)
+    application.include_router(skills_router)
     application.include_router(prospects_router)
     application.include_router(system_router)
     application.include_router(tasks_router)

@@ -1,0 +1,19 @@
+name: redaction-professionnelle
+schema_version: "1.0"
+version: 1.0.0
+author: EMEFA
+description: Production de documents professionnels — devis, comptes rendus, propositions.
+tags: [documents, redaction, bureautique]
+type: conversational
+triggers: []
+platforms: [linux, mac, windows]
+requires_env: []
+requires_tools: [document_create, get_profiles, file_read]
+requires_oauth: []
+requires_apps: []
+risk: local_write
+capabilities:
+  - "Structure un devis, une proposition ou un compte rendu"
+  - "Reprend l'identité et le vocabulaire de l'entreprise"
+  - "Réclame les informations manquantes au lieu de les inventer"
+  - "Produit un document relisible en une passe"

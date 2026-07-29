@@ -82,9 +82,9 @@ def snapshot(
     device: Annotated[Device, Depends(current_device)],
 ) -> dict[str, Any]:
     state = request.app.state
-    initiatives = state.initiatives.list(include_closed=False)
+    initiatives = state.command_initiatives.list(include_closed=False)
     initiative_counts = {status: 0 for status in INITIATIVE_STATUSES}
-    for item in state.initiatives.list():
+    for item in state.command_initiatives.list():
         initiative_counts[item.status] += 1
     pending = [
         *state.approvals.pending_for(device.device_id),

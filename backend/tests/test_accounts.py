@@ -89,6 +89,54 @@ async def _signup(client, email="jean@alpha.tg", company="Entreprise Alpha", nam
     )
 
 
+@pytest.mark.asyncio
+async def test_historical_auth_contracts_adapt_to_the_canonical_user(app, client):
+    app.state.settings.enrollment_code = "CODE-SECRET"
+    async with client:
+        status = await client.get("/v1/auth/status")
+        assert status.status_code == 200
+        assert status.json() == {
+            "registered": False,
+            "authenticated": False,
+            "account": None,
+        }
+
+        registered = await client.post(
+            "/v1/auth/register",
+            json={
+                "email": "owner@example.test",
+                "password": "correct-horse-battery",
+                "display_name": "Owner",
+                "enrollment_code": "CODE-SECRET",
+            },
+        )
+        assert registered.status_code == 201, registered.text
+        user_id = registered.json()["account_id"]
+        assert user_id == app.state.accounts.by_email("owner@example.test").user_id
+        assert (await client.get("/v1/auth/me")).json()["account_id"] == user_id
+
+        assert (await client.post("/v1/auth/logout")).status_code == 204
+        logged_in = await client.post(
+            "/v1/auth/login",
+            json={
+                "email": "owner@example.test",
+                "password": "correct-horse-battery",
+            },
+        )
+        assert logged_in.status_code == 200
+        changed = await client.post(
+            "/v1/auth/password",
+            json={
+                "current_password": "correct-horse-battery",
+                "new_password": "replacement-password",
+            },
+        )
+        assert changed.status_code == 204
+        assert app.state.accounts.authenticate(
+            "owner@example.test", "replacement-password"
+        ).user_id == user_id
+
+
 # -- password hashing ------------------------------------------------------
 
 

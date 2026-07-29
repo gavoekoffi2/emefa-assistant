@@ -3,6 +3,7 @@ import pytest
 import pytest_asyncio
 
 from emefa.config import Settings
+from emefa.domain import storage
 from emefa.domain.devices import DeviceRepository
 from emefa.domain.ratelimit import FailureLimiter
 from emefa.main import create_app
@@ -99,9 +100,46 @@ def test_token_stays_valid_without_max_age(tmp_path):
 
 def test_schema_migrations_are_tracked(tmp_path):
     repository = DeviceRepository(tmp_path / "migrated.db")
-    assert repository.schema_version() == 20
+    assert repository.schema_version() == len(storage.MIGRATIONS)
     again = DeviceRepository(tmp_path / "migrated.db")
-    assert again.schema_version() == 20
+    assert again.schema_version() == len(storage.MIGRATIONS)
+
+
+def test_live_v10_command_center_database_upgrades_without_data_loss(tmp_path):
+    """Production already has command-center migration 10 applied."""
+    from emefa.domain import storage
+
+    database = tmp_path / "live-v10.db"
+    with storage.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE schema_migrations "
+            "(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+        for version, statements in enumerate(storage.MIGRATIONS[:10], start=1):
+            for statement in statements:
+                connection.execute(statement)
+            connection.execute(
+                "INSERT INTO schema_migrations (version) VALUES (?)", (version,)
+            )
+        connection.execute(
+            "INSERT INTO initiatives (initiative_id, title) VALUES (?, ?)",
+            ("ini_live", "Initiative command center existante"),
+        )
+
+    storage.run_migrations(database)
+
+    assert storage.schema_version(database) == len(storage.MIGRATIONS)
+    with storage.connect(database) as connection:
+        assert connection.execute(
+            "SELECT title FROM initiatives WHERE initiative_id = 'ini_live'"
+        ).fetchone()[0] == "Initiative command center existante"
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+    assert {"initiatives", "proactive_initiatives", "memory_events", "missions"} <= tables
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,7 @@ import httpx
 import pytest
 
 from emefa.config import Settings
+from emefa.domain import storage
 from emefa.domain.agent import AgentStep
 from emefa.domain.tasks import TaskRepository
 from emefa.main import create_app
@@ -38,7 +39,7 @@ async def test_system_status_reports_real_state(tmp_path):
     assert body["voice_transport"] == "elevenlabs"
     assert body["livekit_configured"] is False
     assert body["open_task_count"] == 1
-    assert body["schema_version"] == 20
+    assert body["schema_version"] == len(storage.MIGRATIONS)
     skill_names = {skill["name"] for skill in body["skills"]}
     assert {
         "get_profiles",

@@ -13,6 +13,7 @@ Two invariants hold across every route below.
   handed back a verification token would make verification meaningless.
 """
 
+import secrets
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -93,6 +94,7 @@ class StatusRequest(BaseModel):
 
 
 class AccountResponse(BaseModel):
+    account_id: str
     user_id: str
     tenant_id: str
     email: str
@@ -108,6 +110,7 @@ class AccountResponse(BaseModel):
 def _account_response(account: Account, company_name: str) -> AccountResponse:
     described = describe(account.role)
     return AccountResponse(
+        account_id=account.account_id,
         user_id=account.user_id,
         tenant_id=account.tenant_id,
         email=account.email,
@@ -155,6 +158,162 @@ def current_account(
 
 CurrentAccount = Annotated[Account, Depends(current_account)]
 
+
+class CompatibilityRegistrationRequest(BaseModel):
+    email: str = Email
+    password: str = Password
+    display_name: str = Field(default="", max_length=120)
+    device_name: str = Field(default="Navigateur", min_length=1, max_length=120)
+    enrollment_code: str = Field(min_length=1, max_length=256)
+
+
+class CompatibilityLoginRequest(BaseModel):
+    email: str = Email
+    password: str = Field(min_length=1, max_length=256)
+    device_name: str = Field(default="Navigateur", min_length=1, max_length=120)
+
+
+class CompatibilityAccountResponse(BaseModel):
+    account_id: str
+    email: str
+    display_name: str
+    role: str
+
+
+class CompatibilityStatusResponse(BaseModel):
+    registered: bool
+    authenticated: bool
+    account: CompatibilityAccountResponse | None = None
+
+
+def _compatibility_response(account: Account) -> CompatibilityAccountResponse:
+    return CompatibilityAccountResponse(
+        account_id=account.account_id,
+        email=account.email,
+        display_name=account.display_name,
+        role=account.role.value,
+    )
+
+
+def _open_compatibility_session(
+    request: Request, response: Response, account: Account, device_name: str
+) -> Device:
+    device, token = request.app.state.devices.enroll(device_name, account.user_id)
+    _set_session_cookie(request, response, token)
+    return device
+
+
+@router.get("/status", response_model=CompatibilityStatusResponse)
+def compatibility_status(request: Request) -> CompatibilityStatusResponse:
+    accounts = request.app.state.accounts
+    registered = accounts.count() > 0
+    token = request.cookies.get(SESSION_COOKIE)
+    if not token:
+        return CompatibilityStatusResponse(registered=registered, authenticated=False)
+    device = request.app.state.devices.authenticate(
+        token, max_age_seconds=request.app.state.settings.session_max_age_seconds
+    )
+    if device is None:
+        return CompatibilityStatusResponse(registered=registered, authenticated=False)
+    account = accounts.get(device.user_id)
+    if account is None or not account.is_active:
+        return CompatibilityStatusResponse(registered=registered, authenticated=False)
+    return CompatibilityStatusResponse(
+        registered=registered,
+        authenticated=True,
+        account=_compatibility_response(account),
+    )
+
+
+@router.post("/register", response_model=CompatibilityAccountResponse, status_code=201)
+def compatibility_register(
+    payload: CompatibilityRegistrationRequest,
+    request: Request,
+    response: Response,
+    source: Annotated[str, Depends(enrollment_guard)],
+) -> CompatibilityAccountResponse:
+    settings = request.app.state.settings
+    accounts = request.app.state.accounts
+    if accounts.count() > 0:
+        raise HTTPException(status_code=409, detail="An owner account already exists")
+    if settings.enrollment_code is None:
+        raise HTTPException(status_code=503, detail="Registration is not configured")
+    if not secrets.compare_digest(payload.enrollment_code, settings.enrollment_code):
+        request.app.state.activation_limiter.record_failure(source)
+        audit("registration_rejected", source=source)
+        raise HTTPException(status_code=403, detail="Invalid activation code")
+    try:
+        account = accounts.create_first_owner(
+            payload.email, payload.password, payload.display_name
+        )
+    except AccountError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    device = _open_compatibility_session(request, response, account, payload.device_name)
+    audit(
+        "owner_account_created",
+        account_id=account.account_id,
+        device_id=device.device_id,
+        source=source,
+    )
+    return _compatibility_response(account)
+
+
+@router.post("/login", response_model=CompatibilityAccountResponse)
+def compatibility_login(
+    payload: CompatibilityLoginRequest,
+    request: Request,
+    response: Response,
+    source: Annotated[str, Depends(enrollment_guard)],
+) -> CompatibilityAccountResponse:
+    account = request.app.state.accounts.authenticate(payload.email, payload.password)
+    if account is None:
+        request.app.state.activation_limiter.record_failure(source)
+        audit("login_rejected", source=source)
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    if request.app.state.devices.count(account.user_id) >= request.app.state.settings.max_devices:
+        raise HTTPException(status_code=409, detail="Browser limit reached")
+    device = _open_compatibility_session(request, response, account, payload.device_name)
+    audit("login_succeeded", account_id=account.account_id, device_id=device.device_id)
+    return _compatibility_response(account)
+
+
+@router.post("/logout", status_code=204)
+def compatibility_logout(
+    request: Request, device: Annotated[Device, Depends(current_device)]
+) -> Response:
+    request.app.state.devices.revoke(device.device_id)
+    audit("logout", device_id=device.device_id, account_id=device.account_id)
+    result = Response(status_code=204)
+    result.delete_cookie(
+        key=SESSION_COOKIE,
+        path="/",
+        secure=request.app.state.settings.cookie_secure,
+        httponly=True,
+        samesite="strict",
+    )
+    return result
+
+
+@router.post("/password", status_code=204)
+def compatibility_change_password(
+    payload: ChangePasswordRequest,
+    request: Request,
+    account: CurrentAccount,
+    device: Annotated[Device, Depends(current_device)],
+) -> Response:
+    try:
+        changed = request.app.state.accounts.change_password(
+            account.user_id, payload.current_password, payload.new_password
+        )
+    except AccountError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    if not changed:
+        raise HTTPException(status_code=403, detail="current_password_invalid")
+    request.app.state.devices.revoke_for_user(
+        account.user_id, keep_device_id=device.device_id
+    )
+    audit("password_changed", account_id=account.account_id)
+    return Response(status_code=204)
 
 
 # -- signup and sign-in ----------------------------------------------------

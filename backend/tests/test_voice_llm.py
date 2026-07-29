@@ -146,7 +146,7 @@ async def test_streamed_voice_answer_relays_provider_sse_and_client_tools(tmp_pa
         api_key="provider-secret",
         model="deepseek-chat",
         base_url="https://provider.test",
-        context_provider=lambda: "Contexte EMEFA partagé",
+        context_provider=lambda _query='': "Contexte EMEFA partagé",
         transport=httpx.MockTransport(handler),
     )
     transport = httpx.ASGITransport(app=app)
@@ -201,7 +201,7 @@ async def test_incomplete_speculative_stream_is_not_persisted(tmp_path):
         api_key="provider-secret",
         model="deepseek-chat",
         base_url="https://provider.test",
-        context_provider=lambda: "Contexte EMEFA partagé",
+        context_provider=lambda _query="": "Contexte EMEFA partagé",
         transport=httpx.MockTransport(handler),
     )
     transport = httpx.ASGITransport(app=app)

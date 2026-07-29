@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from emefa.domain.agent import AgentStep, RequestedAction
+from emefa.domain.agent import AgentStep, RequestedAction, latest_user_message as _latest_user_message
 
 SYSTEM_PROMPT = """Tu es l’assistante personnelle privée de ton utilisateur.
 Tu échanges à l’oral en français naturel, chaleureux et précis. Garde le fil des tours précédents.
@@ -27,10 +27,12 @@ class DeepSeekBrain:
         model: str = "deepseek-chat",
         base_url: str = "https://api.deepseek.com",
         transport: httpx.AsyncBaseTransport | None = None,
-        context_provider: Callable[[], str] | None = None,
+        context_provider: Callable[[str], str] | None = None,
+        on_usage: Callable[[int, int], None] | None = None,
     ) -> None:
         self.model = model
         self.context_provider = context_provider
+        self.on_usage = on_usage
         self.client = httpx.AsyncClient(
             base_url=base_url.rstrip("/"),
             headers={"Authorization": f"Bearer {api_key}"},
@@ -89,6 +91,24 @@ class DeepSeekBrain:
             for tool in tools
         ]
 
+
+    def _report_usage(self, payload: dict[str, Any]) -> None:
+        """Forward the provider's own token counts to the meter.
+
+        Read from the response rather than estimated: an estimate that drifts
+        from the invoice is worse than no number at all. A provider that omits
+        `usage` simply contributes nothing.
+        """
+        if self.on_usage is None:
+            return
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            return
+        self.on_usage(
+            int(usage.get("prompt_tokens") or 0),
+            int(usage.get("completion_tokens") or 0),
+        )
+
     async def think(
         self,
         history: Sequence[Mapping[str, Any]],
@@ -96,7 +116,7 @@ class DeepSeekBrain:
     ) -> AgentStep:
         system_prompt = SYSTEM_PROMPT
         if self.context_provider is not None:
-            context = self.context_provider().strip()
+            context = self.context_provider(_latest_user_message(history)).strip()
             if context:
                 system_prompt = f"{SYSTEM_PROMPT}\n{context}"
         request_body: dict[str, Any] = {
@@ -111,6 +131,7 @@ class DeepSeekBrain:
         response = await self.client.post("/chat/completions", json=request_body)
         response.raise_for_status()
         payload = response.json()
+        self._report_usage(payload)
         message = payload["choices"][0]["message"]
         tool_calls = message.get("tool_calls") or []
         if tool_calls:

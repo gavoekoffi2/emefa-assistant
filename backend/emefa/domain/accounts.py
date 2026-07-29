@@ -99,6 +99,11 @@ class Account:
     email_verified: bool
 
     @property
+    def account_id(self) -> str:
+        """WebAuthn compatibility: the SaaS user id is the account id."""
+        return self.user_id
+
+    @property
     def is_active(self) -> bool:
         return self.status == "active"
 
@@ -194,6 +199,61 @@ class AccountRepository:
 
     def _connect(self) -> sqlite3.Connection:
         return storage.connect(self.database_path)
+
+    def count(self) -> int:
+        """Return the number of SaaS accounts on this instance.
+
+        The legacy enrollment endpoint uses this compatibility boundary to
+        remain available only before the first real owner is created.
+        """
+        with self._connect() as connection:
+            # The original private-instance schema seeds ``usr_default`` with
+            # no email/password.  It is an ownership placeholder, not a SaaS
+            # account, and must not disable the one-time enrollment path.
+            row = connection.execute(
+                "SELECT COUNT(*) FROM users WHERE email <> '' AND password_hash <> ''"
+            ).fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def create_first_owner(
+        self, email: str, password: str, display_name: str = ""
+    ) -> Account:
+        """Activate the seeded private-instance user as its first owner.
+
+        This is the historical bootstrap contract. It writes the canonical
+        ``users`` row instead of recreating the retired ``accounts`` table.
+        """
+        address = normalise_email(email)
+        password_hash = hash_password(password)
+        name = display_name.strip()[:120] or address.split("@", 1)[0]
+        now = _stamp(_now())
+        with self._connect() as connection:
+            existing = connection.execute(
+                "SELECT COUNT(*) FROM users WHERE email <> '' AND password_hash <> ''"
+            ).fetchone()
+            if existing is not None and int(existing[0]) > 0:
+                raise AccountError("owner_already_exists")
+            try:
+                cursor = connection.execute(
+                    "UPDATE users SET email = ?, password_hash = ?, display_name = ?, "
+                    "role = ?, status = 'active', email_verified_at = COALESCE(email_verified_at, ?) "
+                    "WHERE user_id = ?",
+                    (
+                        address,
+                        password_hash,
+                        name,
+                        Role.OWNER.value,
+                        now,
+                        storage.DEFAULT_USER_ID,
+                    ),
+                )
+            except sqlite3.IntegrityError as error:
+                raise EmailAlreadyRegisteredError() from error
+            if cursor.rowcount != 1:
+                raise AccountError("default_owner_missing")
+        account = self.get(storage.DEFAULT_USER_ID)
+        assert account is not None
+        return account
 
     # -- signup ------------------------------------------------------------
 
@@ -449,6 +509,10 @@ class AccountRepository:
                 (address,),
             ).fetchone()
         return _account_from_row(row) if row is not None else None
+
+    def by_email(self, email: str) -> Account | None:
+        """Historical name retained as an adapter to canonical users."""
+        return self.find_by_email(email)
 
     def company_name(self, tenant_id: str) -> str:
         with self._connect() as connection:

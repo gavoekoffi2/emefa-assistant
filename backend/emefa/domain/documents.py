@@ -18,7 +18,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from emefa.domain.scope import Ownership, Scope, ScopedStore
-from emefa.domain.office import (
+from emefa.domain.office.legacy import (
     KIND_EXTENSIONS,
     KIND_MIME_TYPES,
     Block,

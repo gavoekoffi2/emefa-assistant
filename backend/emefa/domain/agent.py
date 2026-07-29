@@ -13,6 +13,22 @@ ToolResult = Mapping[str, Any] | None
 ToolHandler = Callable[[Mapping[str, Any]], ToolResult | Awaitable[ToolResult]]
 
 
+def latest_user_message(history: Sequence[Mapping[str, Any]]) -> str:
+    """The most recent thing the user actually said.
+
+    Memory retrieval needs a query, and the only honest one available at the
+    moment the system prompt is composed is the user's last turn. Tool results
+    and assistant text are skipped: they are the assistant's own words, and
+    retrieving against them makes memory self-reinforcing.
+    """
+    for item in reversed(list(history)):
+        if item.get("role") == "user":
+            content = item.get("content")
+            if isinstance(content, str):
+                return content
+    return ""
+
+
 @dataclass(frozen=True, slots=True)
 class RequestedAction:
     name: str
@@ -72,12 +88,65 @@ class ToolShelf:
         return [
             {
                 "name": tool.name,
-                "description": tool.description,
+                "description": _bounded_description(tool.description),
                 "risk": tool.risk.value,
-                "parameters": dict(tool.parameters) if tool.parameters is not None else None,
+                "parameters": (
+                    _compact_tool_schema(tool.parameters)
+                    if tool.parameters is not None
+                    else None
+                ),
             }
             for tool in self._tools.values()
         ]
+
+
+_TOOL_SCHEMA_KEYS = frozenset(
+    {
+        "type",
+        "required",
+        "additionalProperties",
+        "enum",
+        "anyOf",
+        "oneOf",
+        "allOf",
+        "const",
+        "format",
+    }
+)
+
+
+def _compact_tool_schema(value: Any) -> Any:
+    """Keep the executable JSON-schema contract, not Pydantic prose.
+
+    Field descriptions and presentation metadata accounted for thousands of
+    repeated characters on every LLM turn.  Names, types, nesting, enums and
+    required fields are sufficient for tool calling; the original mapping is
+    retained on ``AgentTool`` and server-side validation remains authoritative.
+    """
+    if isinstance(value, list):
+        return [_compact_tool_schema(item) for item in value]
+    if not isinstance(value, Mapping):
+        return value
+    compact: dict[str, Any] = {}
+    for key, item in value.items():
+        if key == "properties" and isinstance(item, Mapping):
+            compact[key] = {
+                name: _compact_tool_schema(schema) for name, schema in item.items()
+            }
+        elif key == "items":
+            compact[key] = _compact_tool_schema(item)
+        elif key in _TOOL_SCHEMA_KEYS:
+            compact[key] = _compact_tool_schema(item)
+    return compact
+
+
+def _bounded_description(value: str, limit: int = 140) -> str:
+    """One routing sentence per tool, bounded without cutting a word."""
+    cleaned = " ".join(value.split())
+    if len(cleaned) <= limit:
+        return cleaned
+    prefix = cleaned[: limit - 1].rsplit(" ", 1)[0].rstrip(" ,;:")
+    return f"{prefix}…"
 
 
 class ConversationMemory(Protocol):

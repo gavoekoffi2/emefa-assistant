@@ -33,6 +33,11 @@ def activate_session(
     settings = request.app.state.settings
     if settings.enrollment_code is None:
         raise HTTPException(status_code=503, detail="Web activation is not configured")
+    # ADR-002 §3: the enrolment code is instance bootstrap, not an
+    # authentication path. The moment this instance has an owner, a shared
+    # secret is no longer enough to reach their data — sign in instead.
+    if request.app.state.accounts.count() > 0:
+        raise HTTPException(status_code=409, detail="Sign in with your account")
     if not secrets.compare_digest(payload.enrollment_code, settings.enrollment_code):
         request.app.state.activation_limiter.record_failure(source)
         audit("web_activation_rejected", source=source)

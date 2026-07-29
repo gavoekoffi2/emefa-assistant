@@ -13,6 +13,18 @@ from emefa.domain import storage
 from emefa.domain.agenda import AgendaRepository
 from emefa.domain.crm import CrmRepository
 from emefa.domain.memories import MemoryRepository
+from emefa.domain.budget import UsageTracker
+from emefa.domain.entities import EntityRepository
+from emefa.domain.missions import MissionRepository, MissionStatus, StepStatus
+from emefa.domain.policy import ActionRisk
+from emefa.domain.proactive import (
+    AutonomyLevel,
+    Initiative,
+    InitiativeRepository as ProactiveInitiativeRepository,
+    InitiativeType,
+    new_initiative_id,
+)
+from emefa.domain.skills import SkillRegistry
 from emefa.domain.roles import Role
 from emefa.domain.scope import DEFAULT_SCOPE, Scope, ScopedStore
 from emefa.domain.tasks import TaskRepository
@@ -21,7 +33,10 @@ JEAN = Scope(tenant_id="ten_a", user_id="usr_jean")
 AMINA = Scope(tenant_id="ten_b", user_id="usr_amina")
 
 #: Repositories whose rows are filtered by tenant and user today.
-SCOPED_REPOSITORIES = (CrmRepository, TaskRepository, MemoryRepository, AgendaRepository)
+SCOPED_REPOSITORIES = (
+    CrmRepository, TaskRepository, MemoryRepository, AgendaRepository,
+    EntityRepository, MissionRepository, ProactiveInitiativeRepository, UsageTracker,
+)
 
 #: The identity tables. They carry ``tenant_id`` because they *define* the
 #: hierarchy, not because they are data owned within it, and they are read by
@@ -38,7 +53,12 @@ SCOPED_REPOSITORIES = (CrmRepository, TaskRepository, MemoryRepository, AgendaRe
 #: This is the whole list, and it is authentication only. None of these tables
 #: holds business data, and every row in them records its tenant, so
 #: everything reached *after* authentication is scoped normally.
-IDENTITY_TABLES = ("tenants", "users", "auth_tokens", "invitations")
+IDENTITY_TABLES = (
+    "tenants",
+    "users",
+    "auth_tokens",
+    "invitations",
+)
 
 #: Deliberately empty, and it must stay that way.
 #:
@@ -128,6 +148,112 @@ def test_tasks_and_memories_are_separated(two_tenants):
         "Jean préfère les réponses courtes"
     ]
     assert "Amina" not in jean["memories"].context_block()
+
+
+def test_memory_kernel_events_facts_history_and_erasure_are_isolated(tmp_path):
+    database = tmp_path / "memory-kernel-scope.db"
+    jean = MemoryRepository(database, JEAN)
+    amina = MemoryRepository(database, AMINA)
+    jean_event = jean.log_event("exchange", "chat", "secret Jean")
+    jean_fact, _ = jean.record_fact(
+        "utilisateur", "prefere", "réponses brèves", "preference",
+        event_id=jean_event.event_id,
+    )
+    amina_event = amina.log_event("exchange", "chat", "secret Amina")
+    amina_fact, _ = amina.record_fact(
+        "utilisateur", "prefere", "réponses détaillées", "preference",
+        event_id=amina_event.event_id,
+    )
+    assert jean.kernel.get_fact(amina_fact.fact_id) is None
+    assert amina.kernel.get_fact(jean_fact.fact_id) is None
+    assert [event.content for event in jean.kernel.recent_events()] == ["secret Jean"]
+    assert [fact.object for fact in amina.kernel.list_facts()] == ["réponses détaillées"]
+    assert jean.history(amina_fact.fact_id) is None
+    assert jean.correct(amina_fact.fact_id, "vol") is None
+    assert jean.forget(amina_fact.fact_id) is False
+    assert amina.kernel.get_fact(amina_fact.fact_id) is not None
+
+
+def test_entities_relations_and_timeline_are_isolated(tmp_path):
+    database = tmp_path / "entities-scope.db"
+    jean = EntityRepository(database, JEAN)
+    amina = EntityRepository(database, AMINA)
+    jean_project = jean.upsert("project", "Horizon")
+    jean_client = jean.upsert("company", "Client Jean")
+    amina_project = amina.upsert("project", "Horizon")
+    amina_client = amina.upsert("company", "Client Amina")
+    jean.link(jean_project.entity_id, jean_client.entity_id, "belongs_to")
+    amina.link(amina_project.entity_id, amina_client.entity_id, "belongs_to")
+    jean.record_milestone(jean_project.entity_id, "meeting", "Réunion Jean")
+    amina.record_milestone(amina_project.entity_id, "meeting", "Réunion Amina")
+    assert jean.find("project", "Horizon").entity_id == jean_project.entity_id
+    assert amina.find("project", "Horizon").entity_id == amina_project.entity_id
+    assert jean.get(amina_project.entity_id) is None
+    assert jean.set_status(amina_project.entity_id, "closed") is None
+    assert jean.relations_of(amina_project.entity_id) == []
+    assert jean.timeline(amina_project.entity_id) == []
+    assert [entry.headline for entry in jean.timeline(jean_project.entity_id)] == ["Réunion Jean"]
+
+
+def test_missions_and_step_updates_are_isolated(tmp_path):
+    database = tmp_path / "missions-scope.db"
+    jean = MissionRepository(database, JEAN)
+    amina = MissionRepository(database, AMINA)
+    jean_mission = jean.create("Mission Jean", [("Étape Jean", "outil", {})])
+    amina_mission = amina.create("Mission Amina", [("Étape Amina", "outil", {})])
+    assert jean.get(amina_mission.mission_id) is None
+    assert jean.set_mission_status(amina_mission.mission_id, MissionStatus.CANCELLED) is None
+    jean.update_step(amina_mission.steps[0].step_id, StepStatus.FAILED, error="vol")
+    assert amina.get(amina_mission.mission_id).steps[0].status is StepStatus.PENDING
+    assert [item.goal for item in jean.list_recent()] == ["Mission Jean"]
+
+
+def _initiative(title: str, dedupe_key: str) -> Initiative:
+    return Initiative(
+        initiative_id=new_initiative_id(), type=InitiativeType.SUGGESTION,
+        title=title, reason="raison", next_action="agir", dedupe_key=dedupe_key,
+        autonomy_level=AutonomyLevel.SUGGEST, risk=ActionRisk.OBSERVE,
+    )
+
+
+def test_proactive_dedupe_status_and_expiry_are_isolated(tmp_path):
+    database = tmp_path / "proactive-scope.db"
+    jean = ProactiveInitiativeRepository(database, JEAN)
+    amina = ProactiveInitiativeRepository(database, AMINA)
+    jean_item = jean.raise_initiative(_initiative("Jean", "same-key"))
+    amina_item = amina.raise_initiative(_initiative("Amina", "same-key"))
+    assert jean_item is not None and amina_item is not None
+    assert jean.get(amina_item.initiative_id) is None
+    assert jean.set_status(amina_item.initiative_id, amina_item.status) is None
+    assert [item.title for item in jean.open_initiatives()] == ["Jean"]
+    assert [item.title for item in amina.open_initiatives()] == ["Amina"]
+
+
+def test_usage_and_budget_totals_are_isolated(tmp_path):
+    database = tmp_path / "usage-scope.db"
+    jean = UsageTracker(database, scope=JEAN)
+    amina = UsageTracker(database, scope=AMINA)
+    jean.record("chat", 100, 20)
+    amina.record("chat", 900, 80)
+    assert jean.today().total_tokens == 120
+    assert amina.today().total_tokens == 980
+
+
+def test_enabled_skills_are_isolated(tmp_path):
+    catalogue = tmp_path / "catalogue"
+    skill = catalogue / "demo"
+    skill.mkdir(parents=True)
+    (skill / "skill.yaml").write_text(
+        "name: demo\nversion: 1.0.0\ntype: conversational\nrisk: observe\n", encoding="utf-8"
+    )
+    (skill / "PROMPT.md").write_text("## Démonstration\nUne instruction suffisamment longue.", encoding="utf-8")
+    database = tmp_path / "skills-scope.db"
+    jean = SkillRegistry(database, catalogue, scope=JEAN)
+    amina = jean.for_scope(AMINA)
+    assert jean.enable("demo") is True
+    assert jean.enabled_names() == {"demo"}
+    assert amina.enabled_names() == set()
+    assert amina.disable("demo") is False
 
 
 def test_the_agenda_is_separated_including_conflict_detection(tmp_path):
@@ -221,6 +347,9 @@ def test_the_unscoped_tables_are_the_ones_we_think_they_are(tmp_path):
         "memories", "events", "connected_accounts", "conversation_turns",
         "pending_actions", "briefings", "evening_reports",
         "report_preferences", "onboarding_state",
+        "memory_events", "memory_facts", "memories_v1_archive",
+        "enabled_skills", "usage_entries", "proactive_initiatives",
+        "missions", "entities", "entity_timeline", "webauthn_credentials",
     }
     unaccounted = (
         tenant_tables - scoped_now - set(KNOWN_UNSCOPED_TABLES) - set(IDENTITY_TABLES)

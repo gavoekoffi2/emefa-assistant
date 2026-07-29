@@ -441,3 +441,37 @@ test('screen vision is explicit, visible, one-shot, and immediately stoppable', 
   assert.match(holographicCss, /\.screen-share-panel/)
   assert.match(holographicCss, /\.screen-share-indicator/)
 })
+
+test('a refused voice tells the reader what happened and what to do', async () => {
+  // Real behaviour, not a source-text match: the copy is a pure function so
+  // it can be exercised directly.
+  const { describeSpeechFailure } = await import('../src/voiceErrors.ts')
+
+  // A configuration fault names the fault and asks for it to be corrected.
+  const quota = describeSpeechFailure(new Error('speech_quota_exceeded'))
+  assert.match(quota, /quota de synthèse vocale est épuisé/)
+  assert.match(quota, /voix standard reste active/)
+  assert.match(quota, /corrigez la configuration/)
+
+  const missing = describeSpeechFailure(new Error('speech_voice_not_found'))
+  assert.match(missing, /n'existe plus chez le fournisseur/)
+
+  const key = describeSpeechFailure(new Error('speech_key_invalid'))
+  assert.match(key, /clé du fournisseur de voix est invalide/)
+
+  // A transient fault must not send anyone to change settings.
+  const limited = describeSpeechFailure(new Error('speech_rate_limited'))
+  assert.match(limited, /trop de demandes simultanées/)
+  assert.match(limited, /prend le relais/)
+  assert.doesNotMatch(limited, /corrigez la configuration/)
+
+  // An unknown code is still shown: an opaque message is what caused this bug.
+  assert.match(describeSpeechFailure(new Error('code_futur')), /\(code_futur\)/)
+  assert.match(describeSpeechFailure(null), /Voix clonée indisponible\./)
+})
+
+test('the cloned voice falls back rather than failing the conversation', () => {
+  // The old voice keeps talking; only the cloned layer is disabled.
+  assert.match(clonedVoice, /describeSpeechFailure\(cause\)/)
+  assert.match(clonedVoice, /enabledRef\.current = false/)
+})

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { remapAnalyserSpectrum } from './face/audioSpectrum.ts'
 import { createPlaybackLatch, type PlaybackLatch } from './voicePlayback.ts'
+import { describeSpeechFailure } from './voiceErrors.ts'
 
 type QueuedAudio = {
   generation: number
@@ -143,11 +144,7 @@ export function useClonedVoice({ onFailure }: ClonedVoiceOptions) {
           for (const controller of controllersRef.current) controller.abort()
           controllersRef.current.clear()
           setIsSpeaking(false)
-          failureRef.current(
-            cause instanceof Error
-              ? `La nouvelle voix est indisponible (${cause.message}). L’ancienne voix reste active.`
-              : 'La nouvelle voix est indisponible. L’ancienne voix reste active.',
-          )
+          failureRef.current(describeSpeechFailure(cause))
           break
         }
       }

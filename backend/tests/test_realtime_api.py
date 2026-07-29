@@ -195,3 +195,164 @@ async def test_cloned_speech_rejects_oversized_text(tmp_path):
         response = await client.post("/v1/realtime/speech", json={"text": "x" * 901})
 
     assert response.status_code == 422
+
+
+# -- why a synthesis was refused -------------------------------------------
+
+
+def _refusing_gateway(status: int, body: object) -> RealtimeGateway:
+    def handler(_: httpx.Request) -> httpx.Response:
+        if isinstance(body, (dict, list)):
+            return httpx.Response(status, json=body)
+        return httpx.Response(status, content=body or b"")
+
+    return RealtimeGateway(
+        "secret", "agent_test", "voice_test", transport=httpx.MockTransport(handler)
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "body", "expected"),
+    [
+        # The provider names its own failures; each needs a different action.
+        (400, {"detail": {"status": "voice_not_found", "message": "no such voice"}},
+         "speech_voice_not_found"),
+        (401, {"detail": {"status": "invalid_api_key", "message": "bad key"}},
+         "speech_key_invalid"),
+        (401, {"detail": {"status": "needs_authorization"}}, "speech_key_invalid"),
+        (401, {"detail": {"status": "quota_exceeded", "message": "out of credits"}},
+         "speech_quota_exceeded"),
+        (429, {"detail": {"status": "too_many_concurrent_requests"}}, "speech_rate_limited"),
+        (401, {"detail": {"status": "detected_unusual_activity"}}, "speech_account_blocked"),
+        (400, {"detail": {"status": "voice_limit_reached"}}, "speech_voice_limit_reached"),
+        # Unknown names still fall back to something meaningful via the status.
+        (404, {"detail": {"status": "some_future_name"}}, "speech_voice_not_found"),
+        (403, {"detail": {"status": "some_future_name"}}, "speech_key_not_entitled"),
+        (429, {"detail": "slow down"}, "speech_rate_limited"),
+        # Provider validation errors arrive as a list.
+        (422, {"detail": [{"loc": ["body", "text"], "msg": "too long"}]},
+         "speech_request_invalid"),
+        # A body we cannot parse at all must not crash the classifier.
+        (500, b"<html>gateway error</html>", "speech_provider_rejected_request"),
+        (503, None, "speech_provider_rejected_request"),
+    ],
+)
+async def test_a_refusal_is_classified_by_its_real_cause(status, body, expected):
+    """The provider says why. Collapsing every failure into one code is what
+    made this undiagnosable: a typo in a voice id looked like a spent quota."""
+    from emefa.infrastructure.realtime import SpeechProviderError
+
+    gateway = _refusing_gateway(status, body)
+    try:
+        with pytest.raises(SpeechProviderError) as raised:
+            await gateway.synthesize("Bonsoir.")
+    finally:
+        await gateway.close()
+    assert raised.value.reason == expected
+    assert raised.value.status_code == status
+
+
+@pytest.mark.asyncio
+async def test_the_provider_message_is_logged_but_never_returned_to_the_client(caplog):
+    """A provider message can quote account details, so it belongs in the
+    server log and nowhere else."""
+    import logging
+
+    from emefa.domain.agent import AgentStep
+
+    class Brain:
+        async def think(self, history, tools):
+            return AgentStep(answer="ok")
+
+    secret_message = "compte pro-42 de Koffi: crédits épuisés"
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            401, json={"detail": {"status": "quota_exceeded", "message": secret_message}}
+        )
+
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as folder:
+        app = create_app(
+            Settings(
+                database_path=Path(folder) / "voice.db",
+                elevenlabs_api_key="secret",
+                elevenlabs_agent_id="agent_test",
+                elevenlabs_voice_id="voice_test",
+                cookie_secure=False,
+            ),
+            brain=Brain(),
+        )
+        app.state.realtime = RealtimeGateway(
+            "secret", "agent_test", "voice_test", transport=httpx.MockTransport(handler)
+        )
+        _, token = app.state.devices.enroll("Poste")
+        transport = httpx.ASGITransport(app=app)
+        with caplog.at_level(logging.WARNING, logger="emefa.voice"):
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/v1/realtime/speech",
+                    headers={"Authorization": f"Bearer {token}"},
+                    json={"text": "Bonsoir."},
+                )
+        await app.state.realtime.close()
+
+    # The caller learns the reason, and only the reason.
+    assert response.status_code == 503, response.text
+    assert response.json()["detail"] == "speech_quota_exceeded"
+    assert secret_message not in response.text
+    assert "secret" not in response.text
+
+    # The operator gets the detail, in the log, with the voice that failed.
+    records = [record for record in caplog.records if record.name == "emefa.voice"]
+    assert records, "the real cause must be recorded somewhere"
+    assert getattr(records[0], "provider_message", "") == secret_message
+    assert getattr(records[0], "voice_id", "") == "voice_test"
+    # The API key must never reach the log.
+    assert "secret" not in records[0].getMessage()
+
+
+@pytest.mark.asyncio
+async def test_a_rate_limit_is_answered_as_retryable_not_as_misconfiguration():
+    """The interface distinguishes "wait" from "this will keep failing"."""
+    from emefa.domain.agent import AgentStep
+
+    class Brain:
+        async def think(self, history, tools):
+            return AgentStep(answer="ok")
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, json={"detail": {"status": "too_many_concurrent_requests"}})
+
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as folder:
+        app = create_app(
+            Settings(
+                database_path=Path(folder) / "voice.db",
+                elevenlabs_api_key="secret",
+                elevenlabs_agent_id="agent_test",
+                elevenlabs_voice_id="voice_test",
+                cookie_secure=False,
+            ),
+            brain=Brain(),
+        )
+        app.state.realtime = RealtimeGateway(
+            "secret", "agent_test", "voice_test", transport=httpx.MockTransport(handler)
+        )
+        _, token = app.state.devices.enroll("Poste")
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/v1/realtime/speech",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"text": "Bonsoir."},
+            )
+        await app.state.realtime.close()
+
+    assert response.status_code == 429
+    assert response.json()["detail"] == "speech_rate_limited"

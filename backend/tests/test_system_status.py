@@ -92,3 +92,36 @@ async def test_openrouter_key_configures_the_brain(tmp_path):
         )
         body = (await web.get("/v1/system/status")).json()
     assert body["brain_configured"] is True
+
+
+@pytest.mark.asyncio
+async def test_status_reports_the_cloned_voice_separately_from_the_agent(tmp_path):
+    """A missing voice id used to hide behind a healthy-looking status, so the
+    first sign of trouble was a refused synthesis mid-conversation."""
+    import httpx
+
+    from emefa.config import Settings
+    from emefa.main import create_app
+
+    # Key and agent present, voice id absent: the conversational agent works,
+    # the cloned voice cannot.
+    app = create_app(
+        Settings(
+            database_path=tmp_path / "status.db",
+            elevenlabs_api_key="secret",
+            elevenlabs_agent_id="agent_test",
+            cookie_secure=False,
+        )
+    )
+    _, token = app.state.devices.enroll("Poste")
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        body = (await client.get(
+            "/v1/system/status", headers={"Authorization": f"Bearer {token}"}
+        )).json()
+
+    assert body["voice_configured"] is True
+    assert body["cloned_voice_configured"] is False, (
+        "the cloned voice needs its own voice id; reporting only the agent "
+        "hides exactly the misconfiguration that causes a refused synthesis"
+    )

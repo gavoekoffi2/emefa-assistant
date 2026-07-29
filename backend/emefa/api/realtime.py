@@ -12,9 +12,30 @@ from pydantic import BaseModel, Field
 
 from emefa.api.devices import current_device
 from emefa.domain.devices import Device
+from emefa.infrastructure.realtime import SpeechProviderError
 from emefa.observability import audit
 
 router = APIRouter(prefix="/v1/realtime", tags=["realtime"])
+
+#: What each refusal means for the caller.
+#:
+#: A misconfigured voice or a spent quota is *our* problem, not a bad request
+#: from the browser, so those stay 5xx. A rate limit is answered as 429 so the
+#: interface can distinguish "wait" from "this will keep failing".
+_STATUS_FOR: dict[str, int] = {
+    "speech_voice_not_found": 503,
+    "speech_key_invalid": 503,
+    "speech_key_not_entitled": 503,
+    "speech_quota_exceeded": 503,
+    "speech_voice_limit_reached": 503,
+    "speech_account_blocked": 503,
+    "speech_model_unavailable": 503,
+    "speech_format_unsupported": 503,
+    "speech_language_unsupported": 503,
+    "speech_rate_limited": 429,
+    "speech_request_invalid": 502,
+    "speech_provider_rejected_request": 502,
+}
 
 
 class SpeechRequest(BaseModel):
@@ -60,6 +81,18 @@ async def create_speech(
         raise HTTPException(status_code=422, detail="speech_text_empty")
     try:
         audio = await gateway.synthesize(text)
+    except SpeechProviderError as exc:
+        # Report the reason, not just the refusal. A configuration mistake and
+        # an exhausted quota need different actions from the operator, and
+        # answering "rejected" to both is what made this undiagnosable.
+        audit(
+            "cloned_speech_refused",
+            device_id=device.device_id,
+            reason=exc.reason,
+            provider_status=exc.status_code,
+        )
+        status_code = _STATUS_FOR.get(exc.reason, 502)
+        raise HTTPException(status_code=status_code, detail=exc.reason) from exc
     except httpx.HTTPStatusError as exc:
         raise HTTPException(status_code=502, detail="speech_provider_rejected_request") from exc
     except httpx.HTTPError as exc:

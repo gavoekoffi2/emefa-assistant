@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from emefa import __version__
 from emefa.api.agenda import router as agenda_router
+from emefa.api.auth import router as auth_router
 from emefa.api.agent import router as agent_router
 from emefa.api.briefings import router as briefings_router
 from emefa.api.command_center import router as command_center_router
@@ -30,6 +31,8 @@ from emefa.api.tasks import router as tasks_router
 from emefa.api.voice_llm import router as voice_llm_router
 from emefa.api.web_session import router as web_session_router
 from emefa.config import Settings
+from emefa.domain.account_mail import AccountMailer
+from emefa.domain.accounts import AccountRepository
 from emefa.domain.agenda import AgendaRepository
 from emefa.domain.agent import AgentEngine, AgentStep, Brain
 from emefa.domain.approvals import ApprovalRepository
@@ -476,6 +479,13 @@ def create_app(
         max_failures=active_settings.activation_max_failures,
         window_seconds=active_settings.activation_window_seconds,
     )
+    application.state.accounts = AccountRepository(active_settings.database_path)
+    application.state.account_mailer = AccountMailer(
+        base_url=active_settings.public_base_url,
+        # Account mail is transactional and must not be sent from a customer's
+        # own connected mailbox; it reuses the instance provider or nothing.
+        provider=active_email_provider if active_settings.email_account else None,
+    )
 
     @application.middleware("http")
     async def request_context(request: Request, call_next):
@@ -539,6 +549,7 @@ def create_app(
             "version": __version__,
         }
 
+    application.include_router(auth_router)
     application.include_router(devices_router)
     application.include_router(documents_router)
     application.include_router(files_router)

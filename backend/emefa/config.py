@@ -10,6 +10,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     enrollment_code: str | None = None
     database_path: Path = Path("emefa.db")
+    #: Where account emails point back to. Wrong here means verification and
+    #: reset links land nowhere, so it is explicit rather than guessed from
+    #: the incoming request — a Host header is attacker-controlled.
+    public_base_url: str = "http://localhost:5173"
     max_devices: int = 3
     cookie_secure: bool = True
     session_max_age_seconds: int = 2_592_000

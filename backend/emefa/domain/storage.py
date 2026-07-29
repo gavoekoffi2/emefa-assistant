@@ -553,6 +553,60 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         "CREATE INDEX idx_deals_tenant ON deals(tenant_id, stage)",
         "CREATE INDEX idx_contracts_tenant ON contracts(tenant_id, status, end_date)",
     ),
+    # 19 — real SaaS accounts: a user is now something you can sign up as,
+    # verify, log into and invite, instead of a row seeded by a migration.
+    #
+    # The columns default to the values the existing single-tenant instance
+    # already behaves as (an active owner with no password), so the deployed
+    # enrollment-code path keeps working untouched while the account path is
+    # built beside it.
+    (
+        "ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE users ADD COLUMN password_hash TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'owner'",
+        "ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
+        "ALTER TABLE users ADD COLUMN email_verified_at TEXT",
+        "ALTER TABLE users ADD COLUMN last_login_at TEXT",
+        # Emails are stored already normalised. The index is partial so the
+        # seeded default user, which has none, does not occupy the empty slot.
+        "CREATE UNIQUE INDEX idx_users_email ON users(email) WHERE email <> ''",
+        "CREATE INDEX idx_users_tenant ON users(tenant_id, status)",
+        # Single-use, expiring secrets for email verification and password
+        # reset. Only the hash is stored: a database read cannot be replayed
+        # as a valid link.
+        """
+        CREATE TABLE auth_tokens (
+            token_hash TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(user_id),
+            tenant_id TEXT NOT NULL REFERENCES tenants(tenant_id),
+            purpose TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            consumed_at TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE INDEX idx_auth_tokens_user ON auth_tokens(user_id, purpose, consumed_at)",
+        """
+        CREATE TABLE invitations (
+            invitation_id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL REFERENCES tenants(tenant_id),
+            email TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'member',
+            token_hash TEXT NOT NULL UNIQUE,
+            invited_by_user_id TEXT NOT NULL REFERENCES users(user_id),
+            expires_at TEXT NOT NULL,
+            accepted_at TEXT,
+            accepted_user_id TEXT,
+            revoked_at TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        # One live invitation per address per company; re-inviting replaces it.
+        "CREATE UNIQUE INDEX idx_invitations_live ON invitations(tenant_id, email) "
+        "WHERE accepted_at IS NULL AND revoked_at IS NULL",
+        # A device belongs to the account that signed in on it.
+        "CREATE INDEX idx_devices_user ON devices(user_id)",
+    ),
 )
 
 

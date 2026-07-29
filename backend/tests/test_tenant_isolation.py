@@ -13,6 +13,7 @@ from emefa.domain import storage
 from emefa.domain.agenda import AgendaRepository
 from emefa.domain.crm import CrmRepository
 from emefa.domain.memories import MemoryRepository
+from emefa.domain.roles import Role
 from emefa.domain.scope import DEFAULT_SCOPE, Scope, ScopedStore
 from emefa.domain.tasks import TaskRepository
 
@@ -22,9 +23,22 @@ AMINA = Scope(tenant_id="ten_b", user_id="usr_amina")
 #: Repositories whose rows are filtered by tenant and user today.
 SCOPED_REPOSITORIES = (CrmRepository, TaskRepository, MemoryRepository, AgendaRepository)
 
-#: The identity tables themselves. They carry tenant_id because they *define*
-#: the hierarchy, not because they are data owned within it.
-IDENTITY_TABLES = ("tenants", "users")
+#: The identity tables. They carry ``tenant_id`` because they *define* the
+#: hierarchy, not because they are data owned within it, and they are read by
+#: the step that decides which tenant the caller belongs to — so scoping them
+#: would be circular. See ``docs/MULTI_TENANCY_AUDIT.md``.
+#:
+#: ``tenants``/``users``   — the hierarchy itself.
+#: ``auth_tokens``        — looked up by token hash before anyone is
+#:                          authenticated (verification, password reset).
+#: ``invitations``        — looked up by token hash by someone who has no
+#:                          account yet, precisely to find out which company
+#:                          they were invited to.
+#:
+#: This is the whole list, and it is authentication only. None of these tables
+#: holds business data, and every row in them records its tenant, so
+#: everything reached *after* authentication is scoped normally.
+IDENTITY_TABLES = ("tenants", "users", "auth_tokens", "invitations")
 
 #: Deliberately empty, and it must stay that way.
 #:
@@ -223,6 +237,50 @@ def test_the_unscoped_tables_are_the_ones_we_think_they_are(tmp_path):
         "an unscoped table has been accepted; justify it in "
         "docs/MULTI_TENANCY_AUDIT.md or scope it"
     )
+    # The identity exemption is not a spare pocket to put things in. Widening
+    # it is a security decision, so it has to be made here, on purpose.
+    assert set(IDENTITY_TABLES) == {"tenants", "users", "auth_tokens", "invitations"}, (
+        "the identity exemption changed; a table only belongs here if it is read "
+        "before the caller's tenant is known. Justify it in docs/MULTI_TENANCY_AUDIT.md."
+    )
+
+
+def test_identity_tables_are_only_reachable_by_unguessable_keys(tmp_path):
+    """The exempt tables must not be *searchable* across tenants.
+
+    Being unscoped is acceptable only because every lookup key is either a
+    high-entropy secret or an id the caller has already been shown to own.
+    A method that took, say, a display name would break that argument.
+    """
+    from emefa.domain.accounts import AccountRepository
+
+    accounts = AccountRepository(tmp_path / "identity.db")
+    alpha = accounts.sign_up(
+        email="jean@alpha.tg", password="motdepasse-alpha",
+        display_name="Jean", company_name="Entreprise Alpha",
+    )
+    beta = accounts.sign_up(
+        email="amina@beta.tg", password="motdepasse-beta",
+        display_name="Amina", company_name="Entreprise Beta",
+    )
+
+    # Listing members always takes a tenant: there is no "list everyone" call.
+    assert [a.email for a in accounts.list_members(alpha.account.tenant_id)] == ["jean@alpha.tg"]
+    assert [a.email for a in accounts.list_members(beta.account.tenant_id)] == ["amina@beta.tg"]
+
+    # A token issued for one company cannot be redeemed as the other's.
+    verified = accounts.verify_email(alpha.verification_token)
+    assert verified.tenant_id == alpha.account.tenant_id
+
+    # An invitation is revocable only by the company that issued it.
+    _, invite_token = accounts.invite(
+        tenant_id=alpha.account.tenant_id, email="pierre@alpha.tg",
+        role=Role.MEMBER, invited_by_user_id=alpha.account.user_id,
+    )
+    invitation = accounts.peek_invitation(invite_token)
+    assert invitation is not None
+    assert accounts.revoke_invitation(beta.account.tenant_id, invitation.invitation_id) is False
+    assert accounts.revoke_invitation(alpha.account.tenant_id, invitation.invitation_id) is True
 
 
 def test_every_scoped_repository_accepts_and_honours_a_scope(tmp_path):

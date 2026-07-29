@@ -146,7 +146,7 @@ def compose_morning_brief(
     buckets: dict[str, list[dict[str, Any]]] = {
         "en_retard": [], "aujourdhui": [], "a_venir": [], "sans_echeance": [],
     }
-    for task in tasks.list_open():
+    for task in tasks.list_mine():
         buckets[task.bucket(reference)].append(
             {"task_id": task.task_id, "title": task.title, "due_date": task.due_date}
         )
@@ -410,7 +410,7 @@ def compose_evening_report(
         {"task_id": task.task_id, "title": task.title, "completed_at": task.completed_at}
         for task in tasks.list_completed_since(reference.isoformat())
     ]
-    open_tasks = tasks.list_open()
+    open_tasks = tasks.list_mine()
     remaining = [
         {
             "task_id": task.task_id, "title": task.title,

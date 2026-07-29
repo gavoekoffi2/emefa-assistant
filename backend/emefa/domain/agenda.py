@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from emefa.domain.crm import AmbiguousMatchError, CrmError, CrmRepository
-from emefa.domain.scope import Scope, ScopedStore
+from emefa.domain.scope import Ownership, Scope, ScopedStore
 from emefa.domain.tasks import TaskRepository
 
 EVENT_KINDS = ("rendez_vous", "réunion", "déplacement", "échéance", "personnel")
@@ -120,6 +120,9 @@ class CalendarProvider(Protocol):
 
 
 class AgendaRepository(ScopedStore):
+    #: An executive's calendar is personal, inside their company.
+    ownership = Ownership.USER
+
     def __init__(
         self,
         database_path: Path,

@@ -26,7 +26,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from emefa.domain.scope import Scope, ScopedStore
+from emefa.domain.scope import Ownership, Scope, ScopedStore
 
 CONTACT_KINDS = ("client", "prospect", "fournisseur", "partenaire", "collaborateur")
 CONTACT_STATUSES = ("actif", "en_pause", "inactif")
@@ -239,9 +239,13 @@ def _text(value: object, limit: int = 2_000) -> str:
 class CrmRepository(ScopedStore):
     """SQLite-backed CRM with the executive read models attached.
 
-    Every row belongs to one tenant and one user; the scope is applied by
-    :class:`~emefa.domain.scope.ScopedStore`, not by each query.
+    Clients, projects, quotations and contracts belong to the **company**, not
+    to the employee who typed them in: two colleagues must see the same CRM.
+    The scope is applied by :class:`~emefa.domain.scope.ScopedStore`, and
+    ``created_by_user_id`` records the author for the audit trail.
     """
+
+    ownership = Ownership.TENANT
 
     def __init__(self, database_path: Path, scope: Scope | None = None) -> None:
         super().__init__(database_path, scope)

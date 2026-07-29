@@ -520,6 +520,39 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         "CREATE INDEX idx_connected_accounts_status "
         "ON connected_accounts(tenant_id, user_id, status)",
     ),
+    # 18 — a consistent ownership shape across every business resource.
+    #
+    # Company resources record who created and last touched them; the read
+    # predicate stays tenant-wide so colleagues share one CRM. Tasks gain an
+    # assignee. Meeting children gain the tenant they were missing entirely.
+    (
+        *(
+            f"ALTER TABLE {table} ADD COLUMN {column} TEXT NOT NULL "
+            f"DEFAULT '{DEFAULT_USER_ID}'"
+            for table in (
+                "contacts", "projects", "deals", "contracts", "interactions",
+                "meetings", "prospects", "initiatives", "routines", "tasks",
+                "events", "artifacts",
+            )
+            for column in ("created_by_user_id", "updated_by_user_id")
+        ),
+        # Who is expected to do it; NULL means "the company, unassigned".
+        "ALTER TABLE tasks ADD COLUMN assigned_to_user_id TEXT",
+        "CREATE INDEX idx_tasks_assignee ON tasks(tenant_id, assigned_to_user_id, status)",
+        # Meeting decisions and actions had no tenant at all: they were reachable
+        # only through their parent, which is not a security boundary.
+        f"ALTER TABLE meeting_decisions ADD COLUMN tenant_id TEXT NOT NULL "
+        f"DEFAULT '{DEFAULT_TENANT_ID}'",
+        f"ALTER TABLE meeting_actions ADD COLUMN tenant_id TEXT NOT NULL "
+        f"DEFAULT '{DEFAULT_TENANT_ID}'",
+        "CREATE INDEX idx_meeting_decisions_tenant ON meeting_decisions(tenant_id, meeting_id)",
+        "CREATE INDEX idx_meeting_actions_tenant ON meeting_actions(tenant_id, meeting_id)",
+        # Company-wide indexes for the reads that matter most.
+        "CREATE INDEX idx_contacts_tenant ON contacts(tenant_id, kind, status)",
+        "CREATE INDEX idx_projects_tenant ON projects(tenant_id, status, health)",
+        "CREATE INDEX idx_deals_tenant ON deals(tenant_id, stage)",
+        "CREATE INDEX idx_contracts_tenant ON contracts(tenant_id, status, end_date)",
+    ),
 )
 
 

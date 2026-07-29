@@ -162,12 +162,17 @@ def test_existing_single_tenant_data_keeps_working(tmp_path):
 
 def test_scoped_stores_cannot_express_an_unscoped_query(tmp_path):
     """The interface itself is the guarantee: no method omits the scope."""
+    from emefa.domain.scope import Ownership
+
     store = ScopedStore(tmp_path / "shape.db", JEAN)
     sql = store._scoped_sql("*", "contacts", "kind = ?", "LIMIT 1")
-    assert "tenant_id = ? AND user_id = ?" in sql
+    assert "tenant_id = ?" in sql
     assert sql.index("tenant_id") < sql.index("kind"), "scope must lead the predicate"
     # Even with no caller predicate, the scope is still applied.
-    assert "WHERE tenant_id = ? AND user_id = ?" in store._scoped_sql("*", "contacts", "", "")
+    assert "WHERE tenant_id = ?" in store._scoped_sql("*", "contacts", "", "")
+    # A personal table also carries the user.
+    personal = store._scoped_sql("*", "events", "", "", Ownership.USER)
+    assert "WHERE tenant_id = ? AND user_id = ?" in personal
 
 
 def test_the_unscoped_tables_are_the_ones_we_think_they_are(tmp_path):

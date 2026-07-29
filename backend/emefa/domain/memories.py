@@ -11,7 +11,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from emefa.domain.scope import Scope, ScopedStore
+from emefa.domain.scope import Ownership, Scope, ScopedStore
 
 CATEGORIES = ("fact", "preference", "relationship", "procedure", "other")
 _COLUMNS = "memory_id, category, content, source, created_at"
@@ -27,6 +27,10 @@ class Memory:
 
 
 class MemoryRepository(ScopedStore):
+    #: Durable memory feeds one person's prompt, so it is personal. Knowledge
+    #: that belongs to the company lives in the business profile instead.
+    ownership = Ownership.USER
+
     def __init__(self, database_path: Path, scope: Scope | None = None) -> None:
         super().__init__(database_path, scope)
 

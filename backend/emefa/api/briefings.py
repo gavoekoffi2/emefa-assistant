@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from emefa.api.devices import current_device
+from emefa.api.workspace import current_workspace
 from emefa.domain.devices import Device
 from emefa.domain.reports import (
     EVENING_SECTIONS,
@@ -73,18 +74,19 @@ def todays_briefing(
 @router.get("/morning", response_model=ComposedReport)
 def morning_brief(
     request: Request,
-    _device: Annotated[Device, Depends(current_device)],
+    device: Annotated[Device, Depends(current_device)],
 ) -> ComposedReport:
     state = request.app.state
+    workspace = current_workspace(request, device)
     content = compose_morning_brief(
         state.profiles,
-        state.tasks,
+        workspace.tasks,
         state.prospects,
-        state.crm,
-        state.meetings,
+        workspace.crm,
+        workspace.meetings,
         state.report_preferences.get(),
-        agenda=state.agenda,
-        inbox=state.inbox,
+        agenda=workspace.agenda,
+        inbox=workspace.inbox,
     )
     return ComposedReport(
         brief_date=content["date"], content=content, text=format_morning_text(content)
@@ -94,16 +96,17 @@ def morning_brief(
 @router.get("/evening", response_model=ComposedReport)
 def evening_report(
     request: Request,
-    _device: Annotated[Device, Depends(current_device)],
+    device: Annotated[Device, Depends(current_device)],
 ) -> ComposedReport:
     state = request.app.state
+    workspace = current_workspace(request, device)
     content = compose_evening_report(
         state.profiles,
-        state.tasks,
-        state.crm,
-        state.meetings,
+        workspace.tasks,
+        workspace.crm,
+        workspace.meetings,
         state.report_preferences.get(),
-        agenda=state.agenda,
+        agenda=workspace.agenda,
     )
     # Storing what was shown keeps the evening e-mail consistent with it.
     state.evening_reports.save(content["date"], content)
@@ -115,7 +118,7 @@ def evening_report(
 @router.get("/preferences", response_model=PreferencesResponse)
 def get_preferences(
     request: Request,
-    _device: Annotated[Device, Depends(current_device)],
+    device: Annotated[Device, Depends(current_device)],
 ) -> PreferencesResponse:
     return _preferences_response(request.app.state.report_preferences.get())
 

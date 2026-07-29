@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
 from emefa.api.devices import current_device
+from emefa.api.workspace import current_workspace
 from emefa.domain.agent import AgentReply, RequestedAction
 from emefa.domain.conversations import VOICE_CONVERSATION_ID
 from emefa.domain.devices import Device
@@ -108,7 +109,7 @@ async def run_agent(
     request: Request,
     device: Annotated[Device, Depends(current_device)],
 ) -> RunResponse:
-    reply = await request.app.state.agent.run(
+    reply = await current_workspace(request, device).agent.run(
         payload.message,
         conversation_id=device.device_id,
     )
@@ -153,7 +154,7 @@ def clear_conversation(
     request: Request,
     device: Annotated[Device, Depends(current_device)],
 ) -> None:
-    memory = request.app.state.agent.memory
+    memory = current_workspace(request, device).agent.memory
     forget = getattr(memory, "forget", None)
     if callable(forget):
         forget(device.device_id)
@@ -217,7 +218,7 @@ async def decide_approval(
             answer="Action annulée. Rien n’a été exécuté.",
         )
 
-    reply = await request.app.state.agent.execute_approved(
+    reply = await current_workspace(request, device).agent.execute_approved(
         pending.to_requested_action(),
         conversation_id=pending.conversation_id,
     )

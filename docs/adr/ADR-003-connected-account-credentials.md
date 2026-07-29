@@ -76,10 +76,11 @@ single-mailbox deployment keeps working unchanged, but another tenant can never 
 
 Stated plainly, because the gap is easy to misread as closed:
 
-- **The rest of the data is still single-scope.** CRM, agenda, tasks, memory, documents and
-  reports all write the default tenant and **none of them filter by tenant** — verified, not
-  assumed. Credentials are currently the *only* genuinely scoped resource. Two tenants today
-  would share one CRM.
+- ~~**The rest of the data is still single-scope.**~~ **Closed (2026-07-29).** CRM, tasks,
+  memory and agenda are now scoped through `domain/scope.ScopedStore`, and requests resolve a
+  per-owner `Workspace` (including the agent's tool shelf). Meetings, prospects, routines,
+  documents, profiles and reports remain single-scope — tracked as an executable list in
+  `tests/test_tenant_isolation.py`, which fails when a new tenant table is added unscoped.
 - **There is no OAuth flow and no Gmail adapter.** Tokens can be stored, listed, revoked and
   decrypted by their owner; `MailboxResolver.build_provider` is the seam a real adapter plugs
   into. Until it ships, a connected account resolves to *no* provider and says so, rather than

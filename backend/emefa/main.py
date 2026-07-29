@@ -49,6 +49,8 @@ from emefa.domain.profiles import ProfileRepository
 from emefa.domain.prospects import ProspectRepository
 from emefa.domain.ratelimit import FailureLimiter
 from emefa.domain.reports import ReportPreferencesRepository
+from emefa.domain.scope import DEFAULT_SCOPE, Scope
+from emefa.domain.workspace import Workspace
 from emefa.domain.tasks import TaskRepository
 from emefa.domain.uploaded_files import UploadedFileStore
 from emefa.domain.workflows import WorkflowEngine
@@ -105,6 +107,49 @@ def create_app(
         active_settings.database_path, table="evening_reports"
     )
     workflows = WorkflowEngine(profiles, crm, documents, tasks)
+
+    # --- per-tenant workspaces ------------------------------------------
+    #
+    # The repositories above are the default-scope instances the single-tenant
+    # deployment uses. A request from another owner must not touch them, so a
+    # workspace rebinds the scoped repositories — and the agent built on top of
+    # them — to that owner. Memoised because a shelf is not free to assemble.
+    _workspaces: dict[Scope, Workspace] = {}
+
+    def build_workspace(scope: Scope) -> Workspace:
+        scoped_crm = crm.for_scope(scope)
+        scoped_tasks = tasks.for_scope(scope)
+        scoped_memories = memories.for_scope(scope)
+        scoped_agenda = AgendaRepository(
+            active_settings.database_path, scoped_crm, scoped_tasks, scope
+        )
+        scoped_meetings = MeetingRepository(
+            active_settings.database_path, scoped_crm, scoped_tasks, documents
+        )
+        scoped_workflows = WorkflowEngine(profiles, scoped_crm, documents, scoped_tasks)
+        scoped_inbox = InboxReader(active_email_provider, scoped_crm)
+        engine = AgentEngine(
+            selected_brain,
+            build_tool_shelf(
+                profiles, scoped_tasks, scoped_memories, active_email_provider, documents,
+                prospects, initiatives=initiatives, routines=routines,
+                uploaded_files=uploaded_files, vision_analyzer=vision_analyzer,
+                crm=scoped_crm, meetings=scoped_meetings, workflows=scoped_workflows,
+                onboarding=onboarding, preferences=report_preferences,
+                agenda=scoped_agenda, inbox=scoped_inbox,
+            ),
+            memory=conversations,
+        )
+        return Workspace(
+            scope=scope, crm=scoped_crm, tasks=scoped_tasks, memories=scoped_memories,
+            agenda=scoped_agenda, meetings=scoped_meetings, workflows=scoped_workflows,
+            inbox=scoped_inbox, agent=engine,
+        )
+
+    def workspace_for(scope: Scope) -> Workspace:
+        if scope not in _workspaces:
+            _workspaces[scope] = build_workspace(scope)
+        return _workspaces[scope]
     active_email_provider = email_provider
     if active_email_provider is None and active_settings.email_account:
         active_email_provider = HimalayaEmailProvider(
@@ -357,6 +402,7 @@ def create_app(
     application.state.agenda = agenda
     application.state.inbox = inbox_reader
     application.state.vault = vault
+    application.state.workspace_for = workspace_for
     application.state.mailboxes = mailboxes
     application.state.meetings = meetings
     application.state.onboarding = onboarding
@@ -369,29 +415,9 @@ def create_app(
     application.state.compose_context = compose_context
     application.state.compose_text_context = compose_text_context
     application.state.voice_llm = voice_llm_proxy
-    application.state.agent = AgentEngine(
-        selected_brain,
-        build_tool_shelf(
-            profiles,
-            tasks,
-            memories,
-            active_email_provider,
-            documents,
-            prospects,
-            initiatives=initiatives,
-            routines=routines,
-            uploaded_files=uploaded_files,
-            vision_analyzer=vision_analyzer,
-            crm=crm,
-            meetings=meetings,
-            workflows=workflows,
-            onboarding=onboarding,
-            preferences=report_preferences,
-            agenda=agenda,
-            inbox=inbox_reader,
-        ),
-        memory=conversations,
-    )
+    # One object identity for the single-tenant deployment: the default
+    # workspace's engine *is* the application-wide agent.
+    application.state.agent = workspace_for(DEFAULT_SCOPE).agent
     # The voice channel's bearer secret is shared with the third-party
     # ElevenLabs bridge, so it runs a reduced shelf without live-mailbox
     # reads (email_search/email_read). Approval-gated actions (email_send,

@@ -845,3 +845,37 @@ This delivers **credential** isolation, not multi-tenancy. CRM, agenda, tasks, m
 documents and reports still write the default tenant and **none of them filter by tenant**
 (verified). There is no OAuth flow and no Gmail adapter yet: a stored account resolves to no
 provider and says so. Enrollment is still one shared instance code.
+
+## Completed — tenant scoping for the business data and the request path (2026-07-29)
+
+Closes the gap ADR-003 recorded: credentials were isolated, everything else was not.
+
+- **`domain/scope.py`** — `Scope` plus `ScopedStore`, which applies the owner predicate
+  itself. `fetch_one`/`fetch_all` prepend it, `insert` stamps it, `update_scoped`/
+  `delete_scoped` add it to the key. **A caller cannot express an unscoped query through
+  this interface** — that is the point, since one forgotten `AND tenant_id = ?` is a silent
+  cross-tenant read.
+- **Scoped repositories:** CRM (contacts, projects, deals, contracts, interactions), tasks,
+  memories and agenda. The CRM's 29 query sites were converted through its existing helpers,
+  so the predicate lives in one place rather than twenty.
+- **Per-owner `Workspace`:** requests resolve the scoped repositories *and a tool shelf built
+  on them* from the authenticated device's owner. The default-scope workspace's engine **is**
+  `app.state.agent`, so the single-tenant deployment keeps one object identity.
+
+### A defect this work found, and why it is worth recording
+
+After scoping the repositories, unit tests passed and an end-to-end check against a real
+server **failed**: the API still served the one instance built at startup, so Jean saw
+Amina's contacts. Scoped repositories are not isolation on their own — the *request path*
+has to resolve them. `tests/test_tenant_isolation.py` now covers that path directly, with a
+comment naming the regression so a future refactor cannot quietly reintroduce it.
+
+### Still single-scope
+
+Meetings, prospects, initiatives, routines, briefings, report preferences, conversations,
+pending actions, uploaded files, artifacts, onboarding state and business profiles. These are
+listed in `KNOWN_UNSCOPED_TABLES`, and a conformance test fails if a new table carrying
+`tenant_id` is added without being scoped or added to that list deliberately.
+
+Tests: backend **229 passed** (12 in `tests/test_tenant_isolation.py`), plus an end-to-end
+two-tenant run against uvicorn covering CRM, tasks, agenda, briefings and lookup.

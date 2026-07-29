@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from emefa.api.devices import current_device
+from emefa.api.workspace import current_workspace
 from emefa.domain.devices import Device
 from emefa.observability import audit
 
@@ -37,7 +38,7 @@ def list_open_tasks(
             bucket=task.bucket(),
             created_at=task.created_at,
         )
-        for task in request.app.state.tasks.list_open()
+        for task in current_workspace(request, device).tasks.list_open()
     ]
 
 
@@ -47,7 +48,7 @@ def complete_task(
     request: Request,
     device: Annotated[Device, Depends(current_device)],
 ) -> TaskResponse:
-    task = request.app.state.tasks.complete(task_id)
+    task = current_workspace(request, device).tasks.complete(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="task_not_found_or_not_open")
     audit("task_completed_via_api", device_id=device.device_id, task_id=task.task_id)

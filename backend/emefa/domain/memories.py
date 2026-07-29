@@ -11,7 +11,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from emefa.domain import storage
+from emefa.domain.scope import Scope, ScopedStore
 
 CATEGORIES = ("fact", "preference", "relationship", "procedure", "other")
 _COLUMNS = "memory_id, category, content, source, created_at"
@@ -26,10 +26,9 @@ class Memory:
     created_at: str
 
 
-class MemoryRepository:
-    def __init__(self, database_path: Path) -> None:
-        self.database_path = database_path
-        storage.run_migrations(database_path)
+class MemoryRepository(ScopedStore):
+    def __init__(self, database_path: Path, scope: Scope | None = None) -> None:
+        super().__init__(database_path, scope)
 
     def remember(
         self, content: str, category: str = "fact", source: str = "conversation"
@@ -40,37 +39,27 @@ class MemoryRepository:
         if category not in CATEGORIES:
             category = "other"
         memory_id = uuid.uuid4().hex
-        with storage.connect(self.database_path) as connection:
-            connection.execute(
-                "INSERT INTO memories (memory_id, category, content, source) "
-                "VALUES (?, ?, ?, ?)",
-                (memory_id, category, cleaned, source),
-            )
+        self.insert("memories", {
+            "memory_id": memory_id, "category": category,
+            "content": cleaned, "source": source,
+        })
         found = self.get(memory_id)
         assert found is not None
         return found
 
     def get(self, memory_id: str) -> Memory | None:
-        with storage.connect(self.database_path) as connection:
-            row = connection.execute(
-                f"SELECT {_COLUMNS} FROM memories WHERE memory_id = ?", (memory_id,)
-            ).fetchone()
-        return Memory(**dict(row)) if row is not None else None
+        row = self.fetch_one(_COLUMNS, "memories", "memory_id = ?", (memory_id,))
+        return Memory(**row) if row is not None else None
 
     def list_all(self, limit: int = 100) -> list[Memory]:
-        with storage.connect(self.database_path) as connection:
-            rows = connection.execute(
-                f"SELECT {_COLUMNS} FROM memories ORDER BY created_at DESC, memory_id LIMIT ?",
-                (limit,),
-            ).fetchall()
-        return [Memory(**dict(row)) for row in rows]
+        rows = self.fetch_all(
+            _COLUMNS, "memories", "", (limit,),
+            "ORDER BY created_at DESC, memory_id LIMIT ?",
+        )
+        return [Memory(**row) for row in rows]
 
     def forget(self, memory_id: str) -> bool:
-        with storage.connect(self.database_path) as connection:
-            deleted = connection.execute(
-                "DELETE FROM memories WHERE memory_id = ?", (memory_id,)
-            ).rowcount
-        return bool(deleted)
+        return self.delete_scoped("memories", "memory_id", memory_id)
 
     def context_block(self, max_items: int = 12, max_chars: int = 200) -> str:
         """Bounded memory block for the system prompt; empty string when no memory."""

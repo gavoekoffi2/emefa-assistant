@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from emefa.api.devices import current_device
+from emefa.api.workspace import current_workspace
 from emefa.domain.agenda import EVENT_KINDS, AgendaError
 from emefa.domain.crm import AmbiguousMatchError
 from emefa.domain.devices import Device
@@ -45,10 +46,10 @@ def _guard(action: Any) -> Any:
 @router.get("")
 def view(
     request: Request,
-    _device: Annotated[Device, Depends(current_device)],
+    device: Annotated[Device, Depends(current_device)],
     days: int = 7,
 ) -> dict[str, Any]:
-    agenda = request.app.state.agenda
+    agenda = current_workspace(request, device).agenda
     horizon = max(0, min(days, 60))
     return {
         **agenda.digest(),
@@ -65,7 +66,7 @@ def create_event(
     device: Annotated[Device, Depends(current_device)],
 ) -> dict[str, Any]:
     fields = payload.model_dump(exclude_none=True)
-    event = _guard(lambda: request.app.state.agenda.save_event(None, **fields))
+    event = _guard(lambda: current_workspace(request, device).agenda.save_event(None, **fields))
     audit("agenda_event_created", device_id=device.device_id, event_id=event.event_id)
     return {**asdict(event), "label": event.label()}
 
@@ -78,7 +79,7 @@ def update_event(
     device: Annotated[Device, Depends(current_device)],
 ) -> dict[str, Any]:
     fields = payload.model_dump(exclude_none=True)
-    event = _guard(lambda: request.app.state.agenda.save_event(event_id, **fields))
+    event = _guard(lambda: current_workspace(request, device).agenda.save_event(event_id, **fields))
     audit("agenda_event_updated", device_id=device.device_id, event_id=event_id)
     return {**asdict(event), "label": event.label()}
 
@@ -89,7 +90,7 @@ def delete_event(
     request: Request,
     device: Annotated[Device, Depends(current_device)],
 ) -> Response:
-    if not request.app.state.agenda.delete(event_id):
+    if not current_workspace(request, device).agenda.delete(event_id):
         raise HTTPException(status_code=404, detail="event_not_found")
     audit("agenda_event_deleted", device_id=device.device_id, event_id=event_id)
     return Response(status_code=204)
@@ -99,10 +100,10 @@ def delete_event(
 def preparation(
     event_id: str,
     request: Request,
-    _device: Annotated[Device, Depends(current_device)],
+    device: Annotated[Device, Depends(current_device)],
 ) -> dict[str, Any]:
     try:
-        return request.app.state.agenda.prepare(event_id)
+        return current_workspace(request, device).agenda.prepare(event_id)
     except AgendaError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -111,10 +112,10 @@ def preparation(
 def day(
     when: str,
     request: Request,
-    _device: Annotated[Device, Depends(current_device)],
+    device: Annotated[Device, Depends(current_device)],
 ) -> dict[str, Any]:
     try:
         reference = date.fromisoformat(when)
     except ValueError as error:
         raise HTTPException(status_code=422, detail="invalid_date") from error
-    return request.app.state.agenda.digest(reference)
+    return current_workspace(request, device).agenda.digest(reference)

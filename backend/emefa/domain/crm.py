@@ -26,7 +26,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from emefa.domain import storage
+from emefa.domain.scope import Scope, ScopedStore
 
 CONTACT_KINDS = ("client", "prospect", "fournisseur", "partenaire", "collaborateur")
 CONTACT_STATUSES = ("actif", "en_pause", "inactif")
@@ -236,12 +236,15 @@ def _text(value: object, limit: int = 2_000) -> str:
     return str(value or "").strip()[:limit]
 
 
-class CrmRepository:
-    """SQLite-backed CRM with the executive read models attached."""
+class CrmRepository(ScopedStore):
+    """SQLite-backed CRM with the executive read models attached.
 
-    def __init__(self, database_path: Path) -> None:
-        self.database_path = Path(database_path)
-        storage.run_migrations(self.database_path)
+    Every row belongs to one tenant and one user; the scope is applied by
+    :class:`~emefa.domain.scope.ScopedStore`, not by each query.
+    """
+
+    def __init__(self, database_path: Path, scope: Scope | None = None) -> None:
+        super().__init__(database_path, scope)
 
     # -- contacts ---------------------------------------------------------
 
@@ -280,20 +283,19 @@ class CrmRepository:
         return found
 
     def get_contact(self, contact_id: str) -> Contact | None:
-        row = self._one(f"SELECT {_CONTACT_COLUMNS} FROM contacts WHERE contact_id = ?", (contact_id,))
+        row = self._one(_CONTACT_COLUMNS, "contacts", "contact_id = ?", (contact_id,))
         return Contact(**row) if row else None
 
     def list_contacts(self, kind: str | None = None, limit: int = 200) -> list[Contact]:
         if kind:
             rows = self._all(
-                f"SELECT {_CONTACT_COLUMNS} FROM contacts WHERE kind = ? "
+                _CONTACT_COLUMNS, "contacts", "kind = ?", (kind, limit),
                 "ORDER BY name COLLATE NOCASE LIMIT ?",
-                (kind, limit),
             )
         else:
             rows = self._all(
-                f"SELECT {_CONTACT_COLUMNS} FROM contacts ORDER BY name COLLATE NOCASE LIMIT ?",
-                (limit,),
+                _CONTACT_COLUMNS, "contacts", "", (limit,),
+                "ORDER BY name COLLATE NOCASE LIMIT ?",
             )
         return [Contact(**row) for row in rows]
 
@@ -334,21 +336,20 @@ class CrmRepository:
         return found
 
     def get_project(self, project_id: str) -> Project | None:
-        row = self._one(f"SELECT {_PROJECT_COLUMNS} FROM projects WHERE project_id = ?", (project_id,))
+        row = self._one(_PROJECT_COLUMNS, "projects", "project_id = ?", (project_id,))
         return Project(**row) if row else None
 
     def list_projects(self, include_closed: bool = False, limit: int = 200) -> list[Project]:
         if include_closed:
             rows = self._all(
-                f"SELECT {_PROJECT_COLUMNS} FROM projects ORDER BY updated_at DESC LIMIT ?",
-                (limit,),
+                _PROJECT_COLUMNS, "projects", "", (limit,), "ORDER BY updated_at DESC LIMIT ?",
             )
         else:
             placeholders = ", ".join("?" for _ in PROJECT_OPEN_STATUSES)
             rows = self._all(
-                f"SELECT {_PROJECT_COLUMNS} FROM projects WHERE status IN ({placeholders}) "
-                "ORDER BY due_date IS NULL, due_date, updated_at DESC LIMIT ?",
+                _PROJECT_COLUMNS, "projects", f"status IN ({placeholders})",
                 (*PROJECT_OPEN_STATUSES, limit),
+                "ORDER BY due_date IS NULL, due_date, updated_at DESC LIMIT ?",
             )
         return [Project(**row) for row in rows]
 
@@ -398,12 +399,12 @@ class CrmRepository:
         return found
 
     def get_deal(self, deal_id: str) -> Deal | None:
-        row = self._one(f"SELECT {_DEAL_COLUMNS} FROM deals WHERE deal_id = ?", (deal_id,))
+        row = self._one(_DEAL_COLUMNS, "deals", "deal_id = ?", (deal_id,))
         return Deal(**row) if row else None
 
     def list_deals(self, limit: int = 200) -> list[Deal]:
         rows = self._all(
-            f"SELECT {_DEAL_COLUMNS} FROM deals ORDER BY updated_at DESC LIMIT ?", (limit,)
+            _DEAL_COLUMNS, "deals", "", (limit,), "ORDER BY updated_at DESC LIMIT ?"
         )
         return [Deal(**row) for row in rows]
 
@@ -454,15 +455,14 @@ class CrmRepository:
 
     def get_contract(self, contract_id: str) -> Contract | None:
         row = self._one(
-            f"SELECT {_CONTRACT_COLUMNS} FROM contracts WHERE contract_id = ?", (contract_id,)
+            _CONTRACT_COLUMNS, "contracts", "contract_id = ?", (contract_id,)
         )
         return Contract(**row) if row else None
 
     def list_contracts(self, limit: int = 200) -> list[Contract]:
         rows = self._all(
-            f"SELECT {_CONTRACT_COLUMNS} FROM contracts "
+            _CONTRACT_COLUMNS, "contracts", "", (limit,),
             "ORDER BY end_date IS NULL, end_date LIMIT ?",
-            (limit,),
         )
         return [Contract(**row) for row in rows]
 
@@ -505,8 +505,7 @@ class CrmRepository:
                 "contacts", "contact_id", resolved_contact, {"last_interaction_at": when}
             )
         row = self._one(
-            f"SELECT {_INTERACTION_COLUMNS} FROM interactions WHERE interaction_id = ?",
-            (interaction_id,),
+            _INTERACTION_COLUMNS, "interactions", "interaction_id = ?", (interaction_id,)
         )
         assert row is not None
         return Interaction(**row)
@@ -516,27 +515,24 @@ class CrmRepository:
     ) -> list[Interaction]:
         if contact_id and project_id:
             rows = self._all(
-                f"SELECT {_INTERACTION_COLUMNS} FROM interactions "
-                "WHERE contact_id = ? OR project_id = ? ORDER BY occurred_at DESC LIMIT ?",
+                _INTERACTION_COLUMNS, "interactions", "contact_id = ? OR project_id = ?",
                 (contact_id, project_id, limit),
+                "ORDER BY occurred_at DESC LIMIT ?",
             )
         elif contact_id:
             rows = self._all(
-                f"SELECT {_INTERACTION_COLUMNS} FROM interactions "
-                "WHERE contact_id = ? ORDER BY occurred_at DESC LIMIT ?",
-                (contact_id, limit),
+                _INTERACTION_COLUMNS, "interactions", "contact_id = ?", (contact_id, limit),
+                "ORDER BY occurred_at DESC LIMIT ?",
             )
         elif project_id:
             rows = self._all(
-                f"SELECT {_INTERACTION_COLUMNS} FROM interactions "
-                "WHERE project_id = ? ORDER BY occurred_at DESC LIMIT ?",
-                (project_id, limit),
+                _INTERACTION_COLUMNS, "interactions", "project_id = ?", (project_id, limit),
+                "ORDER BY occurred_at DESC LIMIT ?",
             )
         else:
             rows = self._all(
-                f"SELECT {_INTERACTION_COLUMNS} FROM interactions "
+                _INTERACTION_COLUMNS, "interactions", "", (limit,),
                 "ORDER BY occurred_at DESC LIMIT ?",
-                (limit,),
             )
         return [Interaction(**row) for row in rows]
 
@@ -829,40 +825,31 @@ class CrmRepository:
         return "\n".join(lines)
 
     # -- SQL helpers ------------------------------------------------------
+    #
+    # Thin aliases onto ScopedStore so every read and write carries the owner.
 
-    def _one(self, sql: str, parameters: tuple[Any, ...]) -> dict[str, Any] | None:
-        with storage.connect(self.database_path) as connection:
-            row = connection.execute(sql, parameters).fetchone()
-        return dict(row) if row is not None else None
+    def _one(
+        self, columns: str, table: str, where: str = "", parameters: tuple[Any, ...] = ()
+    ) -> dict[str, Any] | None:
+        return self.fetch_one(columns, table, where, parameters)
 
-    def _all(self, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
-        with storage.connect(self.database_path) as connection:
-            rows = connection.execute(sql, parameters).fetchall()
-        return [dict(row) for row in rows]
+    def _all(
+        self,
+        columns: str,
+        table: str,
+        where: str = "",
+        parameters: tuple[Any, ...] = (),
+        tail: str = "",
+    ) -> list[dict[str, Any]]:
+        return self.fetch_all(columns, table, where, parameters, tail)
 
     def _insert(self, table: str, values: dict[str, Any]) -> None:
-        columns = ", ".join(values)
-        placeholders = ", ".join("?" for _ in values)
-        with storage.connect(self.database_path) as connection:
-            connection.execute(
-                f"INSERT INTO {table} ({columns}) VALUES ({placeholders})",
-                tuple(values.values()),
-            )
+        self.insert(table, values)
 
     def _update(self, table: str, key: str, key_value: str, values: dict[str, Any]) -> None:
-        if not values:
-            return
-        assignments = ", ".join(f"{column} = ?" for column in values)
-        with storage.connect(self.database_path) as connection:
-            connection.execute(
-                f"UPDATE {table} SET {assignments}, updated_at = CURRENT_TIMESTAMP "
-                f"WHERE {key} = ?"
-                if table != "interactions"
-                else f"UPDATE {table} SET {assignments} WHERE {key} = ?",
-                (*values.values(), key_value),
-            )
+        self.update_scoped(
+            table, key, key_value, values, touch_updated_at=table != "interactions"
+        )
 
     def _delete(self, table: str, key: str, key_value: str) -> bool:
-        with storage.connect(self.database_path) as connection:
-            cursor = connection.execute(f"DELETE FROM {table} WHERE {key} = ?", (key_value,))
-            return cursor.rowcount > 0
+        return self.delete_scoped(table, key, key_value)

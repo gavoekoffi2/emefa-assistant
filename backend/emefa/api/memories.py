@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from emefa.api.devices import current_device
+from emefa.api.workspace import current_workspace
 from emefa.domain.devices import Device
 from emefa.observability import audit
 
@@ -35,7 +36,7 @@ def list_memories(
             "source": memory.source,
             "created_at": memory.created_at,
         })
-        for memory in request.app.state.memories.list_all()
+        for memory in current_workspace(request, device).memories.list_all()
     ]
 
 
@@ -44,7 +45,7 @@ def export_memories(
     request: Request,
     device: Annotated[Device, Depends(current_device)],
 ) -> JSONResponse:
-    memories = request.app.state.memories.list_all(limit=10_000)
+    memories = current_workspace(request, device).memories.list_all(limit=10_000)
     audit("memories_exported", device_id=device.device_id, count=len(memories))
     payload = {
         "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -72,6 +73,6 @@ def forget_memory(
     request: Request,
     device: Annotated[Device, Depends(current_device)],
 ) -> None:
-    if not request.app.state.memories.forget(memory_id):
+    if not current_workspace(request, device).memories.forget(memory_id):
         raise HTTPException(status_code=404, detail="memory_not_found")
     audit("memory_forgotten_via_api", device_id=device.device_id, memory_id=memory_id)

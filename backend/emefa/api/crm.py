@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from emefa.api.devices import current_device
+from emefa.api.workspace import current_workspace
 from emefa.domain.crm import (
     CONTACT_KINDS,
     CONTACT_STATUSES,
@@ -95,8 +96,9 @@ class InteractionPayload(BaseModel):
     occurred_at: str | None = IsoDate
 
 
-def _crm(request: Request) -> Any:
-    return request.app.state.crm
+def _crm(request: Request, device: Device) -> Any:
+    """The caller's own CRM — resolved from their device, never app-wide."""
+    return current_workspace(request, device).crm
 
 
 def _guard(action: Any) -> Any:
@@ -114,28 +116,28 @@ def _guard(action: Any) -> Any:
 
 @router.get("/overview")
 def overview(
-    request: Request, _device: Annotated[Device, Depends(current_device)]
+    request: Request, device: Annotated[Device, Depends(current_device)]
 ) -> dict[str, Any]:
     """The four executive questions, answered in one payload."""
-    return _crm(request).overview()
+    return _crm(request, device).overview()
 
 
 @router.get("/lookup")
 def lookup(
     query: str,
     request: Request,
-    _device: Annotated[Device, Depends(current_device)],
+    device: Annotated[Device, Depends(current_device)],
 ) -> dict[str, Any]:
-    return _guard(lambda: _crm(request).lookup(query))
+    return _guard(lambda: _crm(request, device).lookup(query))
 
 
 @router.get("/contacts")
 def list_contacts(
     request: Request,
-    _device: Annotated[Device, Depends(current_device)],
+    device: Annotated[Device, Depends(current_device)],
     kind: str | None = None,
 ) -> list[dict[str, Any]]:
-    crm = _crm(request)
+    crm = _crm(request, device)
     return [
         {**asdict(contact), "follow_up_due": contact.follow_up_due(),
          "silent_days": contact.silent_days()}
@@ -150,7 +152,7 @@ def create_contact(
     device: Annotated[Device, Depends(current_device)],
 ) -> dict[str, Any]:
     fields = payload.model_dump(exclude_none=True)
-    contact = _guard(lambda: _crm(request).save_contact(None, **fields))
+    contact = _guard(lambda: _crm(request, device).save_contact(None, **fields))
     audit("crm_contact_created", device_id=device.device_id, contact_id=contact.contact_id)
     return asdict(contact)
 
@@ -163,7 +165,7 @@ def update_contact(
     device: Annotated[Device, Depends(current_device)],
 ) -> dict[str, Any]:
     fields = payload.model_dump(exclude_none=True)
-    contact = _guard(lambda: _crm(request).save_contact(contact_id, **fields))
+    contact = _guard(lambda: _crm(request, device).save_contact(contact_id, **fields))
     audit("crm_contact_updated", device_id=device.device_id, contact_id=contact_id)
     return asdict(contact)
 
@@ -174,7 +176,7 @@ def delete_contact(
     request: Request,
     device: Annotated[Device, Depends(current_device)],
 ) -> Response:
-    if not _crm(request).delete_contact(contact_id):
+    if not _crm(request, device).delete_contact(contact_id):
         raise HTTPException(status_code=404, detail="contact_not_found")
     audit("crm_contact_deleted", device_id=device.device_id, contact_id=contact_id)
     return Response(status_code=204)
@@ -183,10 +185,10 @@ def delete_contact(
 @router.get("/projects")
 def list_projects(
     request: Request,
-    _device: Annotated[Device, Depends(current_device)],
+    device: Annotated[Device, Depends(current_device)],
     include_closed: bool = False,
 ) -> list[dict[str, Any]]:
-    crm = _crm(request)
+    crm = _crm(request, device)
     return [
         {**asdict(project), "blocked": project.is_blocked(), "late": project.is_late()}
         for project in crm.list_projects(include_closed=include_closed)
@@ -200,7 +202,7 @@ def create_project(
     device: Annotated[Device, Depends(current_device)],
 ) -> dict[str, Any]:
     fields = payload.model_dump(exclude_none=True)
-    project = _guard(lambda: _crm(request).save_project(None, **fields))
+    project = _guard(lambda: _crm(request, device).save_project(None, **fields))
     audit("crm_project_created", device_id=device.device_id, project_id=project.project_id)
     return asdict(project)
 
@@ -213,7 +215,7 @@ def update_project(
     device: Annotated[Device, Depends(current_device)],
 ) -> dict[str, Any]:
     fields = payload.model_dump(exclude_none=True)
-    project = _guard(lambda: _crm(request).save_project(project_id, **fields))
+    project = _guard(lambda: _crm(request, device).save_project(project_id, **fields))
     audit("crm_project_updated", device_id=device.device_id, project_id=project_id)
     return asdict(project)
 
@@ -224,7 +226,7 @@ def delete_project(
     request: Request,
     device: Annotated[Device, Depends(current_device)],
 ) -> Response:
-    if not _crm(request).delete_project(project_id):
+    if not _crm(request, device).delete_project(project_id):
         raise HTTPException(status_code=404, detail="project_not_found")
     audit("crm_project_deleted", device_id=device.device_id, project_id=project_id)
     return Response(status_code=204)
@@ -232,9 +234,9 @@ def delete_project(
 
 @router.get("/deals")
 def list_deals(
-    request: Request, _device: Annotated[Device, Depends(current_device)]
+    request: Request, device: Annotated[Device, Depends(current_device)]
 ) -> list[dict[str, Any]]:
-    crm = _crm(request)
+    crm = _crm(request, device)
     return [
         {**asdict(deal), "awaiting_response": deal.awaiting_response()}
         for deal in crm.list_deals()
@@ -248,7 +250,7 @@ def create_deal(
     device: Annotated[Device, Depends(current_device)],
 ) -> dict[str, Any]:
     fields = payload.model_dump(exclude_none=True)
-    deal = _guard(lambda: _crm(request).save_deal(None, **fields))
+    deal = _guard(lambda: _crm(request, device).save_deal(None, **fields))
     audit("crm_deal_created", device_id=device.device_id, deal_id=deal.deal_id)
     return asdict(deal)
 
@@ -261,7 +263,7 @@ def update_deal(
     device: Annotated[Device, Depends(current_device)],
 ) -> dict[str, Any]:
     fields = payload.model_dump(exclude_none=True)
-    deal = _guard(lambda: _crm(request).save_deal(deal_id, **fields))
+    deal = _guard(lambda: _crm(request, device).save_deal(deal_id, **fields))
     audit("crm_deal_updated", device_id=device.device_id, deal_id=deal_id)
     return asdict(deal)
 
@@ -272,7 +274,7 @@ def delete_deal(
     request: Request,
     device: Annotated[Device, Depends(current_device)],
 ) -> Response:
-    if not _crm(request).delete_deal(deal_id):
+    if not _crm(request, device).delete_deal(deal_id):
         raise HTTPException(status_code=404, detail="deal_not_found")
     audit("crm_deal_deleted", device_id=device.device_id, deal_id=deal_id)
     return Response(status_code=204)
@@ -280,9 +282,9 @@ def delete_deal(
 
 @router.get("/contracts")
 def list_contracts(
-    request: Request, _device: Annotated[Device, Depends(current_device)]
+    request: Request, device: Annotated[Device, Depends(current_device)]
 ) -> list[dict[str, Any]]:
-    crm = _crm(request)
+    crm = _crm(request, device)
     return [
         {**asdict(contract), "days_to_expiry": contract.days_to_expiry(),
          "expiring": contract.expiring()}
@@ -297,7 +299,7 @@ def create_contract(
     device: Annotated[Device, Depends(current_device)],
 ) -> dict[str, Any]:
     fields = payload.model_dump(exclude_none=True)
-    contract = _guard(lambda: _crm(request).save_contract(None, **fields))
+    contract = _guard(lambda: _crm(request, device).save_contract(None, **fields))
     audit("crm_contract_created", device_id=device.device_id, contract_id=contract.contract_id)
     return asdict(contract)
 
@@ -310,7 +312,7 @@ def update_contract(
     device: Annotated[Device, Depends(current_device)],
 ) -> dict[str, Any]:
     fields = payload.model_dump(exclude_none=True)
-    contract = _guard(lambda: _crm(request).save_contract(contract_id, **fields))
+    contract = _guard(lambda: _crm(request, device).save_contract(contract_id, **fields))
     audit("crm_contract_updated", device_id=device.device_id, contract_id=contract_id)
     return asdict(contract)
 
@@ -321,7 +323,7 @@ def delete_contract(
     request: Request,
     device: Annotated[Device, Depends(current_device)],
 ) -> Response:
-    if not _crm(request).delete_contract(contract_id):
+    if not _crm(request, device).delete_contract(contract_id):
         raise HTTPException(status_code=404, detail="contract_not_found")
     audit("crm_contract_deleted", device_id=device.device_id, contract_id=contract_id)
     return Response(status_code=204)
@@ -330,12 +332,12 @@ def delete_contract(
 @router.get("/interactions")
 def list_interactions(
     request: Request,
-    _device: Annotated[Device, Depends(current_device)],
+    device: Annotated[Device, Depends(current_device)],
     contact_id: str | None = None,
     project_id: str | None = None,
     limit: int = 20,
 ) -> list[dict[str, Any]]:
-    entries = _crm(request).interactions_for(
+    entries = _crm(request, device).interactions_for(
         contact_id, project_id, limit=max(1, min(limit, 100))
     )
     return [asdict(entry) for entry in entries]
@@ -348,7 +350,7 @@ def log_interaction(
     device: Annotated[Device, Depends(current_device)],
 ) -> dict[str, Any]:
     interaction = _guard(
-        lambda: _crm(request).log_interaction(
+        lambda: _crm(request, device).log_interaction(
             summary=payload.summary,
             kind=payload.kind,
             contact_id=payload.contact_id,

@@ -8,6 +8,7 @@ from datetime import date
 from pathlib import Path
 
 from emefa.domain import storage
+from emefa.domain.scope import Scope, ScopedStore
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,56 +41,47 @@ class Task:
 _COLUMNS = "task_id, title, details, due_date, status, created_at, completed_at"
 
 
-class TaskRepository:
-    def __init__(self, database_path: Path) -> None:
-        self.database_path = database_path
-        storage.run_migrations(database_path)
+class TaskRepository(ScopedStore):
+    def __init__(self, database_path: Path, scope: Scope | None = None) -> None:
+        super().__init__(database_path, scope)
 
     def create(self, title: str, details: str = "", due_date: str | None = None) -> Task:
         cleaned_due = due_date or None
         if cleaned_due is not None:
             date.fromisoformat(cleaned_due)  # validate; raises ValueError
         task_id = uuid.uuid4().hex
-        with storage.connect(self.database_path) as connection:
-            connection.execute(
-                "INSERT INTO tasks (task_id, title, details, due_date) VALUES (?, ?, ?, ?)",
-                (task_id, title.strip(), details.strip(), cleaned_due),
-            )
+        self.insert("tasks", {
+            "task_id": task_id, "title": title.strip(),
+            "details": details.strip(), "due_date": cleaned_due,
+        })
         found = self.get(task_id)
         assert found is not None
         return found
 
     def get(self, task_id: str) -> Task | None:
-        with storage.connect(self.database_path) as connection:
-            row = connection.execute(
-                f"SELECT {_COLUMNS} FROM tasks WHERE task_id = ?", (task_id,)
-            ).fetchone()
-        return Task(**dict(row)) if row is not None else None
+        row = self.fetch_one(_COLUMNS, "tasks", "task_id = ?", (task_id,))
+        return Task(**row) if row is not None else None
 
     def list_open(self, limit: int = 50) -> list[Task]:
-        with storage.connect(self.database_path) as connection:
-            rows = connection.execute(
-                f"SELECT {_COLUMNS} FROM tasks WHERE status = 'open' "
-                "ORDER BY due_date IS NULL, due_date, created_at LIMIT ?",
-                (limit,),
-            ).fetchall()
-        return [Task(**dict(row)) for row in rows]
+        rows = self.fetch_all(
+            _COLUMNS, "tasks", "status = 'open'", (limit,),
+            "ORDER BY due_date IS NULL, due_date, created_at LIMIT ?",
+        )
+        return [Task(**row) for row in rows]
 
     def list_completed_since(self, since: str, limit: int = 50) -> list[Task]:
         """Tasks closed on or after ``since`` (YYYY-MM-DD) — evening report."""
-        with storage.connect(self.database_path) as connection:
-            rows = connection.execute(
-                f"SELECT {_COLUMNS} FROM tasks WHERE status = 'done' "
-                "AND completed_at >= ? ORDER BY completed_at DESC LIMIT ?",
-                (since, limit),
-            ).fetchall()
-        return [Task(**dict(row)) for row in rows]
+        rows = self.fetch_all(
+            _COLUMNS, "tasks", "status = 'done' AND completed_at >= ?", (since, limit),
+            "ORDER BY completed_at DESC LIMIT ?",
+        )
+        return [Task(**row) for row in rows]
 
     def complete(self, task_id: str) -> Task | None:
         with storage.connect(self.database_path) as connection:
             updated = connection.execute(
                 "UPDATE tasks SET status = 'done', completed_at = CURRENT_TIMESTAMP "
-                "WHERE task_id = ? AND status = 'open'",
-                (task_id,),
+                f"WHERE task_id = ? AND status = 'open' AND {self.scope.predicate}",
+                (task_id, *self.scope.values),
             ).rowcount
         return self.get(task_id) if updated else None

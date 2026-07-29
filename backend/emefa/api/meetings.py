@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from emefa.api.devices import current_device
+from emefa.api.workspace import current_workspace
 from emefa.domain.devices import Device
 from emefa.observability import audit
 
@@ -33,10 +34,10 @@ class MeetingPayload(BaseModel):
 @router.get("")
 def list_meetings(
     request: Request,
-    _device: Annotated[Device, Depends(current_device)],
+    device: Annotated[Device, Depends(current_device)],
     limit: int = 20,
 ) -> dict[str, Any]:
-    meetings = request.app.state.meetings
+    meetings = current_workspace(request, device).meetings
     return {
         "meetings": meetings.list(limit=max(1, min(limit, 50))),
         "open_actions": meetings.open_actions(limit=50),
@@ -50,7 +51,7 @@ def capture_meeting(
     device: Annotated[Device, Depends(current_device)],
 ) -> dict[str, Any]:
     try:
-        result = request.app.state.meetings.capture(
+        result = current_workspace(request, device).meetings.capture(
             title=payload.title,
             notes=payload.notes,
             occurred_at=payload.occurred_at,
@@ -71,9 +72,9 @@ def capture_meeting(
 def get_meeting(
     meeting_id: str,
     request: Request,
-    _device: Annotated[Device, Depends(current_device)],
+    device: Annotated[Device, Depends(current_device)],
 ) -> dict[str, Any]:
-    meeting = request.app.state.meetings.get(meeting_id)
+    meeting = current_workspace(request, device).meetings.get(meeting_id)
     if meeting is None:
         raise HTTPException(status_code=404, detail="meeting_not_found")
     return meeting
@@ -85,7 +86,7 @@ def delete_meeting(
     request: Request,
     device: Annotated[Device, Depends(current_device)],
 ) -> Response:
-    if not request.app.state.meetings.delete(meeting_id):
+    if not current_workspace(request, device).meetings.delete(meeting_id):
         raise HTTPException(status_code=404, detail="meeting_not_found")
     audit("meeting_deleted", device_id=device.device_id, meeting_id=meeting_id)
     return Response(status_code=204)

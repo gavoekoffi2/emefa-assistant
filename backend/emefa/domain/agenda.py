@@ -27,8 +27,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
-from emefa.domain import storage
 from emefa.domain.crm import AmbiguousMatchError, CrmError, CrmRepository
+from emefa.domain.scope import Scope, ScopedStore
 from emefa.domain.tasks import TaskRepository
 
 EVENT_KINDS = ("rendez_vous", "réunion", "déplacement", "échéance", "personnel")
@@ -119,17 +119,25 @@ class CalendarProvider(Protocol):
     def fetch(self, since: date, until: date) -> list[dict[str, Any]]: ...
 
 
-class AgendaRepository:
+class AgendaRepository(ScopedStore):
     def __init__(
         self,
         database_path: Path,
         crm: CrmRepository | None = None,
         tasks: TaskRepository | None = None,
+        scope: Scope | None = None,
     ) -> None:
-        self.database_path = Path(database_path)
-        storage.run_migrations(self.database_path)
+        super().__init__(database_path, scope)
         self.crm = crm
         self.tasks = tasks
+
+    def for_scope(self, scope: Scope) -> "AgendaRepository":
+        return AgendaRepository(
+            self.database_path,
+            self.crm.for_scope(scope) if self.crm is not None else None,
+            self.tasks.for_scope(scope) if self.tasks is not None else None,
+            scope,
+        )
 
     # -- writes -----------------------------------------------------------
 
@@ -194,10 +202,7 @@ class AgendaRepository:
             raise AgendaError(str(error)) from error
 
     def delete(self, event_id: str) -> bool:
-        with storage.connect(self.database_path) as connection:
-            return connection.execute(
-                "DELETE FROM events WHERE event_id = ?", (event_id,)
-            ).rowcount > 0
+        return self.delete_scoped("events", "event_id", event_id)
 
     def sync(self, provider: CalendarProvider, since: date, until: date) -> dict[str, int]:
         """Pull an external calendar in. Idempotent on ``(source, external_id)``.
@@ -227,8 +232,8 @@ class AgendaRepository:
             except AgendaError:
                 skipped += 1
                 continue
-            existing = self._one(
-                f"SELECT {_COLUMNS} FROM events WHERE source = ? AND external_id = ?",
+            existing = self.fetch_one(
+                _COLUMNS, "events", "source = ? AND external_id = ?",
                 (provider.source_name, external_id),
             )
             if existing is None:
@@ -243,14 +248,14 @@ class AgendaRepository:
     # -- reads ------------------------------------------------------------
 
     def get(self, event_id: str) -> Event | None:
-        row = self._one(f"SELECT {_COLUMNS} FROM events WHERE event_id = ?", (event_id,))
+        row = self.fetch_one(_COLUMNS, "events", "event_id = ?", (event_id,))
         return Event(**row) if row else None
 
     def between(self, since: date, until: date) -> list[Event]:
-        rows = self._all(
-            f"SELECT {_COLUMNS} FROM events WHERE starts_at >= ? AND starts_at < ? "
-            "ORDER BY starts_at",
+        rows = self.fetch_all(
+            _COLUMNS, "events", "starts_at >= ? AND starts_at < ?",
             (since.isoformat(), (until + timedelta(days=1)).isoformat()),
+            "ORDER BY starts_at",
         )
         return [Event(**row) for row in rows]
 
@@ -382,32 +387,8 @@ class AgendaRepository:
 
     # -- SQL --------------------------------------------------------------
 
-    def _one(self, sql: str, parameters: tuple[Any, ...]) -> dict[str, Any] | None:
-        with storage.connect(self.database_path) as connection:
-            row = connection.execute(sql, parameters).fetchone()
-        return dict(row) if row is not None else None
-
-    def _all(self, sql: str, parameters: tuple[Any, ...]) -> list[dict[str, Any]]:
-        with storage.connect(self.database_path) as connection:
-            rows = connection.execute(sql, parameters).fetchall()
-        return [dict(row) for row in rows]
-
     def _insert(self, values: dict[str, Any]) -> None:
-        columns = ", ".join(values)
-        placeholders = ", ".join("?" for _ in values)
-        with storage.connect(self.database_path) as connection:
-            connection.execute(
-                f"INSERT INTO events ({columns}) VALUES ({placeholders})",
-                tuple(values.values()),
-            )
+        self.insert("events", values)
 
     def _update(self, event_id: str, values: dict[str, Any]) -> None:
-        if not values:
-            return
-        assignments = ", ".join(f"{column} = ?" for column in values)
-        with storage.connect(self.database_path) as connection:
-            connection.execute(
-                f"UPDATE events SET {assignments}, updated_at = CURRENT_TIMESTAMP "
-                "WHERE event_id = ?",
-                (*values.values(), event_id),
-            )
+        self.update_scoped("events", "event_id", event_id, values)
